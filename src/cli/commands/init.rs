@@ -1,5 +1,6 @@
-use clap::Args;
 use std::path::PathBuf;
+
+use clap::Args;
 
 use crate::config;
 use crate::fs;
@@ -34,8 +35,8 @@ pub fn dispatch(cmd: Command) {
         fs::remove_dir_all(root.clone());
     }
 
-    println!("Initializing...");
     // init
+    println!("Initializing...");
     match cmd.remote {
         // use the specified remote git repository
         Some(remote) => git::clone(remote, root),
