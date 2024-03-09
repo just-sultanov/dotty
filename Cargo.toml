@@ -5,6 +5,7 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.80"
 auth-git2 = "0.5.3"
 clap = { version = "4.5.1", features = ["derive"] }
 dirs = "5.0.1"

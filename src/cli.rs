@@ -15,8 +15,6 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Initializes the Dotty root directory.
-    #[command(arg_required_else_help = true)]
     Init(init::Command),
 }
 

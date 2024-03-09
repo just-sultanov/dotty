@@ -1,16 +1,13 @@
-use std::path::PathBuf;
-
 use clap::Args;
 
 use crate::config;
 use crate::fs;
 use crate::git;
 
+/// Initializes the Dotty home directory.
+/// Default: `$HOME/.dotty`
 #[derive(Debug, Args)]
 pub struct Command {
-    /// Root directory (default: `$HOME/.dotty`)
-    #[arg(value_name = "root", required = false, long)]
-    root: Option<String>,
     /// Git URL of the remote repository with dotfiles
     #[arg(value_name = "remote", required = false, long)]
     remote: Option<String>,
@@ -19,28 +16,23 @@ pub struct Command {
     overwrite: bool,
 }
 
-/// Initializes the Dotty root directory
+/// Initializes the Dotty home directory
 pub fn dispatch(cmd: Command) {
-    // calculate root
-    let root = match cmd.root {
-        // use the specified path to the root directory
-        Some(s) => PathBuf::from(s),
-        // use the default root directory
-        None => config::root_path().unwrap(),
-    };
+    // dotty home
+    let home = config::dotty_home().unwrap();
 
     // cleanup
     if cmd.overwrite {
         println!("Overwriting...");
-        fs::remove_dir_all(root.clone());
+        fs::remove_dir_all(home.clone());
     }
 
     // init
     println!("Initializing...");
     match cmd.remote {
         // use the specified remote git repository
-        Some(remote) => git::clone(remote, root),
+        Some(remote) => git::clone(remote, home),
         // use an empty git repository
-        None => git::init(root),
+        None => git::init(home),
     };
 }

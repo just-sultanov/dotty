@@ -7,7 +7,7 @@ use git2::Repository;
 pub fn init(path: PathBuf) {
     match Repository::init(path) {
         Ok(_) => println!("Repository has been initialized"),
-        Err(e) => panic!("Failed to init: {}", e),
+        Err(e) => panic!("Failed to init: {}", e.message()),
     };
 }
 
@@ -16,6 +16,6 @@ pub fn clone(remote: String, path: PathBuf) {
     let auth = GitAuthenticator::default();
     match auth.clone_repo(remote, path) {
         Ok(_) => println!("Repository has been cloned"),
-        Err(e) => panic!("Failed to clone: {}", e),
+        Err(e) => panic!("Failed to clone: {}", e.message()),
     };
 }
