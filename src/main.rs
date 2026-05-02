@@ -3,6 +3,7 @@ mod commands;
 mod convention;
 mod error;
 mod git;
+mod plan;
 mod prompt;
 mod symlink;
 

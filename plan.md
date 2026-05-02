@@ -49,7 +49,7 @@
 | 2.5 | `execute_plan(plan, dry_run)`               | `src/plan.rs`             | loop: execute → on error rollback completed in reverse                   |
 | 2.6 | Unit tests                                  | `src/plan.rs` (mod tests) | rollback symmetry, dry-run skips execution                               |
 
-**Done when:** can build a `Vec<Action>` and execute it with rollback on failure.
+**Done**
 
 ---
 
@@ -64,7 +64,7 @@
 | 3.3 | `dotty config machine <name>`  | `src/commands/config.rs` | write machine name to config.toml                                     |
 | 3.4 | Integration tests              | `tests/init.rs`          | temp dir, verify `git init`, config.toml, `base/home/`                |
 
-**Done when:** can init fresh and from remote, machine name persists.
+**Done**
 
 ---
 
