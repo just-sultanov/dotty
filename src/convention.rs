@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -36,6 +34,7 @@ pub fn resolve_state_path() -> Result<PathBuf, DottyError> {
     Ok(home_dir().join(".local").join("state").join("dotty"))
 }
 
+#[allow(dead_code)]
 /// Detect the current platform via `uname -s`.
 ///
 /// Returns `Some("macos")`, `Some("linux")`, `Some("freebsd")`, or `None`
@@ -52,6 +51,7 @@ pub fn detect_platform() -> Option<String> {
     }
 }
 
+#[allow(dead_code)]
 /// Convert a repo-relative path to its target (real filesystem) path.
 ///
 /// E.g. `base/home/.vimrc` → `~/.vimrc`, `linux/opt/nvim/app` → `/opt/nvim/app`.
@@ -71,7 +71,6 @@ pub fn repo_to_target(repo_path: &Path) -> Result<PathBuf, DottyError> {
 
     let root = match root_component.as_os_str().to_str() {
         Some("home") => home_dir(),
-        Some("Library") => PathBuf::from("/Library"),
         Some(dir) => PathBuf::from("/").join(dir),
         None => {
             return Err(DottyError::Path(format!(
@@ -85,6 +84,7 @@ pub fn repo_to_target(repo_path: &Path) -> Result<PathBuf, DottyError> {
     Ok(root.join(relative))
 }
 
+#[allow(dead_code)]
 /// Convert a target (real filesystem) path to its repo-relative path.
 ///
 /// E.g. `~/.vimrc` → `home/.vimrc`, `/opt/nvim/app` → `opt/nvim/app`.
@@ -95,10 +95,6 @@ pub fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
 
     if let Ok(relative) = target_path.strip_prefix(&home) {
         return Ok(PathBuf::from("home").join(relative));
-    }
-
-    if let Ok(relative) = target_path.strip_prefix("/Library") {
-        return Ok(PathBuf::from("Library").join(relative));
     }
 
     if let Ok(relative) = target_path.strip_prefix("/") {

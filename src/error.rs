@@ -1,11 +1,10 @@
-#![allow(dead_code)]
-
 use thiserror::Error;
 
 /// Top-level error type for dotty.
 ///
 /// Use `thiserror` for domain-specific errors and `anyhow` for the error chain
 /// in `main()` and command dispatch.
+#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum DottyError {
     #[error("IO error: {0}")]

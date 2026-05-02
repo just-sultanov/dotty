@@ -1,9 +1,8 @@
-#![allow(dead_code)]
-
 use dialoguer::Confirm;
 
 use crate::error::DottyError;
 
+#[allow(dead_code)]
 /// Prompt the user for a yes/no confirmation.
 ///
 /// Returns `true` if the user confirms, `false` otherwise.

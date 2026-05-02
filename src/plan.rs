@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::fmt;
 use std::fs;
 use std::os::unix::fs::symlink;
@@ -8,6 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::error::DottyError;
 use crate::git;
 
+#[allow(dead_code)]
 /// A single atomic operation within a plan.
 ///
 /// Each action can be executed and, if needed, rolled back.
@@ -144,6 +143,7 @@ impl Action {
     }
 }
 
+#[allow(dead_code)]
 /// A plan is a sequence of actions to be executed together.
 ///
 /// Built in a pure phase (no side effects), then executed with automatic
@@ -155,6 +155,7 @@ pub struct Plan {
     pub actions: Vec<Action>,
 }
 
+#[allow(dead_code)]
 impl Plan {
     /// Create a new empty plan.
     pub fn new(command: &str) -> Self {
@@ -176,6 +177,7 @@ impl Plan {
     }
 }
 
+#[allow(dead_code)]
 /// Execute all actions in the plan.
 ///
 /// If `dry_run` is true, print each action but perform no mutations.
@@ -215,6 +217,7 @@ pub fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 /// Roll back completed actions in reverse order.
 ///
 /// Handles git actions specially (reset --soft for commits, reset HEAD for adds)
@@ -265,6 +268,7 @@ fn rollback_completed(actions: &[Action], completed_indices: &[usize]) -> Result
     Ok(())
 }
 
+#[allow(dead_code)]
 /// Copy a file, dereferencing symlinks (equivalent to `cp -L`).
 fn copy_file_dereference(source: &Path, dest: &Path) -> Result<(), DottyError> {
     // Read content from source (follows symlinks)
@@ -273,6 +277,7 @@ fn copy_file_dereference(source: &Path, dest: &Path) -> Result<(), DottyError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 /// Check if a path is a symlink (without following it).
 fn is_symlink(path: &Path) -> bool {
     fs::symlink_metadata(path)
