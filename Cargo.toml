@@ -12,7 +12,9 @@ categories = ["command-line-utilities", "development-tools"]
 readme = "readme.md"
 
 [dependencies]
+anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 dialoguer = "0.12"
 serde = { version = "1", features = ["derive"] }
+thiserror = "2"
 toml = "1.1.2"

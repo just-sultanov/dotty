@@ -1,3 +1,5 @@
-pub fn run() -> i32 {
+use anyhow::Result;
+
+pub fn run() -> Result<()> {
     todo!("status not implemented")
 }
