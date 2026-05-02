@@ -46,12 +46,12 @@ graph LR
 
 **Repository:** `$DOTTY_HOME` if set, otherwise `~/.dotty`.
 
-**State directory:** `$XDG_STATE_HOME/dotty` (default `~/.local/state/dotty`).
+**State directory:** `$DOTTY_STATE_HOME` if set, otherwise `$XDG_STATE_HOME/dotty` (default `~/.local/state/dotty`).
 Stores runtime data that doesn't belong in the repo:
 
 ```
 ~/.local/state/dotty
-├── machine          # current machine name (set on first run or during init)
+├── config.toml      # machine name + managed files map (repo_path → target)
 └── backups/         # backup copies of replaced files
 ```
 
@@ -193,9 +193,9 @@ dotty init --machine macbook
 - Creates repo directory
 - Runs `git init`
 - Creates `base/home/` directory
-- Creates state directory `$XDG_STATE_HOME/dotty/` if needed
-- With `--machine <name>`: saves machine name to state file
-- Without `--machine`: prompts for machine name, saves to state
+- Creates state directory if needed
+- With `--machine <name>`: saves machine name to `config.toml`
+- Without `--machine`: prompts for machine name, saves to `config.toml`
 
 ### `dotty init <git-url> [--machine <name>]`
 
@@ -208,9 +208,9 @@ dotty init git@github.com:user/dotfiles.git --machine macbook
 
 - **Pre-check:** if `$DOTTY_HOME` already exists and is not empty → error: "Directory `$DOTTY_HOME` already exists and is not empty. Remove it or choose a different path via `$DOTTY_HOME`." (aborts, no clone)
 - Clones the repo into `~/.dotty` (or `$DOTTY_HOME`)
-- Creates state directory `$XDG_STATE_HOME/dotty/` if needed
-- With `--machine <name>`: saves machine name to state file
-- Without `--machine`: scans repo for known machine directories (top-level dirs with `home/` inside, excluding `base/` and known platforms), prompts: "Which machine is this?" with list of known machines + "(new)", saves choice to state
+- Creates state directory if needed
+- With `--machine <name>`: saves machine name to `config.toml`
+- Without `--machine`: scans repo for known machine directories (top-level dirs with `home/` inside, excluding `base/` and known platforms), prompts: "Which machine is this?" with list of known machines + "(new)", saves choice to `config.toml`
 - **Next step:** user runs `git pull` manually if needed, then `dotty apply`
 
 ### `dotty add <path> [--machine <name>] [--platform <name>] [--commit "<msg>"] [--dry-run]`
@@ -232,7 +232,7 @@ dotty add ~/.config/nvim/ --dry-run          # show what would be added, no chan
    - Paths starting with `/` → `<scope>/<absolute-path>` (e.g. `/opt/nvim/appimage` → `base/opt/nvim/appimage`)
 2. **Conflict check:** scan all tiers for the same target path. If found in another tier → warn: "`<target>` is already managed via `<existing-tier>`. Override?" → yes/no
 3. **Directory conflicts:** if adding a directory and some files conflict with existing tiers, show a warning with the list of conflicting files, then ask: "Ask per-file" or "Override all"
-4. Backup original to `$XDG_STATE_HOME/dotty/backups/<timestamp>/<relative-path>`
+4. Backup original to state dir `backups/<timestamp>/<relative-path>`
 5. If target is a directory → recursively walk all files, copy each to repo, create parent dirs as needed
 6. If target is a file → copy to repo
 7. **Create symlinks** for the added files (replace real files with symlinks pointing to repo)
@@ -293,7 +293,7 @@ dotty config machine macbook
 dotty config machine ubuntu-work
 ```
 
-- Saves `<name>` to `$XDG_STATE_HOME/dotty/machine`
+- Saves `<name>` to `config.toml`
 - Overwrites previous machine name
 
 ### `dotty remove <path> [--machine <name>] [--dry-run]`
@@ -356,7 +356,7 @@ $ dotty apply --dry-run
 ```mermaid
 flowchart TD
     START(["dotty apply"]) --> GIT["git ls-files"]
-    GIT --> READ["read machine name\nfrom state file"]
+    GIT --> READ["read config.toml"]
     READ --> DETECT["detect platform\nvia uname -s"]
 
     DETECT --> COLLECT{"collect paths by tier"}
@@ -392,8 +392,8 @@ flowchart TD
 Algorithm:
 
 1. `git ls-files` → list all committed tracked paths
-2. Read current machine from `$XDG_STATE_HOME/dotty/machine`
-   - If file is missing: apply `base` + `<platform>` tiers only, prompt user to select machine name from list of known machines in repo, save to state
+2. Read current machine from `config.toml`
+   - If config.toml is missing: apply `base` + `<platform>` tiers only, prompt user to select machine name from list of known machines in repo, save to config.toml
 3. Detect platform (`uname -s`)
 4. Collect paths from (lowest to highest priority):
    - `base/*` (common, all machines) — `base/home/*` → `~/*`, `base/opt/*` → `/opt/*`, etc.
@@ -404,7 +404,7 @@ Algorithm:
    - Create parent directories if they don't exist (e.g. `~/.config/nvim/` before `~/.config/nvim/init.lua`)
    - If symlink already exists and points correctly → skip
    - If symlink exists but points elsewhere → replace
-   - If regular file exists → backup to `$XDG_STATE_HOME/dotty/backups/` then replace (always, no `--force` needed)
+   - If regular file exists → backup to state dir `backups/` then replace (always, no `--force` needed)
    - If permission denied → print clear error: "Permission denied. Check file ownership or remove from repo."
    - If nothing exists → create symlink
 7. Scan for orphan symlinks (pointing to deleted repo files) → remove them
@@ -427,7 +427,7 @@ $ dotty apply
 
 ### `dotty clean`
 
-Removes old backups from `$XDG_STATE_HOME/dotty/backups/`.
+Removes old backups from state dir `backups/`.
 
 ```
 dotty clean                          # remove all backups
@@ -445,7 +445,7 @@ dotty clean --before 2024-01-01     # remove backups older than date (YYYY-MM-DD
 
 Shows:
 
-- Current machine (from `$XDG_STATE_HOME/dotty/machine`)
+- Current machine (from `config.toml`)
 - Current platform (detected via `uname -s`)
 - Dotty home path (`$DOTTY_HOME` or default `~/.dotty`)
 - Broken symlinks (if any)
@@ -511,7 +511,7 @@ Conflicts: 1
 
 ## Backup Strategy
 
-All backups go to `$XDG_STATE_HOME/dotty/backups/<timestamp>/`.
+All backups go to state dir `backups/<timestamp>/`.
 
 ```
 ~/.local/state/dotty/backups
@@ -575,7 +575,20 @@ Files are encrypted in the remote repository and decrypted locally on trusted ma
 
 ## Machine & Platform Detection
 
-**Machine name:** stored in `$XDG_STATE_HOME/dotty/machine`. Set once during `dotty init` and reused by all subsequent commands.
+**Machine name:** stored in `config.toml`. Set once during `dotty init` and reused by all subsequent commands.
+
+**Managed files:** stored in `config.toml` as `[managed]` map: `repo_path → target_path`. Updated by `add` (insert), `remove` (remove), and `apply` (full rebuild from `git ls-files`). Used by `apply` to detect orphan symlinks — keys in managed map but not in `git ls-files` are removed. The map lives in the same namespace as `git ls-files`, so orphan detection is O(1) without path resolution.
+
+```toml
+# ~/.local/state/dotty/config.toml
+machine = "macbook"
+
+[managed]
+"base/home/.vimrc" = "~/.vimrc"
+"base/home/.gitconfig" = "~/.gitconfig"
+"base/home/.config/nvim/init.lua" = "~/.config/nvim/init.lua"
+"macbook/home/.config/nvim/plugins.lua" = "~/.config/nvim/plugins.lua"
+```
 
 ### `dotty init` — setting the machine name
 
@@ -598,8 +611,9 @@ Hostname is unreliable — changes on VM clones, network changes, manual edits. 
 ### How `dotty apply` resolves paths
 
 ```
-# read machine name from state file
-machine = read("$XDG_STATE_HOME/dotty/machine")
+# read config.toml
+machine = config.machine
+managed = config.managed  # HashMap<repo_path, target_path>
 platform = detect_platform()  # uname -s
 
 # collect committed paths by priority tier
@@ -623,6 +637,7 @@ for each target in merged:
 - **Language:** Rust
 - **Git integration:** `std::process` for subprocess calls (not `git2` crate)
 - **CLI:** `clap`
+- **Config:** `toml` + `serde` for `config.toml`
 - **Path resolution:** manual `~` expansion
 - **Interactive prompts:** `dialoguer` crate
 - **Console output:** ASCII fallback for symbols (`✓` → `[+]`, `⚠️` → `[!]`) when terminal doesn't support Unicode
@@ -636,6 +651,97 @@ for each target in merged:
 
 ---
 
+
+## Architecture — Plan-Execute
+
+Every mutating command runs in two phases: **plan** (pure) then **execute** (impure).
+
+```
+Command
+  ↓
+Phase 1: PLAN   →  Vec<Action>        (pure, testable)
+  ↓
+Phase 2: EXECUTE →  apply each Action  (impure, thin wrapper)
+  ↓
+Phase 3: LOG    →  audit trail        (always emitted)
+```
+
+### Actions
+
+```rust
+struct Plan {
+    branch: String,       // git branch at plan creation time
+    command: String,      // which command built this plan
+    actions: Vec<Action>,
+}
+
+enum Action {
+    CreateDir      { path: PathBuf },
+    Backup         { source: PathBuf, dest: PathBuf },
+    CopyFile       { source: PathBuf, dest: PathBuf },
+    CreateSymlink  { target: PathBuf, link: PathBuf },
+    RemoveFile     { path: PathBuf },
+    RemoveSymlink  { path: PathBuf },
+    GitAdd         { paths: Vec<PathBuf> },
+    GitCommit      { message: String },
+}
+```
+
+Each action implements:
+
+| Trait        | Purpose                                              |
+| ------------ | ---------------------------------------------------- |
+| `Display`    | Human-readable description (console output, logs)    |
+| `execute()`  | Perform the filesystem/git mutation                  |
+| `rollback()` | Return the inverse action, or `None` if not reversible |
+
+### Rollback
+
+Every action knows how to undo itself:
+
+| Action             | Rollback                    |
+| ------------------ | --------------------------- |
+| `CreateDir`        | `RemoveFile` (empty dir)    |
+| `Backup`           | `RemoveFile` (delete backup)|
+| `CopyFile`         | `RemoveFile` (remove copy)  |
+| `CreateSymlink`    | `RemoveSymlink`             |
+| `RemoveSymlink`    | `CreateSymlink` (re-link)   |
+| `GitAdd`           | `git reset HEAD <path>`     |
+| `GitCommit`        | `git reset --soft HEAD~1`   |
+
+If execution fails mid-plan, dotty rolls back completed actions in reverse order, restoring the filesystem to pre-command state.
+
+### Benefits
+
+| Benefit             | How it works                                                   |
+| ------------------- | -------------------------------------------------------------- |
+| **Dry-run**         | Single `bool` flag — build plan, print actions, skip execute   |
+| **Rollback**        | Automatic — reverse each completed action on failure            |
+| **Testing**         | Plan construction is pure — unit-testable without filesystem    |
+| **Audit log**       | Every action logged — full trace of what was done               |
+| **Idempotency**     | If nothing changed, plan is empty — execute does nothing        |
+
+### Example — `dotty add ~/.vimrc --commit "add vimrc"`
+
+```
+Plan (5 actions):
+  1. Backup         ~/.vimrc → backups/2024-01-15T10-30-00/.vimrc
+  2. CopyFile       ~/.vimrc → ~/.dotty/base/home/.vimrc
+  3. CreateSymlink  ~/.vimrc → ~/.dotty/base/home/.vimrc
+  4. GitAdd         ~/.dotty/base/home/.vimrc
+  5. GitCommit      "add vimrc"
+
+Rollback (reverse, on failure):
+  5'. GitResetSoft  HEAD~1
+  4'. GitResetCached ~/.dotty/base/home/.vimrc
+  3'. RemoveSymlink ~/.vimrc
+  2'. CopyFile      backups/.../.vimrc → ~/.vimrc  (restore original)
+  1'. RemoveFile    backups/.../.vimrc
+```
+
+If step 5 fails, all 5 actions are rolled back — clean state as if `add` never ran.
+
+
 ## Project Structure
 
 ```
@@ -645,6 +751,7 @@ dotty
     ├── main.rs
     ├── cli.rs          # clap command definitions
     ├── convention.rs   # path resolution (<scope>/home/* → ~/*, <scope>/etc/* → /etc/*, etc.)
+    ├── plan.rs         # Action enum, Plan builder, rollback logic
     ├── commands/
     │   ├── init.rs
     │   ├── config.rs
@@ -683,7 +790,7 @@ dotty
 | `.cache/` or similar copied by `add`  | User sees in `git status`, ignores or removes manually                 |
 | Parent dir doesn't exist for symlink  | Created automatically by `apply`                                       |
 | `--dry-run` with conflicts            | Lists conflicts and overrides, no mutations, exit 0                    |
-| `--dry-run` with missing machine file | Falls back to base + platform tiers, lists actions, no prompt          |
+| `--dry-run` with missing config.toml | Falls back to base + platform tiers, lists actions, no prompt          |
 
 ---
 
@@ -702,7 +809,7 @@ Clarifications made during review that inform implementation but don't change th
 | 7   | Platform detection                       | Map-based (`Darwin` → `macos`, `Linux` → `linux`, `FreeBSD` → `freebsd`) — easy to extend for new platforms.                                                    |
 | 8   | Default `.gitignore`                     | Not created — experienced user configures `.gitignore` themselves. `add` copies everything, git filters.                                                        |
 | 9   | Self-reference (`~/.dotty`)              | `dotty add` rejects paths inside `$DOTTY_HOME` to prevent symlink recursion.                                                                                    |
-| 10  | Missing machine file                     | `apply` falls back to `base` + `<platform>` tiers, prompts user to select machine from known list in repo.                                                      |
+| 10  | Missing config.toml                     | `apply` falls back to `base` + `<platform>` tiers, prompts user to select machine from known list in repo.                                                      |
 | 11  | Symlink trade-off                        | Editing files via symlinks = dirty git state. `git checkout -- .` in repo overwrites symlinked files. Known limitation of the pattern, accepted for MVP.        |
 | 12  | Managed files count                      | Removed from `status` output — not useful for the user.                                                                                                         |
 | 13  | Non-interactive mode                     | `--yes` / `--non-interactive` flags postponed. MVP is for a single user running commands manually.                                                              |
