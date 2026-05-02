@@ -1,0 +1,147 @@
+[env]
+_.path = [{ path = "./bin", tools = true }]
+
+[tools]
+rust = { version = "1.94.1", components = "rustfmt,clippy" }
+
+##
+# General
+##
+
+[tasks.clean]
+description = "Cleanup"
+file = "bin/clean"
+
+[tasks.setup-tools]
+description = "Install required development tools"
+file = "bin/setup-tools"
+
+##
+# Lint
+##
+
+[tasks.setup-linters]
+description = "Ensure lint tools are available"
+file = "bin/setup-linters"
+
+[tasks.lint]
+description = "Run formatters and linters"
+depends = ["setup-linters"]
+file = "bin/lint"
+
+##
+# Test
+##
+
+[tasks.test]
+description = "Run all tests"
+file = "bin/test"
+
+[tasks.check]
+description = "Run lint and tests"
+run = ["mise run lint", "mise run test"]
+
+##
+# Build
+##
+
+# Linux
+
+[tasks.setup-linux]
+description = "Ensure Linux musl target is available"
+file = "bin/setup-linux"
+
+[tasks.build-linux]
+description = "Build static release binary for Linux x86_64 (musl)"
+depends = ["setup-linux"]
+file = "bin/build-linux"
+
+# macOS arm
+
+[tasks.setup-macos-arm]
+description = "Ensure macOS aarch64 target is available"
+file = "bin/setup-macos-arm"
+
+[tasks.build-macos-arm]
+description = "Build release binary for macOS aarch64"
+depends = ["setup-macos-arm"]
+file = "bin/build-macos-arm"
+
+# macOS x86
+
+[tasks.setup-macos-x86]
+description = "Ensure macOS x86_64 target is available"
+file = "bin/setup-macos-x86"
+
+[tasks.build-macos-x86]
+description = "Build release binary for macOS x86_64"
+depends = ["setup-macos-x86"]
+file = "bin/build-macos-x86"
+
+# All platforms
+
+[tasks.build-macos]
+description = "Build release binary for macOS (aarch64 + x86_64)"
+depends = ["build-macos-arm", "build-macos-x86"]
+file = "bin/build-macos"
+
+# Windows
+
+[tasks.setup-windows]
+description = "Ensure Windows target is available"
+file = "bin/setup-windows"
+
+[tasks.build-windows]
+description = "Build release binary for Windows x86_64"
+depends = ["setup-windows"]
+file = "bin/build-windows"
+
+##
+# Dist
+##
+
+# Linux
+
+[tasks.dist-linux]
+description = "Build and package static Linux binary"
+depends = ["build-linux"]
+file = "bin/dist-linux"
+
+# macOS
+
+[tasks.dist-macos-arm]
+description = "Build and package macOS aarch64 binary"
+depends = ["build-macos-arm"]
+file = "bin/dist-macos-arm"
+
+[tasks.dist-macos-x86]
+description = "Build and package macOS x86_64 binary"
+depends = ["build-macos-x86"]
+file = "bin/dist-macos-x86"
+
+# Windows
+
+[tasks.dist-windows]
+description = "Build and package Windows binary"
+depends = ["build-windows"]
+file = "bin/dist-windows.ps1"
+
+##
+# Publish
+##
+
+[tasks.bump-version]
+description = "Bump version in Cargo.toml (major|minor|patch). Run setup-tools first."
+file = "bin/bump-version"
+
+[tasks.pre-publish]
+description = "Prepare a new version for release"
+file = "bin/pre-publish"
+
+[tasks.publish]
+description = "Publish a new release"
+file = "bin/publish"
+
+[tasks.publish-crates]
+description = "Publish to crates.io"
+file = "bin/publish-crates"

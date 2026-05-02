@@ -1,0 +1,18 @@
+[package]
+name = "dotty"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+description = "A minimal dotfiles manager for multiple machines"
+license-file = "LICENSE"
+authors = ["Ilshat Sultanov <ilshat@sultanov.team>"]
+repository = "https://github.com/just-sultanov/dotty"
+keywords = ["dotfiles", "config-management", "cli", "symlink"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "readme.md"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+dialoguer = "0.12"
+serde = { version = "1", features = ["derive"] }
+toml = "1.1.2"

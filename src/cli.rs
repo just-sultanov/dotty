@@ -1,0 +1,113 @@
+use clap::{ArgAction, Parser, Subcommand};
+
+/// A minimal dotfiles manager for multiple machines.
+#[derive(Parser, Debug)]
+#[command(
+    name = "dotty",
+    version = env!("DOTTY_VERSION"),
+    disable_version_flag = true,
+    about = "A minimal dotfiles manager for multiple machines",
+    before_help = concat!(
+        "dotty v",
+        env!("DOTTY_VERSION"),
+        "@",
+        env!("DOTTY_GIT_SHA"),
+        " (",
+        env!("DOTTY_BUILT_AT"),
+        ")"
+    ),
+    help_template = "{before-help}{about}\n\n{usage-heading}\n  {usage}\n\n{all-args}{after-help}",
+)]
+pub struct Cli {
+    /// Print version information
+    #[arg(long, action = ArgAction::Version)]
+    version: (),
+
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Bootstrap a new repository or clone an existing one
+    Init {
+        /// Git URL to clone (optional — omit for fresh repo)
+        git_url: Option<String>,
+
+        /// Machine name (optional — will prompt if omitted)
+        #[arg(long)]
+        machine: Option<String>,
+    },
+
+    /// Manage configuration
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+
+    /// Add a file or directory to the repository
+    Add {
+        /// Path to add (file or directory)
+        path: String,
+
+        /// Add to a specific machine tier
+        #[arg(long)]
+        machine: Option<String>,
+
+        /// Add to a specific platform tier
+        #[arg(long)]
+        platform: Option<String>,
+
+        /// Commit after adding (with message)
+        #[arg(long)]
+        commit: Option<String>,
+
+        /// Show what would be done without making changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Remove a file or directory from the repository
+    Remove {
+        /// Path to remove
+        path: String,
+
+        /// Limit search to a specific machine tier
+        #[arg(long)]
+        machine: Option<String>,
+
+        /// Show what would be done without making changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Create symlinks for all tracked files
+    Apply {
+        /// Show what would be done without making changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Show repository status
+    Status,
+
+    /// Remove old backups from state directory
+    Clean {
+        /// Number of recent backups to keep
+        #[arg(long)]
+        keep: Option<usize>,
+
+        /// Remove backups older than this date (YYYY-MM-DD)
+        #[arg(long)]
+        before: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ConfigCommands {
+    /// Set the current machine name
+    Machine {
+        /// Machine name
+        name: String,
+    },
+}

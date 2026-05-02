@@ -1,5 +1,7 @@
 # dotty (MVP)
 
+> **⚠️ Alpha:** This project is under active development. APIs and behavior may change.
+
 ## Concept
 
 A minimal dotfiles manager for multiple machines. Config files live in a git repository organized by priority tiers — `base/`, `<platform>/`, `<machine>/` — and are linked to their real locations via file-level symlinks.
@@ -651,7 +653,6 @@ for each target in merged:
 
 ---
 
-
 ## Architecture — Plan-Execute
 
 Every mutating command runs in two phases: **plan** (pure) then **execute** (impure).
@@ -689,37 +690,37 @@ enum Action {
 
 Each action implements:
 
-| Trait        | Purpose                                              |
-| ------------ | ---------------------------------------------------- |
-| `Display`    | Human-readable description (console output, logs)    |
-| `execute()`  | Perform the filesystem/git mutation                  |
+| Trait        | Purpose                                                |
+| ------------ | ------------------------------------------------------ |
+| `Display`    | Human-readable description (console output, logs)      |
+| `execute()`  | Perform the filesystem/git mutation                    |
 | `rollback()` | Return the inverse action, or `None` if not reversible |
 
 ### Rollback
 
 Every action knows how to undo itself:
 
-| Action             | Rollback                    |
-| ------------------ | --------------------------- |
-| `CreateDir`        | `RemoveFile` (empty dir)    |
-| `Backup`           | `RemoveFile` (delete backup)|
-| `CopyFile`         | `RemoveFile` (remove copy)  |
-| `CreateSymlink`    | `RemoveSymlink`             |
-| `RemoveSymlink`    | `CreateSymlink` (re-link)   |
-| `GitAdd`           | `git reset HEAD <path>`     |
-| `GitCommit`        | `git reset --soft HEAD~1`   |
+| Action          | Rollback                     |
+| --------------- | ---------------------------- |
+| `CreateDir`     | `RemoveFile` (empty dir)     |
+| `Backup`        | `RemoveFile` (delete backup) |
+| `CopyFile`      | `RemoveFile` (remove copy)   |
+| `CreateSymlink` | `RemoveSymlink`              |
+| `RemoveSymlink` | `CreateSymlink` (re-link)    |
+| `GitAdd`        | `git reset HEAD <path>`      |
+| `GitCommit`     | `git reset --soft HEAD~1`    |
 
 If execution fails mid-plan, dotty rolls back completed actions in reverse order, restoring the filesystem to pre-command state.
 
 ### Benefits
 
-| Benefit             | How it works                                                   |
-| ------------------- | -------------------------------------------------------------- |
-| **Dry-run**         | Single `bool` flag — build plan, print actions, skip execute   |
-| **Rollback**        | Automatic — reverse each completed action on failure            |
-| **Testing**         | Plan construction is pure — unit-testable without filesystem    |
-| **Audit log**       | Every action logged — full trace of what was done               |
-| **Idempotency**     | If nothing changed, plan is empty — execute does nothing        |
+| Benefit         | How it works                                                 |
+| --------------- | ------------------------------------------------------------ |
+| **Dry-run**     | Single `bool` flag — build plan, print actions, skip execute |
+| **Rollback**    | Automatic — reverse each completed action on failure         |
+| **Testing**     | Plan construction is pure — unit-testable without filesystem |
+| **Audit log**   | Every action logged — full trace of what was done            |
+| **Idempotency** | If nothing changed, plan is empty — execute does nothing     |
 
 ### Example — `dotty add ~/.vimrc --commit "add vimrc"`
 
@@ -740,7 +741,6 @@ Rollback (reverse, on failure):
 ```
 
 If step 5 fails, all 5 actions are rolled back — clean state as if `add` never ran.
-
 
 ## Project Structure
 
@@ -790,7 +790,7 @@ dotty
 | `.cache/` or similar copied by `add`  | User sees in `git status`, ignores or removes manually                 |
 | Parent dir doesn't exist for symlink  | Created automatically by `apply`                                       |
 | `--dry-run` with conflicts            | Lists conflicts and overrides, no mutations, exit 0                    |
-| `--dry-run` with missing config.toml | Falls back to base + platform tiers, lists actions, no prompt          |
+| `--dry-run` with missing config.toml  | Falls back to base + platform tiers, lists actions, no prompt          |
 
 ---
 
@@ -809,7 +809,7 @@ Clarifications made during review that inform implementation but don't change th
 | 7   | Platform detection                       | Map-based (`Darwin` → `macos`, `Linux` → `linux`, `FreeBSD` → `freebsd`) — easy to extend for new platforms.                                                    |
 | 8   | Default `.gitignore`                     | Not created — experienced user configures `.gitignore` themselves. `add` copies everything, git filters.                                                        |
 | 9   | Self-reference (`~/.dotty`)              | `dotty add` rejects paths inside `$DOTTY_HOME` to prevent symlink recursion.                                                                                    |
-| 10  | Missing config.toml                     | `apply` falls back to `base` + `<platform>` tiers, prompts user to select machine from known list in repo.                                                      |
+| 10  | Missing config.toml                      | `apply` falls back to `base` + `<platform>` tiers, prompts user to select machine from known list in repo.                                                      |
 | 11  | Symlink trade-off                        | Editing files via symlinks = dirty git state. `git checkout -- .` in repo overwrites symlinked files. Known limitation of the pattern, accepted for MVP.        |
 | 12  | Managed files count                      | Removed from `status` output — not useful for the user.                                                                                                         |
 | 13  | Non-interactive mode                     | `--yes` / `--non-interactive` flags postponed. MVP is for a single user running commands manually.                                                              |
@@ -820,3 +820,7 @@ Clarifications made during review that inform implementation but don't change th
 | 18  | `dotty config machine`                   | Added to allow changing machine name after `init`.                                                                                                              |
 
 ---
+
+## License
+
+MIT — see [LICENSE](LICENSE) for details.
