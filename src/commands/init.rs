@@ -3,7 +3,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::convention::{
-    KNOWN_PLATFORMS, read_config, resolve_repo_path, resolve_state_path, write_config,
+    KNOWN_PLATFORMS, read_config, resolve_repo_path, resolve_state_path, validate_machine_name,
+    write_config,
 };
 use crate::git::{git_clone, git_init};
 use crate::prompt::{prompt_input, prompt_select};
@@ -16,10 +17,11 @@ use crate::prompt::{prompt_input, prompt_select};
 /// In both cases, the machine name is either taken from the `machine` parameter
 /// or prompted interactively.
 pub fn run(git_url: Option<String>, machine: Option<String>) -> Result<()> {
-    let repo_path = resolve_repo_path().map_err(|e| anyhow::anyhow!(e))?;
-    let state_path = resolve_state_path().map_err(|e| anyhow::anyhow!(e))?;
+    let repo_path = resolve_repo_path()?;
+    let state_path = resolve_state_path()?;
 
     let machine_name = if let Some(name) = machine {
+        validate_machine_name(&name)?;
         name
     } else if let Some(url) = &git_url {
         // Clone mode: scan repo for known machines, prompt user
@@ -33,9 +35,9 @@ pub fn run(git_url: Option<String>, machine: Option<String>) -> Result<()> {
 
     // Save machine name to config
     ensure_state_dir(&state_path)?;
-    let mut config = read_config(&state_path).map_err(|e| anyhow::anyhow!(e))?;
+    let mut config = read_config(&state_path)?;
     config.set_machine(machine_name.clone());
-    write_config(&state_path, &config).map_err(|e| anyhow::anyhow!(e))?;
+    write_config(&state_path, &config)?;
 
     println!("Machine set to: {}", machine_name);
     println!("Repo: {}", repo_path.display());
@@ -51,7 +53,7 @@ fn create_fresh_repo(repo_path: &Path) -> Result<()> {
     }
 
     fs::create_dir_all(repo_path)?;
-    git_init(repo_path).map_err(|e| anyhow::anyhow!(e))?;
+    git_init(repo_path)?;
 
     // Create base/home/ directory
     let base_home = repo_path.join("base").join("home");
@@ -75,7 +77,7 @@ fn clone_repo(url: &str, repo_path: &Path) -> Result<()> {
         }
     }
 
-    git_clone(url, repo_path).map_err(|e| anyhow::anyhow!(e))?;
+    git_clone(url, repo_path)?;
     println!("Cloned repo into {}", repo_path.display());
     Ok(())
 }
@@ -88,8 +90,8 @@ fn ensure_state_dir(state_path: &Path) -> Result<()> {
 
 /// Prompt the user for a machine name (fresh repo mode).
 fn prompt_machine_name() -> Result<String> {
-    let name = prompt_input("What is this machine called? (e.g. macbook, ubuntu-work)")
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let name = prompt_input("What is this machine called? (e.g. macbook, ubuntu-work)")?;
+    validate_machine_name(&name)?;
     Ok(name)
 }
 
@@ -116,8 +118,7 @@ fn prompt_machine_from_repo(repo_path: &Path) -> Result<String> {
     let selected = prompt_select(
         "Which machine is this?",
         &options.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-    )
-    .map_err(|e| anyhow::anyhow!(e))?;
+    )?;
 
     if selected == options.len() - 1 {
         // User chose "(new)"
@@ -242,5 +243,23 @@ mod tests {
         assert_eq!(machines, vec!["my-machine"]);
 
         fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn test_validate_machine_name_rejects_empty() {
+        assert!(validate_machine_name("").is_err());
+        assert!(validate_machine_name("   ").is_err());
+    }
+
+    #[test]
+    fn test_validate_machine_name_accepts_valid() {
+        assert!(validate_machine_name("macbook").is_ok());
+        assert!(validate_machine_name("ubuntu-work").is_ok());
+    }
+
+    #[test]
+    fn test_validate_machine_name_rejects_slash() {
+        assert!(validate_machine_name("foo/bar").is_err());
+        assert!(validate_machine_name("foo/../bar").is_err());
     }
 }

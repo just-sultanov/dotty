@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::DottyError;
 use crate::git;
+use crate::symlink::is_symlink;
 
 #[allow(dead_code)]
 /// A single atomic operation within a plan.
@@ -38,6 +39,9 @@ impl fmt::Display for Action {
             Action::RemoveFile { path } => write!(f, "remove file   {}", path.display()),
             Action::RemoveSymlink { path } => write!(f, "remove link   {}", path.display()),
             Action::GitAdd { paths } => {
+                if paths.is_empty() {
+                    return write!(f, "git add       (empty)");
+                }
                 write!(f, "git add       {}", paths[0].display())?;
                 for p in paths.iter().skip(1) {
                     write!(f, ", {}", p.display())?;
@@ -51,7 +55,9 @@ impl fmt::Display for Action {
 
 impl Action {
     /// Perform the filesystem or git mutation described by this action.
-    pub fn execute(&self) -> Result<(), DottyError> {
+    ///
+    /// `repo_path` is used as the working directory for git operations.
+    pub fn execute(&self, repo_path: &Path) -> Result<(), DottyError> {
         match self {
             Action::CreateDir { path } => {
                 fs::create_dir_all(path)?;
@@ -64,7 +70,6 @@ impl Action {
                     ))
                 })?;
                 fs::create_dir_all(parent)?;
-                // Copy content (dereference symlinks via read_to_string / write for files)
                 copy_file_dereference(source, dest)?;
             }
             Action::CopyFile { source, dest } => {
@@ -79,7 +84,6 @@ impl Action {
                 if let Some(p) = parent {
                     fs::create_dir_all(p)?;
                 }
-                // Remove existing symlink or file at link location
                 if link.exists() || is_symlink(link) {
                     fs::remove_file(link)?;
                 }
@@ -89,14 +93,10 @@ impl Action {
                 if !path.exists() {
                     return Ok(());
                 }
-                // Try removing as a file first; if that fails and it's a dir,
-                // remove as an empty directory. This allows RemoveFile to serve
-                // as the rollback for both CopyFile and CreateDir.
-                match fs::remove_file(path) {
-                    Ok(()) => {}
-                    Err(_) => {
-                        fs::remove_dir(path)?;
-                    }
+                if path.is_dir() && !is_symlink(path) {
+                    fs::remove_dir_all(path)?;
+                } else {
+                    fs::remove_file(path)?;
                 }
             }
             Action::RemoveSymlink { path } => {
@@ -104,16 +104,18 @@ impl Action {
                     fs::remove_file(path)?;
                 }
             }
-            Action::GitAdd { paths } => git::git_add(Path::new("."), paths)?,
-            Action::GitCommit { message } => git::git_commit(Path::new("."), message)?,
+            Action::GitAdd { paths } => git::git_add(repo_path, paths)?,
+            Action::GitCommit { message } => git::git_commit(repo_path, message)?,
         }
         Ok(())
     }
 
-    /// Return the inverse action, or `None` if the action is not reversible.
+    /// Return the inverse filesystem action, or `None` if not reversible.
     ///
-    /// Most actions are reversible. The rollback action, when executed,
-    /// should restore the state to before the original action ran.
+    /// Filesystem actions (CreateDir, Backup, CopyFile, CreateSymlink) are
+    /// reversible. RemoveFile / RemoveSymlink return None because the original
+    /// content is not tracked. Git actions (GitAdd, GitCommit) are handled
+    /// separately in `rollback_completed` via `git reset`.
     pub fn rollback(&self) -> Option<Action> {
         match self {
             Action::CreateDir { path } => Some(Action::RemoveFile { path: path.clone() }),
@@ -122,23 +124,10 @@ impl Action {
             Action::CreateSymlink { link, .. } => {
                 Some(Action::RemoveSymlink { path: link.clone() })
             }
-            Action::RemoveFile { path: _ } => None, // cannot restore without knowing original content
-            Action::RemoveSymlink { path: _, .. } => {
-                // We don't know the original target, so we can't re-link
-                None
-            }
-            Action::GitAdd { paths } => {
-                let path_strs: Vec<&str> = paths.iter().filter_map(|p| p.to_str()).collect();
-                if path_strs.is_empty() {
-                    return None;
-                }
-                // Use a closure-like approach: we need to call git_reset, but Action
-                // doesn't carry closures. Instead, return a RemoveFile-like placeholder
-                // and handle git reset in the rollback loop directly.
-                // For now, return None and let execute_plan handle git rollback separately.
-                None
-            }
-            Action::GitCommit { .. } => None, // handled by git reset --soft in execute_plan
+            Action::RemoveFile { path: _ } => None,
+            Action::RemoveSymlink { path: _, .. } => None,
+            Action::GitAdd { .. } => None,
+            Action::GitCommit { .. } => None,
         }
     }
 }
@@ -150,6 +139,7 @@ impl Action {
 /// rollback on failure.
 #[derive(Debug)]
 pub struct Plan {
+    pub repo_path: PathBuf,
     pub branch: String,
     pub command: String,
     pub actions: Vec<Action>,
@@ -158,8 +148,9 @@ pub struct Plan {
 #[allow(dead_code)]
 impl Plan {
     /// Create a new empty plan.
-    pub fn new(command: &str) -> Self {
+    pub fn new(command: &str, repo_path: &Path) -> Self {
         Self {
+            repo_path: repo_path.to_path_buf(),
             branch: String::new(),
             command: command.to_string(),
             actions: Vec::new(),
@@ -189,11 +180,11 @@ pub fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
     }
 
     if dry_run {
-        println!("Plan ({} actions):", plan.actions.len());
+        println!("[dry-run] Plan ({} actions):", plan.actions.len());
         for (i, action) in plan.actions.iter().enumerate() {
-            println!("  {}. {}", i + 1, action);
+            println!("[dry-run]  {}. {}", i + 1, action);
         }
-        println!("-- no changes made (dry-run)");
+        println!("[dry-run] no changes made");
         return Ok(());
     }
 
@@ -201,14 +192,14 @@ pub fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
 
     for (i, action) in plan.actions.iter().enumerate() {
         print!("  {}. {} ... ", i + 1, action);
-        match action.execute() {
+        match action.execute(&plan.repo_path) {
             Ok(()) => {
                 println!("ok");
                 completed.push(i);
             }
             Err(e) => {
                 println!("FAILED: {e}");
-                rollback_completed(&plan.actions, &completed)?;
+                rollback_completed(plan, &completed)?;
                 return Err(e);
             }
         }
@@ -222,11 +213,13 @@ pub fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
 ///
 /// Handles git actions specially (reset --soft for commits, reset HEAD for adds)
 /// because their rollback is not expressible as a simple inverse Action.
-fn rollback_completed(actions: &[Action], completed_indices: &[usize]) -> Result<(), DottyError> {
+fn rollback_completed(plan: &Plan, completed_indices: &[usize]) -> Result<(), DottyError> {
+    let actions = &plan.actions;
+    let repo_path = &plan.repo_path;
+
     let mut has_git_add = false;
     let mut git_add_paths: Vec<PathBuf> = Vec::new();
 
-    // Collect indices in reverse order
     let mut indices: Vec<usize> = completed_indices.to_vec();
     indices.sort_unstable();
     indices.reverse();
@@ -234,15 +227,13 @@ fn rollback_completed(actions: &[Action], completed_indices: &[usize]) -> Result
     for &idx in &indices {
         let action = &actions[idx];
 
-        // Handle git actions directly instead of via rollback()
         match action {
             Action::GitCommit { .. } => {
                 println!("  rollback: git reset --soft HEAD~1");
-                git::git_reset_soft_head(Path::new("."))?;
+                git::git_reset_soft_head(repo_path)?;
                 continue;
             }
             Action::GitAdd { paths } => {
-                // Defer git reset until we've collected all paths
                 has_git_add = true;
                 git_add_paths.extend(paths.clone());
                 continue;
@@ -252,16 +243,15 @@ fn rollback_completed(actions: &[Action], completed_indices: &[usize]) -> Result
 
         if let Some(rollback_action) = action.rollback() {
             println!("  rollback: {}", rollback_action);
-            rollback_action.execute()?;
+            rollback_action.execute(repo_path)?;
         }
     }
 
-    // Reset staged files if any git add was completed
     if has_git_add {
         let path_strs: Vec<&str> = git_add_paths.iter().filter_map(|p| p.to_str()).collect();
         if !path_strs.is_empty() {
             println!("  rollback: git reset HEAD {}", path_strs.join(" "));
-            git::git_reset(Path::new("."), &path_strs)?;
+            git::git_reset(repo_path, &path_strs)?;
         }
     }
 
@@ -271,18 +261,9 @@ fn rollback_completed(actions: &[Action], completed_indices: &[usize]) -> Result
 #[allow(dead_code)]
 /// Copy a file, dereferencing symlinks (equivalent to `cp -L`).
 fn copy_file_dereference(source: &Path, dest: &Path) -> Result<(), DottyError> {
-    // Read content from source (follows symlinks)
     let content = fs::read(source)?;
     fs::write(dest, content)?;
     Ok(())
-}
-
-#[allow(dead_code)]
-/// Check if a path is a symlink (without following it).
-fn is_symlink(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -307,13 +288,17 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    fn dummy_repo_path() -> PathBuf {
+        PathBuf::from(".")
+    }
+
     #[test]
     fn test_create_dir_action() {
         let base = setup();
         let path = base.join("new_dir/nested");
 
         let action = Action::CreateDir { path: path.clone() };
-        action.execute().unwrap();
+        action.execute(&dummy_repo_path()).unwrap();
         assert!(path.is_dir());
 
         teardown(&base);
@@ -331,7 +316,7 @@ mod tests {
             source: src.clone(),
             dest: dst.clone(),
         };
-        action.execute().unwrap();
+        action.execute(&dummy_repo_path()).unwrap();
         assert!(dst.exists());
         assert_eq!(fs::read_to_string(&dst).unwrap(), "hello world");
 
@@ -350,7 +335,7 @@ mod tests {
             source: src,
             dest: dst.clone(),
         };
-        action.execute().unwrap();
+        action.execute(&dummy_repo_path()).unwrap();
         assert!(dst.exists());
 
         teardown(&base);
@@ -369,7 +354,7 @@ mod tests {
             source: src,
             dest: dst.clone(),
         };
-        action.execute().unwrap();
+        action.execute(&dummy_repo_path()).unwrap();
         assert!(dst.exists());
         assert_eq!(fs::read_to_string(&dst).unwrap(), "original content");
 
@@ -383,7 +368,7 @@ mod tests {
         fs::write(&path, "delete me").unwrap();
 
         let action = Action::RemoveFile { path: path.clone() };
-        action.execute().unwrap();
+        action.execute(&dummy_repo_path()).unwrap();
         assert!(!path.exists());
 
         teardown(&base);
@@ -395,8 +380,7 @@ mod tests {
         let path = base.join("does_not_exist.txt");
 
         let action = Action::RemoveFile { path };
-        // Should not error even if file doesn't exist
-        action.execute().unwrap();
+        action.execute(&dummy_repo_path()).unwrap();
 
         teardown(&base);
     }
@@ -413,7 +397,7 @@ mod tests {
             target: target.clone(),
             link: link.clone(),
         };
-        action.execute().unwrap();
+        action.execute(&dummy_repo_path()).unwrap();
         assert!(is_symlink(&link));
         assert_eq!(fs::read_link(&link).unwrap(), target);
 
@@ -430,20 +414,18 @@ mod tests {
         fs::write(&target1, "one").unwrap();
         fs::write(&target2, "two").unwrap();
 
-        // Create symlink to target1
         Action::CreateSymlink {
             target: target1.clone(),
             link: link.clone(),
         }
-        .execute()
+        .execute(&dummy_repo_path())
         .unwrap();
 
-        // Replace with symlink to target2
         Action::CreateSymlink {
             target: target2.clone(),
             link: link.clone(),
         }
-        .execute()
+        .execute(&dummy_repo_path())
         .unwrap();
 
         assert!(is_symlink(&link));
@@ -458,11 +440,11 @@ mod tests {
         let path = base.join("rollback_dir");
 
         let action = Action::CreateDir { path: path.clone() };
-        action.execute().unwrap();
+        action.execute(&dummy_repo_path()).unwrap();
         assert!(path.is_dir());
 
         let rollback = action.rollback().unwrap();
-        rollback.execute().unwrap();
+        rollback.execute(&dummy_repo_path()).unwrap();
         assert!(!path.exists());
 
         teardown(&base);
@@ -480,11 +462,11 @@ mod tests {
             source: src,
             dest: dst.clone(),
         };
-        action.execute().unwrap();
+        action.execute(&dummy_repo_path()).unwrap();
         assert!(dst.exists());
 
         let rollback = action.rollback().unwrap();
-        rollback.execute().unwrap();
+        rollback.execute(&dummy_repo_path()).unwrap();
         assert!(!dst.exists());
 
         teardown(&base);
@@ -502,11 +484,11 @@ mod tests {
             target,
             link: link.clone(),
         };
-        action.execute().unwrap();
+        action.execute(&dummy_repo_path()).unwrap();
         assert!(is_symlink(&link));
 
         let rollback = action.rollback().unwrap();
-        rollback.execute().unwrap();
+        rollback.execute(&dummy_repo_path()).unwrap();
         assert!(!is_symlink(&link));
         assert!(!link.exists());
 
@@ -515,13 +497,13 @@ mod tests {
 
     #[test]
     fn test_plan_empty() {
-        let plan = Plan::new("test");
+        let plan = Plan::new("test", &dummy_repo_path());
         assert!(plan.is_empty());
     }
 
     #[test]
     fn test_plan_add_actions() {
-        let mut plan = Plan::new("test");
+        let mut plan = Plan::new("test", &dummy_repo_path());
         plan.add(Action::CreateDir {
             path: PathBuf::from("/tmp/test"),
         });
@@ -536,13 +518,12 @@ mod tests {
     #[test]
     fn test_execute_plan_dry_run() {
         let base = setup();
-        let mut plan = Plan::new("test");
+        let mut plan = Plan::new("test", &base);
         plan.add(Action::CreateDir {
             path: base.join("should_not_exist"),
         });
 
         execute_plan(&plan, true).unwrap();
-        // Dry run should not create the directory
         assert!(!base.join("should_not_exist").exists());
 
         teardown(&base);
@@ -550,7 +531,7 @@ mod tests {
 
     #[test]
     fn test_execute_plan_empty() {
-        let plan = Plan::new("test");
+        let plan = Plan::new("test", &dummy_repo_path());
         execute_plan(&plan, false).unwrap();
     }
 
@@ -581,7 +562,6 @@ mod tests {
         fs::write(&real, "real content").unwrap();
         symlink(&real, &sym).unwrap();
 
-        // Copy from symlink — should get content, not create another symlink
         copy_file_dereference(&sym, &dst).unwrap();
         assert!(!is_symlink(&dst));
         assert_eq!(fs::read_to_string(&dst).unwrap(), "real content");

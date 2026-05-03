@@ -17,7 +17,7 @@ pub fn resolve_repo_path() -> Result<PathBuf, DottyError> {
     if let Ok(path) = env::var("DOTTY_HOME") {
         return Ok(PathBuf::from(path));
     }
-    Ok(home_dir().join(".dotty"))
+    Ok(home_dir()?.join(".dotty"))
 }
 
 /// Resolve the dotty state directory.
@@ -31,7 +31,7 @@ pub fn resolve_state_path() -> Result<PathBuf, DottyError> {
     if let Ok(xdg) = env::var("XDG_STATE_HOME") {
         return Ok(PathBuf::from(xdg).join("dotty"));
     }
-    Ok(home_dir().join(".local").join("state").join("dotty"))
+    Ok(home_dir()?.join(".local").join("state").join("dotty"))
 }
 
 #[allow(dead_code)]
@@ -70,7 +70,7 @@ pub fn repo_to_target(repo_path: &Path) -> Result<PathBuf, DottyError> {
     })?;
 
     let root = match root_component.as_os_str().to_str() {
-        Some("home") => home_dir(),
+        Some("home") => home_dir()?,
         Some(dir) => PathBuf::from("/").join(dir),
         None => {
             return Err(DottyError::Path(format!(
@@ -91,17 +91,19 @@ pub fn repo_to_target(repo_path: &Path) -> Result<PathBuf, DottyError> {
 ///
 /// Returns the path relative to the scope directory (without the scope prefix).
 pub fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
-    let home = home_dir();
+    let home = home_dir()?;
 
     if let Ok(relative) = target_path.strip_prefix(&home) {
         return Ok(PathBuf::from("home").join(relative));
     }
 
     if let Ok(relative) = target_path.strip_prefix("/") {
-        return Ok(
-            PathBuf::from(relative.parent().unwrap_or_else(|| Path::new("")))
-                .join(relative.file_name().unwrap()),
-        );
+        if relative.as_os_str().is_empty() {
+            return Err(DottyError::Path(
+                "cannot map root path \"/\" to repo".to_string(),
+            ));
+        }
+        return Ok(relative.to_path_buf());
     }
 
     Err(DottyError::Path(format!(
@@ -142,7 +144,7 @@ pub fn read_config(state_path: &Path) -> Result<Config, DottyError> {
     }
 
     let content = std::fs::read_to_string(&config_path)?;
-    let config: Config = toml::from_str(&content)?;
+    let config: Config = toml::from_str(&content).map_err(|e| DottyError::Toml(e.to_string()))?;
     Ok(config)
 }
 
@@ -151,16 +153,52 @@ pub fn read_config(state_path: &Path) -> Result<Config, DottyError> {
 /// Creates the state directory if it doesn't exist.
 pub fn write_config(state_path: &Path, config: &Config) -> Result<(), DottyError> {
     std::fs::create_dir_all(state_path)?;
-    let content = toml::to_string_pretty(config)?;
+    let content = toml::to_string_pretty(config).map_err(|e| DottyError::Toml(e.to_string()))?;
     std::fs::write(state_path.join("config.toml"), content)?;
     Ok(())
 }
 
 /// Return the user's home directory.
-fn home_dir() -> PathBuf {
-    env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/"))
+///
+/// Uses `std::env::home_dir()` which consults platform-specific mechanisms
+/// (not just `$HOME`), falling back to `/` only as a last resort.
+pub fn home_dir() -> Result<PathBuf, DottyError> {
+    std::env::home_dir().ok_or_else(|| DottyError::Config("cannot determine home directory".into()))
+}
+
+/// Validate a machine name.
+///
+/// Rejects empty names, reserved names (`base`, platform dirs), hidden names
+/// (starting with `.`), and names containing path traversal (`..`).
+pub fn validate_machine_name(name: &str) -> Result<(), DottyError> {
+    if name.trim().is_empty() {
+        return Err(DottyError::Config("Machine name cannot be empty.".into()));
+    }
+    if name.starts_with('.') {
+        return Err(DottyError::Config(
+            "Machine name cannot start with a dot.".into(),
+        ));
+    }
+    if name.contains("..") {
+        return Err(DottyError::Config(
+            "Machine name cannot contain '..'.".into(),
+        ));
+    }
+    if name.contains('/') {
+        return Err(DottyError::Config(
+            "Machine name cannot contain '/'.".into(),
+        ));
+    }
+    if name == "base" {
+        return Err(DottyError::Config("'base' is a reserved name.".into()));
+    }
+    if KNOWN_PLATFORMS.contains(&name) {
+        return Err(DottyError::Config(format!(
+            "'{}' is a reserved platform name.",
+            name
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -222,7 +260,7 @@ mod tests {
         let repo = Path::new("base/home/.vimrc");
         let target = repo_to_target(repo).unwrap();
         assert!(target.to_string_lossy().ends_with(".vimrc"));
-        assert!(target.starts_with(&home_dir()));
+        assert!(target.starts_with(&home_dir().unwrap()));
     }
 
     #[test]
@@ -251,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_target_to_repo_home() {
-        let home = home_dir();
+        let home = home_dir().unwrap();
         let target = home.join(".vimrc");
         let repo = target_to_repo(&target).unwrap();
         assert_eq!(repo, PathBuf::from("home/.vimrc"));
@@ -302,5 +340,11 @@ mod tests {
     fn test_repo_to_target_invalid() {
         let repo = Path::new("base");
         assert!(repo_to_target(repo).is_err());
+    }
+
+    #[test]
+    fn test_target_to_repo_root_path_returns_error() {
+        let target = PathBuf::from("/");
+        assert!(target_to_repo(&target).is_err());
     }
 }

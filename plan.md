@@ -83,7 +83,7 @@
 | 4.7 | Edge cases: self-reference, non-XDG warn, machine dir creation                           | `src/commands/add.rs` | per spec table                                                          |
 | 4.8 | Integration tests                                                                        | `tests/add.rs`        | add file, verify symlink, add dir, verify recursion                     |
 
-**Done when:** `dotty add ~/.vimrc` works end-to-end with symlink.
+**Done**
 
 ---
 
