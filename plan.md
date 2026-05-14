@@ -15,8 +15,6 @@
 | 0.3 | `main.rs` — dispatch match            | `src/main.rs`                                                                             | match on subcommand → `todo!()`                                              |
 | 0.4 | Empty module files                    | `src/commands/*.rs`, `src/convention.rs`, `src/git.rs`, `src/symlink.rs`, `src/prompt.rs` | compile-only stubs                                                           |
 
-**Done when:** `cargo run -- --help` shows all commands and flags.
-
 **Done**
 
 ---

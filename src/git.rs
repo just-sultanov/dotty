@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use tracing::debug;
+
 use crate::error::DottyError;
 
 /// Run a git command in the given directory.
@@ -8,6 +10,7 @@ use crate::error::DottyError;
 /// Returns the stdout as a string. On failure, returns a `DottyError::Git`
 /// containing the stderr output.
 fn git_run(dir: &Path, args: &[&str]) -> Result<String, DottyError> {
+    debug!("git {}", args.join(" "));
     let output = Command::new("git")
         .current_dir(dir)
         .args(args)

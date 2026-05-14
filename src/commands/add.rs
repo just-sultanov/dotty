@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use tracing::warn;
 
 use crate::convention::{
     self, KNOWN_PLATFORMS, backup_timestamp, read_config, repo_to_target, resolve_repo_path,
@@ -80,7 +81,7 @@ pub fn run(
         match git::git_ls_files(&repo_path) {
             Ok(files) => files,
             Err(e) => {
-                eprintln!("Warning: failed to list tracked files: {e}");
+                warn!("failed to list tracked files: {e}");
                 Vec::new()
             }
         }

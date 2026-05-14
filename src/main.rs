@@ -3,6 +3,7 @@ mod commands;
 mod convention;
 mod error;
 mod git;
+mod log;
 mod plan;
 mod prompt;
 mod symlink;
@@ -12,6 +13,7 @@ use clap::Parser;
 use cli::{Cli, Commands, ConfigCommands};
 
 fn main() -> Result<()> {
+    log::init();
     let cli = Cli::parse();
 
     match cli.command {

@@ -1,6 +1,7 @@
 use std::fs;
 
 use anyhow::Result;
+use tracing::warn;
 
 use crate::convention::{date_to_backup_prefix, list_backups, resolve_state_path};
 use crate::prompt::prompt_confirm;
@@ -66,7 +67,7 @@ pub fn run(keep: Option<usize>, before: Option<String>) -> Result<()> {
         if ok {
             let backup_path = backup_dir.join(backup);
             if let Err(e) = fs::remove_dir_all(&backup_path) {
-                eprintln!("Warning: failed to remove '{}': {}", backup, e);
+                warn!("failed to remove '{}': {}", backup, e);
             } else {
                 removed_count += 1;
             }

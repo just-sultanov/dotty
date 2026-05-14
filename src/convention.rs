@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::error::DottyError;
 
@@ -183,11 +184,7 @@ pub fn scan_machine_directories(repo_path: &Path) -> Vec<String> {
     let entries = match std::fs::read_dir(repo_path) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!(
-                "Warning: cannot read repo directory {}: {}",
-                repo_path.display(),
-                e
-            );
+            warn!("cannot read repo directory {}: {}", repo_path.display(), e);
             return machines;
         }
     };

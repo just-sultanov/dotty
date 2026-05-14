@@ -2,6 +2,8 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use tracing::{debug, trace, warn};
+
 /// Maximum number of paths to show in `GitAdd` action display.
 const GIT_ADD_MAX_SHOWN: usize = 3;
 
@@ -193,6 +195,7 @@ pub fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
     }
 
     if dry_run {
+        debug!("dry-run: {} actions", plan.actions.len());
         println!("[dry-run] Plan ({} actions):", plan.actions.len());
         for (i, action) in plan.actions.iter().enumerate() {
             println!("[dry-run]  {}. {}", i + 1, action);
@@ -204,6 +207,7 @@ pub fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
     let mut completed: Vec<usize> = Vec::new();
 
     for (i, action) in plan.actions.iter().enumerate() {
+        trace!("executing action {}: {}", i + 1, action);
         print!("  {}. {} ... ", i + 1, action);
         match action.execute(&plan.repo_path) {
             Ok(()) => {
@@ -211,6 +215,7 @@ pub fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
                 completed.push(i);
             }
             Err(e) => {
+                warn!("action {} failed: {}", i + 1, e);
                 println!("FAILED: {e}");
                 rollback_completed(plan, &completed)?;
                 return Err(e);
@@ -227,6 +232,7 @@ pub fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
 /// Handles git actions specially (reset --soft for commits, reset HEAD for adds)
 /// because their rollback is not expressible as a simple inverse Action.
 fn rollback_completed(plan: &Plan, completed_indices: &[usize]) -> Result<(), DottyError> {
+    debug!("rolling back {} completed actions", completed_indices.len());
     let actions = &plan.actions;
     let repo_path = &plan.repo_path;
 

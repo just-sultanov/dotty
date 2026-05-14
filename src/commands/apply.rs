@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use tracing::warn;
 
 use crate::convention::{
     backup_timestamp, read_config, repo_to_target, resolve_repo_path, resolve_state_path,
@@ -151,7 +152,7 @@ pub fn run(dry_run: bool) -> Result<()> {
         let new_managed = rebuild_managed_map(&tracked_files);
         config.managed = new_managed;
         if let Err(e) = write_config(&state_path, &config) {
-            eprintln!("Warning: failed to write config: {e}");
+            warn!("failed to write config: {e}");
         }
     }
 
