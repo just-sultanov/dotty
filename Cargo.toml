@@ -19,3 +19,6 @@ dialoguer = "0.12"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 toml = "1.1.2"
+
+[dev-dependencies]
+serial_test = "3"

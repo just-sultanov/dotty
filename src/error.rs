@@ -25,8 +25,11 @@ pub enum DottyError {
     #[error("prompt error: {0}")]
     Prompt(#[from] dialoguer::Error),
 
-    #[error("TOML error: {0}")]
-    Toml(String),
+    #[error("TOML parse error: {0}")]
+    TomlParse(#[from] toml::de::Error),
+
+    #[error("TOML serialize error: {0}")]
+    TomlSerialize(#[from] toml::ser::Error),
 
     #[error("user cancelled operation")]
     Cancelled,

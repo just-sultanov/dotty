@@ -1,7 +1,9 @@
 use std::fmt;
 use std::fs;
-use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
+
+/// Maximum number of paths to show in `GitAdd` action display.
+const GIT_ADD_MAX_SHOWN: usize = 3;
 
 use crate::error::DottyError;
 use crate::git;
@@ -43,8 +45,11 @@ impl fmt::Display for Action {
                     return write!(f, "git add       (empty)");
                 }
                 write!(f, "git add       {}", paths[0].display())?;
-                for p in paths.iter().skip(1) {
+                for p in paths.iter().skip(1).take(GIT_ADD_MAX_SHOWN - 1) {
                     write!(f, ", {}", p.display())?;
+                }
+                if paths.len() > GIT_ADD_MAX_SHOWN {
+                    write!(f, " (+{} more)", paths.len() - GIT_ADD_MAX_SHOWN)?;
                 }
                 Ok(())
             }
@@ -84,10 +89,16 @@ impl Action {
                 if let Some(p) = parent {
                     fs::create_dir_all(p)?;
                 }
-                if link.exists() || is_symlink(link) {
-                    fs::remove_file(link)?;
+                // Use symlink_metadata to detect both existing files and broken symlinks.
+                // `link.exists()` returns false for broken symlinks, so we check metadata directly.
+                if fs::symlink_metadata(link).is_ok() {
+                    if link.is_dir() && !crate::symlink::is_symlink(link) {
+                        fs::remove_dir_all(link)?;
+                    } else {
+                        fs::remove_file(link)?;
+                    }
                 }
-                symlink(target, link)?;
+                crate::symlink::create_symlink(target, link)?;
             }
             Action::RemoveFile { path } => {
                 if !path.exists() {
@@ -114,8 +125,10 @@ impl Action {
     ///
     /// Filesystem actions (CreateDir, Backup, CopyFile, CreateSymlink) are
     /// reversible. RemoveFile / RemoveSymlink return None because the original
-    /// content is not tracked. Git actions (GitAdd, GitCommit) are handled
-    /// separately in `rollback_completed` via `git reset`.
+    /// content is not tracked (the file was already removed from management;
+    /// to restore it, the user would need to re-add it or use `git checkout`).
+    /// Git actions (GitAdd, GitCommit) are handled separately in
+    /// `rollback_completed` via `git reset`.
     pub fn rollback(&self) -> Option<Action> {
         match self {
             Action::CreateDir { path } => Some(Action::RemoveFile { path: path.clone() }),
@@ -560,7 +573,7 @@ mod tests {
         let dst = base.join("copied.txt");
 
         fs::write(&real, "real content").unwrap();
-        symlink(&real, &sym).unwrap();
+        crate::symlink::create_symlink(&real, &sym).unwrap();
 
         copy_file_dereference(&sym, &dst).unwrap();
         assert!(!is_symlink(&dst));

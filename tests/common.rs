@@ -1,0 +1,168 @@
+//! Shared helpers for integration tests.
+//!
+//! Each test gets its own isolated temp directory for both the repo
+//! (`DOTTY_HOME`) and the state (`DOTTY_STATE_HOME`).
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Monotonically increasing counter so that concurrent tests never
+/// share a temp directory even if they run in parallel.
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Return a unique temp directory path.
+fn unique_temp_dir() -> PathBuf {
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("dotty_integ_{}_{}", std::process::id(), id,))
+}
+
+/// A handle that owns a set of temp directories (repo + state + home) and
+/// cleans them up on drop.
+///
+/// `home` is a separate directory that simulates the user's home directory.
+/// It lives *outside* the repo so that the `add` command's self-reference
+/// check does not trigger.
+pub struct TestEnv {
+    pub repo: PathBuf,
+    pub state: PathBuf,
+    pub home: PathBuf,
+}
+
+impl TestEnv {
+    /// Create a fresh set of temp directories.
+    pub fn new() -> Self {
+        let repo = unique_temp_dir();
+        let state = unique_temp_dir();
+        let home = unique_temp_dir();
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        Self { repo, state, home }
+    }
+
+    /// Return the binary path (built by `cargo test`).
+    fn bin() -> PathBuf {
+        // When run via `cargo test`, the binary is at the same location
+        // as the test harness.
+        std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent() // tests/... → debug/
+            .unwrap()
+            .join("dotty")
+    }
+
+    /// Configure git identity in the repo so that `git commit` works.
+    pub fn git_config_identity(&self) {
+        Command::new("git")
+            .current_dir(&self.repo)
+            .args(["config", "user.name", "Test"])
+            .output()
+            .ok();
+        Command::new("git")
+            .current_dir(&self.repo)
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .ok();
+    }
+
+    /// Run `dotty` with the isolated environment.
+    ///
+    /// `HOME` is set to the test `home` directory so that `repo_to_target()`
+    /// maps `base/home/...` → `<test-home>/...` instead of the real `~`.
+    pub fn run(&self, args: &[&str]) -> std::process::Output {
+        Command::new(Self::bin())
+            .env("DOTTY_HOME", &self.repo)
+            .env("DOTTY_STATE_HOME", &self.state)
+            .env("HOME", &self.home)
+            .args(args)
+            .output()
+            .expect("failed to spawn dotty")
+    }
+
+    /// Run `dotty` and assert it succeeded (exit code 0).
+    pub fn run_ok(&self, args: &[&str]) -> std::process::Output {
+        let out = self.run(args);
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            panic!(
+                "dotty {:?} failed (exit {})\nstdout: {}\nstderr: {}",
+                args, out.status, stdout, stderr,
+            );
+        }
+        out
+    }
+
+    /// Run `dotty` and assert it failed (non-zero exit code).
+    pub fn run_err(&self, args: &[&str]) -> std::process::Output {
+        let out = self.run(args);
+        assert!(
+            !out.status.success(),
+            "expected failure but dotty {:?} succeeded",
+            args
+        );
+        out
+    }
+
+    /// Convenience: create a file inside the simulated home directory.
+    pub fn create_file(&self, rel_path: &str, content: &str) -> PathBuf {
+        let full = self.home.join(rel_path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&full, content).unwrap();
+        full
+    }
+
+    /// Create a file at an arbitrary path.
+    pub fn create_file_at(&self, path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, content).unwrap();
+    }
+
+    /// Read config.toml from the state directory.
+    pub fn read_config(&self) -> String {
+        std::fs::read_to_string(self.state.join("config.toml")).unwrap_or_default()
+    }
+
+    /// List tracked files in the repo.
+    pub fn tracked_files(&self) -> Vec<String> {
+        let out = Command::new("git")
+            .current_dir(&self.repo)
+            .args(["ls-files"])
+            .output()
+            .expect("git ls-files");
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect()
+    }
+
+    /// Check if a path is a symlink pointing to the expected target.
+    pub fn assert_symlink(&self, link: &Path, expected_target: &Path) {
+        assert!(link.is_symlink(), "{} is not a symlink", link.display());
+        let actual = std::fs::read_link(link).expect("read_link");
+        assert_eq!(
+            actual,
+            expected_target,
+            "symlink {} points to {} but expected {}",
+            link.display(),
+            actual.display(),
+            expected_target.display()
+        );
+    }
+}
+
+impl Drop for TestEnv {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.repo);
+        let _ = std::fs::remove_dir_all(&self.state);
+        let _ = std::fs::remove_dir_all(&self.home);
+    }
+}

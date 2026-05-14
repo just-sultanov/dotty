@@ -17,6 +17,8 @@
 
 **Done when:** `cargo run -- --help` shows all commands and flags.
 
+**Done**
+
 ---
 
 ## Phase 1 — Core primitives
@@ -104,7 +106,7 @@
 | 5.9  | `--dry-run`                                                         | `src/commands/apply.rs` |                                                                                                                                    |
 | 5.10 | Integration tests                                                   | `tests/apply.rs`        | multi-tier override, orphan cleanup                                                                                                |
 
-**Done when:** `dotty apply` resolves all tiers and creates correct symlinks.
+**Done**
 
 ---
 
@@ -120,7 +122,7 @@
 | 6.4 | `dotty clean`            | `src/commands/clean.rs`                                | `--keep`, `--before`, interactive confirm                                                             |
 | 6.5 | Integration tests        | `tests/remove.rs`, `tests/status.rs`, `tests/clean.rs` |                                                                                                       |
 
-**Done when:** all 7 commands work.
+**Done**
 
 ---
 
@@ -138,7 +140,7 @@
 | 7.6 | Full integration test suite        | `tests/`                | happy path + edge cases from spec table |
 | 7.7 | `cargo clippy`, `cargo fmt`        | —                       | lint clean                              |
 
-**Done when:** spec edge cases covered, lint clean, tests pass.
+**Partial** — 7.4 (thiserror), 7.5 (dry-run exit 0), 7.6 (tests), 7.7 (lint) done. Missing: 7.1 (ASCII fallback), 7.2 (permission denied messages), 7.3 (circular symlink detection).
 
 ---
 

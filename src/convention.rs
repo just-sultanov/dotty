@@ -144,7 +144,7 @@ pub fn read_config(state_path: &Path) -> Result<Config, DottyError> {
     }
 
     let content = std::fs::read_to_string(&config_path)?;
-    let config: Config = toml::from_str(&content).map_err(|e| DottyError::Toml(e.to_string()))?;
+    let config: Config = toml::from_str(&content)?;
     Ok(config)
 }
 
@@ -153,7 +153,7 @@ pub fn read_config(state_path: &Path) -> Result<Config, DottyError> {
 /// Creates the state directory if it doesn't exist.
 pub fn write_config(state_path: &Path, config: &Config) -> Result<(), DottyError> {
     std::fs::create_dir_all(state_path)?;
-    let content = toml::to_string_pretty(config).map_err(|e| DottyError::Toml(e.to_string()))?;
+    let content = toml::to_string_pretty(config)?;
     std::fs::write(state_path.join("config.toml"), content)?;
     Ok(())
 }
@@ -164,6 +164,57 @@ pub fn write_config(state_path: &Path, config: &Config) -> Result<(), DottyError
 /// (not just `$HOME`), falling back to `/` only as a last resort.
 pub fn home_dir() -> Result<PathBuf, DottyError> {
     std::env::home_dir().ok_or_else(|| DottyError::Config("cannot determine home directory".into()))
+}
+
+/// Generate a timestamp string for backup directories.
+///
+/// Format: `YYYY-MM-DDTHH-MM-SS` (e.g. `2024-01-15T10-30-00`).
+pub fn backup_timestamp() -> String {
+    chrono::Local::now().format("%Y-%m-%dT%H-%M-%S").to_string()
+}
+
+/// Scan the repo for machine directories.
+///
+/// Returns a sorted list of directory names that look like machine tiers
+/// (top-level dirs containing `home/`, excluding `base/` and known platforms).
+pub fn scan_machine_directories(repo_path: &Path) -> Vec<String> {
+    let mut machines = Vec::new();
+
+    let entries = match std::fs::read_dir(repo_path) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!(
+                "Warning: cannot read repo directory {}: {}",
+                repo_path.display(),
+                e
+            );
+            return machines;
+        }
+    };
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let path = entry.path();
+
+        if !path.is_dir() {
+            continue;
+        }
+        if name.starts_with('.') {
+            continue;
+        }
+        if name == "base" {
+            continue;
+        }
+        if KNOWN_PLATFORMS.iter().any(|&p| p == name) {
+            continue;
+        }
+        if path.join("home").is_dir() {
+            machines.push(name);
+        }
+    }
+
+    machines.sort();
+    machines
 }
 
 /// Validate a machine name.
@@ -201,13 +252,143 @@ pub fn validate_machine_name(name: &str) -> Result<(), DottyError> {
     Ok(())
 }
 
+/// Find all tracked repo files that manage the given target path.
+///
+/// If `machine_filter` is `Some`, only search within that machine tier.
+/// Otherwise, search across all tiers.
+pub fn find_managed_repo_files(
+    target_path: &Path,
+    tracked_files: &[String],
+    machine_filter: Option<&str>,
+) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for file in tracked_files {
+        let repo_path = PathBuf::from(file);
+        if let Ok(target) = repo_to_target(&repo_path)
+            && target == target_path
+        {
+            if let Some(filter) = machine_filter {
+                let prefix = format!("{}/", filter);
+                if file.starts_with(&prefix) {
+                    result.push(file.clone());
+                }
+            } else {
+                result.push(file.clone());
+            }
+        }
+    }
+
+    result
+}
+
+/// Expand a target reference (e.g. "~/.vimrc") to a full path.
+pub fn expand_target_ref(target_ref: &str) -> Result<PathBuf, DottyError> {
+    let home = home_dir()?;
+
+    if let Some(rest) = target_ref.strip_prefix("~/") {
+        return Ok(home.join(rest));
+    }
+    if target_ref == "~" {
+        return Ok(home);
+    }
+    Ok(PathBuf::from(target_ref))
+}
+
+/// Expand `~` prefix in a path string to the full home directory path.
+pub fn expand_tilde(path: &str) -> Result<PathBuf, DottyError> {
+    if let Some(rest) = path.strip_prefix("~/") {
+        return Ok(home_dir()?.join(rest));
+    }
+    if path == "~" {
+        return home_dir();
+    }
+    Ok(PathBuf::from(path))
+}
+
+/// Calculate the total size of a directory recursively in bytes.
+pub fn calculate_dir_size(dir: &Path) -> u64 {
+    let mut total = 0u64;
+
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            if let Ok(meta) = fs::metadata(&path) {
+                total += meta.len();
+            }
+        } else if path.is_dir() {
+            total += calculate_dir_size(&path);
+        }
+    }
+
+    total
+}
+
+/// List backup directory names sorted by name (chronological order).
+pub fn list_backups(state_path: &Path) -> Vec<String> {
+    let backup_dir = state_path.join("backups");
+
+    if !backup_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut backups = Vec::new();
+
+    for entry in fs::read_dir(&backup_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+    {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if entry.path().is_dir() {
+            backups.push(name);
+        }
+    }
+
+    backups.sort();
+    backups
+}
+
+/// Parse a date string in YYYY-MM-DD format and return the corresponding
+/// backup timestamp prefix for comparison.
+///
+/// Backup timestamps are in format YYYY-MM-DDTHH-MM-SS, so a date "2024-01-15"
+/// matches all backups starting with "2024-01-15T".
+pub fn date_to_backup_prefix(date: &str) -> Option<String> {
+    if date.len() != 10 {
+        return None;
+    }
+    // Basic validation: YYYY-MM-DD
+    let parts: Vec<&str> = date.split('-').collect();
+    if parts.len() != 3
+        || parts[0].len() != 4
+        || parts[1].len() != 2
+        || parts[2].len() != 2
+        || parts[0].parse::<u32>().is_err()
+        || parts[1].parse::<u32>().is_err()
+        || parts[2].parse::<u32>().is_err()
+    {
+        return None;
+    }
+    Some(format!("{}T", date))
+}
+
+use std::fs;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::env;
 
     // In Rust 2024, set_var/remove_var are unsafe (data-race risk in multithreaded code).
-    // Tests are single-threaded, so this is safe.
+    // #[serial] ensures these tests run one at a time, preventing concurrent env mutations.
     fn set_env(key: &str, val: &str) {
         unsafe { env::set_var(key, val) };
     }
@@ -216,6 +397,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_repo_path_default() {
         remove_env("DOTTY_HOME");
         let path = resolve_repo_path().unwrap();
@@ -223,6 +405,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_repo_path_custom() {
         set_env("DOTTY_HOME", "/custom/dotty/path");
         let path = resolve_repo_path().unwrap();
@@ -231,6 +414,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_state_path_default() {
         remove_env("DOTTY_STATE_HOME");
         remove_env("XDG_STATE_HOME");
@@ -239,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_state_path_custom() {
         set_env("DOTTY_STATE_HOME", "/custom/state");
         let path = resolve_state_path().unwrap();
@@ -247,6 +432,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_state_path_xdg() {
         remove_env("DOTTY_STATE_HOME");
         set_env("XDG_STATE_HOME", "/var/lib/state");
@@ -346,5 +532,13 @@ mod tests {
     fn test_target_to_repo_root_path_returns_error() {
         let target = PathBuf::from("/");
         assert!(target_to_repo(&target).is_err());
+    }
+
+    #[test]
+    fn test_backup_timestamp_format() {
+        let ts = backup_timestamp();
+        assert_eq!(ts.len(), 19, "timestamp length should be 19");
+        assert!(ts.chars().nth(4) == Some('-'), "missing dash at position 4");
+        assert!(ts.chars().nth(10) == Some('T'), "missing T at position 10");
     }
 }

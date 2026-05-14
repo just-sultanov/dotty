@@ -3,11 +3,11 @@ use std::fs;
 use std::path::Path;
 
 use crate::convention::{
-    KNOWN_PLATFORMS, read_config, resolve_repo_path, resolve_state_path, validate_machine_name,
-    write_config,
+    read_config, resolve_repo_path, resolve_state_path, scan_machine_directories,
+    validate_machine_name, write_config,
 };
 use crate::git::{git_clone, git_init};
-use crate::prompt::{prompt_input, prompt_select};
+use crate::prompt::prompt_machine_selection;
 
 /// Bootstrap a new dotty repository or clone an existing one.
 ///
@@ -20,15 +20,22 @@ pub fn run(git_url: Option<String>, machine: Option<String>) -> Result<()> {
     let repo_path = resolve_repo_path()?;
     let state_path = resolve_state_path()?;
 
-    let machine_name = if let Some(name) = machine {
+    let machine_name = if let Some(url) = &git_url {
+        // Clone mode: clone repo, then resolve machine name
+        clone_repo(url, &repo_path)?;
+        if let Some(name) = machine {
+            validate_machine_name(&name)?;
+            name
+        } else {
+            prompt_machine_from_repo(&repo_path)?
+        }
+    } else if let Some(name) = machine {
+        // Fresh repo with explicit machine name (no prompt)
+        create_fresh_repo(&repo_path)?;
         validate_machine_name(&name)?;
         name
-    } else if let Some(url) = &git_url {
-        // Clone mode: scan repo for known machines, prompt user
-        clone_repo(url, &repo_path)?;
-        prompt_machine_from_repo(&repo_path)?
     } else {
-        // Fresh repo mode: prompt for machine name
+        // Fresh repo: prompt for machine name
         create_fresh_repo(&repo_path)?;
         prompt_machine_name()?
     };
@@ -90,7 +97,8 @@ fn ensure_state_dir(state_path: &Path) -> Result<()> {
 
 /// Prompt the user for a machine name (fresh repo mode).
 fn prompt_machine_name() -> Result<String> {
-    let name = prompt_input("What is this machine called? (e.g. macbook, ubuntu-work)")?;
+    let name =
+        crate::prompt::prompt_input("What is this machine called? (e.g. macbook, ubuntu-work)")?;
     validate_machine_name(&name)?;
     Ok(name)
 }
@@ -105,73 +113,9 @@ fn prompt_machine_name() -> Result<String> {
 /// If no known machines are found, falls back to prompting for a new name.
 fn prompt_machine_from_repo(repo_path: &Path) -> Result<String> {
     let known_machines = scan_machine_directories(repo_path);
-
-    if known_machines.is_empty() {
-        // No known machines in repo — just prompt for a name
-        return prompt_machine_name();
-    }
-
-    // Build selection list: known machines + "(new)"
-    let mut options: Vec<String> = known_machines;
-    options.push("(new)".to_string());
-
-    let selected = prompt_select(
-        "Which machine is this?",
-        &options.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-    )?;
-
-    if selected == options.len() - 1 {
-        // User chose "(new)"
-        prompt_machine_name()
-    } else {
-        Ok(options[selected].clone())
-    }
-}
-
-/// Scan the repo for machine directories.
-///
-/// Returns a sorted list of directory names that look like machine tiers.
-fn scan_machine_directories(repo_path: &Path) -> Vec<String> {
-    let mut machines = Vec::new();
-
-    let entries = match fs::read_dir(repo_path) {
-        Ok(e) => e,
-        Err(_) => return machines,
-    };
-
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let path = entry.path();
-
-        // Must be a directory
-        if !path.is_dir() {
-            continue;
-        }
-
-        // Skip hidden directories (like .git)
-        if name.starts_with('.') {
-            continue;
-        }
-
-        // Skip base/
-        if name == "base" {
-            continue;
-        }
-
-        // Skip known platforms
-        if KNOWN_PLATFORMS.iter().any(|&p| p == name) {
-            continue;
-        }
-
-        // Must contain a home/ subdirectory
-        let home_dir = path.join("home");
-        if home_dir.is_dir() {
-            machines.push(name);
-        }
-    }
-
-    machines.sort();
-    machines
+    let name = prompt_machine_selection(&known_machines)?;
+    validate_machine_name(&name)?;
+    Ok(name)
 }
 
 #[cfg(test)]

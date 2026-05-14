@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::convention::{
-    self, KNOWN_PLATFORMS, read_config, repo_to_target, resolve_repo_path, resolve_state_path,
-    target_to_repo, write_config,
+    self, KNOWN_PLATFORMS, backup_timestamp, read_config, repo_to_target, resolve_repo_path,
+    resolve_state_path, target_to_repo, write_config,
 };
 use crate::git;
 use crate::plan::{self, Action, Plan};
@@ -176,7 +176,7 @@ pub fn run(
             .to_string();
         let target_rel = target_file
             .strip_prefix(&home)
-            .map(|p| format!("~{}", p.display()))
+            .map(|p| format!("~/{p}", p = p.display()))
             .unwrap_or_else(|_| target_file.to_string_lossy().to_string());
         config.managed.insert(repo_rel, target_rel);
     }
@@ -198,7 +198,7 @@ pub fn run(
     // Execute the plan
     plan::execute_plan(&plan, dry_run)?;
 
-    // Save updated config (managed map) — only if we actually did something
+    // Write updated config only after successful plan execution.
     if !dry_run && !plan.is_empty() {
         write_config(&state_path, &config)?;
     }
@@ -235,6 +235,9 @@ fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> Result<
 }
 
 /// Warn if the path doesn't look like a standard config location.
+///
+/// A path is considered "standard" if it's under `~/.config/`, `~/.local/`,
+/// `~/.ssh/`, or is a dotfile (starts with `.` but not `..`).
 fn warn_non_xdg(target_path: &Path) -> Result<()> {
     let home = convention::home_dir()?;
     let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
@@ -243,7 +246,7 @@ fn warn_non_xdg(target_path: &Path) -> Result<()> {
     let is_standard = rel_str.starts_with(".config/")
         || rel_str.starts_with(".local/")
         || rel_str.starts_with(".ssh/")
-        || (rel_str.starts_with('.') && !rel_str.starts_with(".."));
+        || (rel_str.starts_with('.') && !rel_str.starts_with("..")); // dotfile, not `..`
 
     if !is_standard {
         println!(
@@ -378,11 +381,6 @@ fn resolve_conflicts(
     Ok(result)
 }
 
-/// Generate a timestamp string for backup directories.
-fn backup_timestamp() -> String {
-    chrono::Local::now().format("%Y-%m-%dT%H-%M-%S").to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,14 +446,5 @@ mod tests {
     fn test_conflict_map_empty() {
         let map = build_conflict_map(&[]);
         assert!(map.is_empty());
-    }
-
-    #[test]
-    fn test_backup_timestamp_format() {
-        let ts = backup_timestamp();
-        // Should match YYYY-MM-DDTHH-MM-SS
-        assert!(ts.len() == 19, "timestamp length: {}", ts.len());
-        assert!(ts.chars().nth(4) == Some('-'), "missing dash at position 4");
-        assert!(ts.chars().nth(10) == Some('T'), "missing T at position 10");
     }
 }

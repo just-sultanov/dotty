@@ -33,10 +33,19 @@ pub fn git_init(dir: &Path) -> Result<(), DottyError> {
 
 /// Clone a repository into the given directory.
 pub fn git_clone(url: &str, dir: &Path) -> Result<(), DottyError> {
+    let parent = dir.parent().ok_or_else(|| {
+        DottyError::Path(format!("cannot determine parent of: {}", dir.display()))
+    })?;
+
+    // Prevent cloning into the root directory
+    if parent.as_os_str().is_empty() || parent == Path::new("/") {
+        return Err(DottyError::Path(
+            "cannot clone into the root directory".to_string(),
+        ));
+    }
+
     git_run(
-        dir.parent().ok_or_else(|| {
-            DottyError::Path(format!("cannot determine parent of: {}", dir.display()))
-        })?,
+        parent,
         &[
             "clone",
             url,
@@ -53,15 +62,6 @@ pub fn git_add(dir: &Path, paths: &[PathBuf]) -> Result<(), DottyError> {
     let path_args: Vec<&str> = paths.iter().filter_map(|p| p.to_str()).collect();
     let mut args = vec!["add"];
     args.extend(path_args);
-    git_run(dir, &args)?;
-    Ok(())
-}
-
-#[allow(dead_code)]
-/// Stage specific files by path strings.
-pub fn git_add_str(dir: &Path, paths: &[&str]) -> Result<(), DottyError> {
-    let mut args = vec!["add"];
-    args.extend_from_slice(paths);
     git_run(dir, &args)?;
     Ok(())
 }
