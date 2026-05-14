@@ -1,5 +1,6 @@
 use std::fmt;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use tracing::{debug, trace, warn};
@@ -9,7 +10,7 @@ const GIT_ADD_MAX_SHOWN: usize = 3;
 
 use crate::error::DottyError;
 use crate::git;
-use crate::symlink::is_symlink;
+use crate::symlink::{self, is_symlink};
 
 #[allow(dead_code)]
 /// A single atomic operation within a plan.
@@ -67,7 +68,7 @@ impl Action {
     pub fn execute(&self, repo_path: &Path) -> Result<(), DottyError> {
         match self {
             Action::CreateDir { path } => {
-                fs::create_dir_all(path)?;
+                fs::create_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
             }
             Action::Backup { source, dest } => {
                 let parent = dest.parent().ok_or_else(|| {
@@ -76,45 +77,52 @@ impl Action {
                         dest.display()
                     ))
                 })?;
-                fs::create_dir_all(parent)?;
+                fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
+                // copy_file_dereference already returns DottyError
                 copy_file_dereference(source, dest)?;
             }
             Action::CopyFile { source, dest } => {
                 let parent = dest.parent();
                 if let Some(p) = parent {
-                    fs::create_dir_all(p)?;
+                    fs::create_dir_all(p).map_err(|e| io_error_with_path(e, p))?;
                 }
+                // copy_file_dereference already returns DottyError
                 copy_file_dereference(source, dest)?;
             }
             Action::CreateSymlink { target, link } => {
                 let parent = link.parent();
                 if let Some(p) = parent {
-                    fs::create_dir_all(p)?;
+                    fs::create_dir_all(p).map_err(|e| io_error_with_path(e, p))?;
+                }
+                // Detect circular symlinks before creating
+                if symlink::would_be_circular(target, link) {
+                    return Err(DottyError::CircularSymlink { path: link.clone() });
                 }
                 // Use symlink_metadata to detect both existing files and broken symlinks.
                 // `link.exists()` returns false for broken symlinks, so we check metadata directly.
                 if fs::symlink_metadata(link).is_ok() {
                     if link.is_dir() && !crate::symlink::is_symlink(link) {
-                        fs::remove_dir_all(link)?;
+                        fs::remove_dir_all(link).map_err(|e| io_error_with_path(e, link))?;
                     } else {
-                        fs::remove_file(link)?;
+                        fs::remove_file(link).map_err(|e| io_error_with_path(e, link))?;
                     }
                 }
-                crate::symlink::create_symlink(target, link)?;
+                crate::symlink::create_symlink(target, link)
+                    .map_err(|e| io_error_with_path(e, link))?;
             }
             Action::RemoveFile { path } => {
                 if !path.exists() {
                     return Ok(());
                 }
                 if path.is_dir() && !is_symlink(path) {
-                    fs::remove_dir_all(path)?;
+                    fs::remove_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
                 } else {
-                    fs::remove_file(path)?;
+                    fs::remove_file(path).map_err(|e| io_error_with_path(e, path))?;
                 }
             }
             Action::RemoveSymlink { path } => {
                 if is_symlink(path) {
-                    fs::remove_file(path)?;
+                    fs::remove_file(path).map_err(|e| io_error_with_path(e, path))?;
                 }
             }
             Action::GitAdd { paths } => git::git_add(repo_path, paths)?,
@@ -205,13 +213,14 @@ pub fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
     }
 
     let mut completed: Vec<usize> = Vec::new();
+    let check = crate::symbols::check();
 
     for (i, action) in plan.actions.iter().enumerate() {
         trace!("executing action {}: {}", i + 1, action);
         print!("  {}. {} ... ", i + 1, action);
         match action.execute(&plan.repo_path) {
             Ok(()) => {
-                println!("ok");
+                println!("{check}");
                 completed.push(i);
             }
             Err(e) => {
@@ -283,6 +292,20 @@ fn copy_file_dereference(source: &Path, dest: &Path) -> Result<(), DottyError> {
     let content = fs::read(source)?;
     fs::write(dest, content)?;
     Ok(())
+}
+
+/// Convert an IO error into a more specific DottyError.
+///
+/// If the error is `PermissionDenied`, returns `DottyError::PermissionDenied`
+/// with a clear message. Otherwise, wraps the IO error as usual.
+fn io_error_with_path(err: io::Error, path: &Path) -> DottyError {
+    if err.kind() == io::ErrorKind::PermissionDenied {
+        DottyError::PermissionDenied {
+            path: path.to_path_buf(),
+        }
+    } else {
+        DottyError::Io(err)
+    }
 }
 
 #[cfg(test)]

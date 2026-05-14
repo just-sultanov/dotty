@@ -419,12 +419,13 @@ fn print_summary(
     dry_run: bool,
 ) {
     let prefix = if dry_run { "[dry-run] " } else { "" };
+    let arrow = crate::symbols::arrow();
 
     if !orphans.is_empty() {
         for (repo_rel, target_rel) in orphans {
             eprintln!(
-                "  {}{} orphan removed ({} → {})",
-                prefix, target_rel, repo_rel, target_rel
+                "  {}{} orphan removed ({} {} {})",
+                prefix, target_rel, repo_rel, arrow, target_rel
             );
         }
     }

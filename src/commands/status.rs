@@ -64,7 +64,10 @@ pub fn run() -> Result<()> {
         let size_mb = backup_size as f64 / (1024.0 * 1024.0);
         println!("Backups:   {:.1} MB ({} entries)", size_mb, backup_entries);
         if backup_size > 50 * 1024 * 1024 {
-            println!("  Consider running `dotty clean`");
+            println!(
+                "  {} Consider running `dotty clean`",
+                crate::symbols::warn()
+            );
         }
     } else {
         println!("Backups:   0 MB");

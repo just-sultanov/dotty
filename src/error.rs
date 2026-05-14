@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use thiserror::Error;
 
 /// Top-level error type for dotty.
@@ -10,6 +11,9 @@ pub enum DottyError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("permission denied: {path}. Check file ownership or run with appropriate privileges.")]
+    PermissionDenied { path: PathBuf },
+
     #[error("git command failed: {0}")]
     Git(String),
 
@@ -21,6 +25,11 @@ pub enum DottyError {
 
     #[error("symlink error: {0}")]
     Symlink(String),
+
+    #[error(
+        "circular symlink detected: {path}. This symlink points to itself (directly or indirectly). Remove it manually or fix the target."
+    )]
+    CircularSymlink { path: PathBuf },
 
     #[error("prompt error: {0}")]
     Prompt(#[from] dialoguer::Error),

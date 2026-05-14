@@ -128,17 +128,17 @@
 
 **Goal:** edge cases, error handling, UX.
 
-| #   | Task                               | File(s)                 | Notes                                   |
-| --- | ---------------------------------- | ----------------------- | --------------------------------------- |
-| 7.1 | ASCII fallback for Unicode symbols | `src/plan.rs` (Display) | detect terminal capability              |
-| 7.2 | Permission denied handling         | `src/plan.rs` (execute) | clear error messages                    |
-| 7.3 | Circular symlink detection         | `src/plan.rs` (execute) |                                         |
-| 7.4 | Error types + `thiserror`          | `src/`                  | custom error enum, `From` impls         |
-| 7.5 | `--dry-run` exit code 0 everywhere | `src/plan.rs`           |                                         |
-| 7.6 | Full integration test suite        | `tests/`                | happy path + edge cases from spec table |
-| 7.7 | `cargo clippy`, `cargo fmt`        | —                       | lint clean                              |
+| #   | Task                               | File(s)                      | Notes                                   |
+| --- | ---------------------------------- | ---------------------------- | --------------------------------------- |
+| 7.1 | ASCII fallback for Unicode symbols | `src/symbols.rs`             | detect terminal capability via `TERM`   |
+| 7.2 | Permission denied handling         | `src/plan.rs`, `src/error.rs` | `DottyError::PermissionDenied` variant  |
+| 7.3 | Circular symlink detection         | `src/symlink.rs`, `src/plan.rs` | `would_be_circular()` + `DottyError::CircularSymlink` |
+| 7.4 | Error types + `thiserror`          | `src/error.rs`               | custom error enum, `From` impls         |
+| 7.5 | `--dry-run` exit code 0 everywhere | `src/plan.rs`                |                                         |
+| 7.6 | Full integration test suite        | `tests/`                     | happy path + edge cases from spec table |
+| 7.7 | `cargo clippy`, `cargo fmt`        | —                            | lint clean                              |
 
-**Partial** — 7.4 (thiserror), 7.5 (dry-run exit 0), 7.6 (tests), 7.7 (lint) done. Missing: 7.1 (ASCII fallback), 7.2 (permission denied messages), 7.3 (circular symlink detection).
+**Done**
 
 ---
 

@@ -6,6 +6,7 @@ mod git;
 mod log;
 mod plan;
 mod prompt;
+mod symbols;
 mod symlink;
 
 use anyhow::Result;
