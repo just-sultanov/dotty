@@ -100,6 +100,10 @@ pub enum Commands {
         /// Remove backups older than this date (YYYY-MM-DD)
         #[arg(long)]
         before: Option<String>,
+
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
     },
 }
 

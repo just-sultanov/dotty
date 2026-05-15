@@ -7,7 +7,7 @@ use crate::convention::{date_to_backup_prefix, list_backups, resolve_state_path}
 use crate::prompt::prompt_confirm;
 
 /// Run the `clean` command.
-pub fn run(keep: Option<usize>, before: Option<String>) -> Result<()> {
+pub fn run(keep: Option<usize>, before: Option<String>, yes: bool) -> Result<()> {
     let state_path = resolve_state_path()?;
     let backup_dir = state_path.join("backups");
 
@@ -59,12 +59,11 @@ pub fn run(keep: Option<usize>, before: Option<String>) -> Result<()> {
         return Ok(());
     }
 
-    // Interactive confirmation for each backup
+    // Interactive confirmation for each backup (skipped with --yes)
     let mut removed_count = 0usize;
 
     for backup in &to_remove {
-        let ok = prompt_confirm(&format!("Remove backup '{}'", backup))?;
-        if ok {
+        if yes || prompt_confirm(&format!("Remove backup '{}'", backup))? {
             let backup_path = backup_dir.join(backup);
             if let Err(e) = fs::remove_dir_all(&backup_path) {
                 warn!("failed to remove '{}': {}", backup, e);

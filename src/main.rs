@@ -36,7 +36,7 @@ fn main() -> Result<()> {
         } => commands::remove::run(path, machine, dry_run)?,
         Commands::Apply { dry_run } => commands::apply::run(dry_run)?,
         Commands::Status => commands::status::run()?,
-        Commands::Clean { keep, before } => commands::clean::run(keep, before)?,
+        Commands::Clean { keep, before, yes } => commands::clean::run(keep, before, yes)?,
     }
 
     Ok(())

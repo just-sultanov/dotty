@@ -225,12 +225,23 @@ fn clean_with_backups() {
     );
 
     // Clean with --keep 1 (keep the most recent)
-    // Note: clean prompts interactively, so without a TTY it may not remove.
-    // We just verify the command runs without crashing.
-    let out = env.run(&["clean", "--keep", "1"]);
-    // It may succeed or fail depending on TTY availability for prompts.
-    // The important thing is it doesn't panic.
-    let _ = out;
+    let out = env.run_ok(&["clean", "--keep", "1", "--yes"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    // Should have removed 2 of 2 targeted backups
+    assert!(
+        stdout.contains("Removed 2 of 2"),
+        "expected 'Removed 2 of 2' message:\n{}",
+        stdout
+    );
+
+    // Verify only the most recent backup remains
+    let remaining: Vec<_> = std::fs::read_dir(&backup_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0], "2024-12-31T23-59-59");
 }
 
 #[test]
@@ -247,9 +258,22 @@ fn clean_before_date() {
     std::fs::create_dir_all(backup_dir.join("2024-12-31T23-59-59")).unwrap();
 
     // --before 2024-07-01 should target the first two
-    let out = env.run(&["clean", "--before", "2024-07-01"]);
-    // Again, interactive prompts may block, but it should not panic.
-    let _ = out;
+    let out = env.run_ok(&["clean", "--before", "2024-07-01", "--yes"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("Removed 2 of 2"),
+        "expected 'Removed 2 of 2' message:\n{}",
+        stdout
+    );
+
+    // Verify only the most recent backup remains
+    let remaining: Vec<_> = std::fs::read_dir(&backup_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0], "2024-12-31T23-59-59");
 }
 
 #[test]

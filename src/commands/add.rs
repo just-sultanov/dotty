@@ -1,13 +1,12 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use tracing::warn;
 
 use crate::convention::{
-    self, KNOWN_PLATFORMS, backup_timestamp, read_config, repo_to_target, resolve_repo_path,
-    resolve_state_path, target_to_repo, write_config,
+    self, KNOWN_PLATFORMS, backup_timestamp, expand_tilde, read_config, repo_to_target,
+    resolve_repo_path, resolve_state_path, target_to_repo, walk_dir, write_config,
 };
 use crate::git;
 use crate::plan::{self, Action, Plan};
@@ -211,17 +210,6 @@ pub fn run(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Expand `~` prefix in a path to the full home directory path.
-fn expand_tilde(path: &str) -> Result<PathBuf> {
-    if let Some(rest) = path.strip_prefix("~/") {
-        return Ok(convention::home_dir()?.join(rest));
-    }
-    if path == "~" {
-        return Ok(convention::home_dir()?);
-    }
-    Ok(PathBuf::from(path))
-}
-
 /// Resolve the scope (tier directory name) from --machine / --platform flags.
 ///
 /// Priority: --machine > --platform > "base" (default).
@@ -280,23 +268,6 @@ fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>> {
     }
 
     Ok(files)
-}
-
-/// Recursively walk a directory and collect all file paths.
-fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-    for dir_entry in
-        fs::read_dir(dir).context(format!("failed to read directory: {}", dir.display()))?
-    {
-        let dir_entry = dir_entry.context("failed to read directory entry")?;
-        let path = dir_entry.path();
-
-        if path.is_file() || is_symlink(&path) {
-            files.push(path);
-        } else if path.is_dir() {
-            walk_dir(&path, files)?;
-        }
-    }
-    Ok(())
 }
 
 /// Build a map from target path → list of repo-relative paths that manage it.
@@ -388,19 +359,19 @@ mod tests {
 
     #[test]
     fn test_expand_tilde_home() {
-        let path = expand_tilde("~/.vimrc").unwrap();
+        let path = convention::expand_tilde("~/.vimrc").unwrap();
         assert!(path.to_string_lossy().ends_with(".vimrc"));
     }
 
     #[test]
     fn test_expand_tilde_nested() {
-        let path = expand_tilde("~/.config/nvim/init.lua").unwrap();
+        let path = convention::expand_tilde("~/.config/nvim/init.lua").unwrap();
         assert!(path.to_string_lossy().ends_with(".config/nvim/init.lua"));
     }
 
     #[test]
     fn test_expand_tilde_absolute() {
-        let path = expand_tilde("/opt/nvim/appimage").unwrap();
+        let path = convention::expand_tilde("/opt/nvim/appimage").unwrap();
         assert_eq!(path, PathBuf::from("/opt/nvim/appimage"));
     }
 

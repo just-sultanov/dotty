@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -6,8 +7,8 @@ use anyhow::Result;
 use tracing::warn;
 
 use crate::convention::{
-    backup_timestamp, read_config, repo_to_target, resolve_repo_path, resolve_state_path,
-    scan_machine_directories, write_config,
+    backup_timestamp, expand_target_ref, read_config, repo_to_target, resolve_repo_path,
+    resolve_state_path, scan_machine_directories, write_config,
 };
 use crate::git;
 use crate::plan::{self, Action, Plan};
@@ -54,7 +55,7 @@ pub fn run(dry_run: bool) -> Result<()> {
     let mut file_results: Vec<FileResult> = Vec::new();
 
     // Build override map: target_path → lower tier that was overridden
-    let override_map = build_override_map(&tracked_files, &machine_name, &platform);
+    let override_map = build_override_map(&tracked_files, &Some(machine_name.clone()), &platform);
 
     // Process each merged file
     for (target_path, (tier, repo_rel)) in &merged {
@@ -258,7 +259,7 @@ fn merge_tiers(
 /// Returns a map from target path → the lower tier that was overridden.
 fn build_override_map(
     tracked_files: &[String],
-    machine: &str,
+    machine: &Option<String>,
     platform: &Option<String>,
 ) -> HashMap<PathBuf, String> {
     let mut all_tiers: HashMap<PathBuf, Vec<(String, String)>> = HashMap::new();
@@ -267,7 +268,7 @@ fn build_override_map(
     for file in tracked_files {
         let repo_path = PathBuf::from(file);
         if let Ok(target) = repo_to_target(&repo_path) {
-            let tier = classify_tier(file, machine, platform);
+            let tier = crate::convention::classify_tier(file, machine, platform);
             if let Some(tier_name) = tier {
                 all_tiers
                     .entry(target)
@@ -288,48 +289,19 @@ fn build_override_map(
         // Determine the highest tier present
         let highest = entries
             .iter()
-            .map(|(tier, _)| tier_priority(tier))
+            .map(|(tier, _)| crate::convention::tier_priority(tier))
             .max()
             .unwrap();
 
         // All entries with lower priority are overridden
         for (tier, _) in entries {
-            if tier_priority(tier) < highest {
+            if crate::convention::tier_priority(tier) < highest {
                 overrides.insert(target.clone(), tier.clone());
             }
         }
     }
 
     overrides
-}
-
-/// Classify a repo-relative path into its tier.
-fn classify_tier(file: &str, machine: &str, platform: &Option<String>) -> Option<String> {
-    if file.starts_with("base/") {
-        return Some("base".to_string());
-    }
-    if let Some(plat) = platform {
-        let platform_prefix = format!("{}/", plat);
-        if file.starts_with(&platform_prefix) {
-            return Some(plat.clone());
-        }
-    }
-    let machine_prefix = format!("{}/", machine);
-    if file.starts_with(&machine_prefix) {
-        return Some(machine.to_string());
-    }
-    None
-}
-
-/// Return a numeric priority for a tier name (higher = more priority).
-fn tier_priority(tier: &str) -> u32 {
-    if tier == "base" {
-        return 1;
-    }
-    if crate::convention::KNOWN_PLATFORMS.contains(&tier) {
-        return 2;
-    }
-    3 // machine tier
 }
 
 // ---------------------------------------------------------------------------
@@ -375,8 +347,8 @@ fn resolve_machine(
 // ---------------------------------------------------------------------------
 
 /// Rebuild the managed map from tracked files.
-fn rebuild_managed_map(tracked_files: &[String]) -> HashMap<String, String> {
-    let mut managed = HashMap::new();
+fn rebuild_managed_map(tracked_files: &[String]) -> IndexMap<String, String> {
+    let mut managed = IndexMap::new();
     let home = match crate::convention::home_dir() {
         Ok(h) => h,
         Err(_) => return managed,
@@ -400,19 +372,6 @@ fn rebuild_managed_map(tracked_files: &[String]) -> HashMap<String, String> {
 // ---------------------------------------------------------------------------
 // Path helpers
 // ---------------------------------------------------------------------------
-
-/// Expand a target reference from the managed map (e.g. "~/.vimrc" → full path).
-fn expand_target_ref(target_ref: &str) -> Result<PathBuf> {
-    let home = crate::convention::home_dir()?;
-
-    if let Some(rest) = target_ref.strip_prefix("~/") {
-        return Ok(home.join(rest));
-    }
-    if target_ref == "~" {
-        return Ok(home);
-    }
-    Ok(PathBuf::from(target_ref))
-}
 
 // ---------------------------------------------------------------------------
 // Console output
@@ -521,18 +480,22 @@ mod tests {
 
     #[test]
     fn test_tier_priority() {
-        assert_eq!(tier_priority("base"), 1);
-        assert_eq!(tier_priority("macos"), 2);
-        assert_eq!(tier_priority("linux"), 2);
-        assert_eq!(tier_priority("freebsd"), 2);
-        assert_eq!(tier_priority("macbook"), 3);
-        assert_eq!(tier_priority("ubuntu-work"), 3);
+        assert_eq!(crate::convention::tier_priority("base"), 1);
+        assert_eq!(crate::convention::tier_priority("macos"), 2);
+        assert_eq!(crate::convention::tier_priority("linux"), 2);
+        assert_eq!(crate::convention::tier_priority("freebsd"), 2);
+        assert_eq!(crate::convention::tier_priority("macbook"), 3);
+        assert_eq!(crate::convention::tier_priority("ubuntu-work"), 3);
     }
 
     #[test]
     fn test_classify_tier_base() {
         assert_eq!(
-            classify_tier("base/home/.vimrc", "macbook", &Some("macos".into())),
+            crate::convention::classify_tier(
+                "base/home/.vimrc",
+                &Some("macbook".into()),
+                &Some("macos".into())
+            ),
             Some("base".into())
         );
     }
@@ -540,9 +503,9 @@ mod tests {
     #[test]
     fn test_classify_tier_platform() {
         assert_eq!(
-            classify_tier(
+            crate::convention::classify_tier(
                 "macos/home/.config/skhd/skhdrc",
-                "macbook",
+                &Some("macbook".into()),
                 &Some("macos".into())
             ),
             Some("macos".into())
@@ -552,9 +515,9 @@ mod tests {
     #[test]
     fn test_classify_tier_machine() {
         assert_eq!(
-            classify_tier(
+            crate::convention::classify_tier(
                 "macbook/home/.config/nvim/plugins.lua",
-                "macbook",
+                &Some("macbook".into()),
                 &Some("macos".into())
             ),
             Some("macbook".into())
@@ -564,7 +527,11 @@ mod tests {
     #[test]
     fn test_classify_tier_unknown() {
         assert_eq!(
-            classify_tier("random/file.txt", "macbook", &Some("macos".into())),
+            crate::convention::classify_tier(
+                "random/file.txt",
+                &Some("macbook".into()),
+                &Some("macos".into())
+            ),
             None
         );
     }
@@ -610,7 +577,7 @@ mod tests {
             "macbook/home/.config/nvim/plugins.lua".into(),
             "base/home/.vimrc".into(),
         ];
-        let overrides = build_override_map(&files, "macbook", &Some("macos".into()));
+        let overrides = build_override_map(&files, &Some("macbook".into()), &Some("macos".into()));
 
         let home = crate::convention::home_dir().unwrap();
         assert!(overrides.contains_key(&home.join(".config/nvim/plugins.lua")));

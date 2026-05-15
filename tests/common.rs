@@ -42,16 +42,8 @@ impl TestEnv {
     }
 
     /// Return the binary path (built by `cargo test`).
-    fn bin() -> PathBuf {
-        // When run via `cargo test`, the binary is at the same location
-        // as the test harness.
-        std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent() // tests/... → debug/
-            .unwrap()
-            .join("dotty")
+    fn bin() -> &'static str {
+        env!("CARGO_BIN_EXE_dotty")
     }
 
     /// Configure git identity in the repo so that `git commit` works.

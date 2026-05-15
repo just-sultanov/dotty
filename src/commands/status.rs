@@ -224,7 +224,7 @@ fn find_tier_conflicts(
     for file in &tracked_files {
         let repo_path_buf = PathBuf::from(file);
         if let Ok(target) = repo_to_target(&repo_path_buf) {
-            let tier = classify_tier(file, machine, platform);
+            let tier = convention::classify_tier(file, machine, platform);
             if let Some(tier_name) = tier {
                 all_tiers
                     .entry(target)
@@ -286,42 +286,9 @@ fn format_target_path(path: &Path) -> String {
     }
 }
 
-/// Classify a repo-relative path into its tier.
-fn classify_tier(
-    file: &str,
-    machine: &Option<String>,
-    platform: &Option<String>,
-) -> Option<String> {
-    if file.starts_with("base/") {
-        return Some("base".to_string());
-    }
-
-    if let Some(plat) = platform {
-        let platform_prefix = format!("{}/", plat);
-        if file.starts_with(&platform_prefix) {
-            return Some(plat.clone());
-        }
-    }
-
-    if let Some(mach) = machine {
-        let machine_prefix = format!("{}/", mach);
-        if file.starts_with(&machine_prefix) {
-            return Some(mach.to_string());
-        }
-    }
-
-    None
-}
-
 /// Return a numeric priority for a tier name (higher = more priority).
 fn tier_priority(tier: &str) -> u32 {
-    if tier == "base" {
-        return 1;
-    }
-    if convention::KNOWN_PLATFORMS.contains(&tier) {
-        return 2;
-    }
-    3 // machine tier
+    convention::tier_priority(tier)
 }
 
 #[cfg(test)]
@@ -330,18 +297,18 @@ mod tests {
 
     #[test]
     fn test_tier_priority() {
-        assert_eq!(tier_priority("base"), 1);
-        assert_eq!(tier_priority("macos"), 2);
-        assert_eq!(tier_priority("linux"), 2);
-        assert_eq!(tier_priority("freebsd"), 2);
-        assert_eq!(tier_priority("macbook"), 3);
-        assert_eq!(tier_priority("ubuntu-work"), 3);
+        assert_eq!(convention::tier_priority("base"), 1);
+        assert_eq!(convention::tier_priority("macos"), 2);
+        assert_eq!(convention::tier_priority("linux"), 2);
+        assert_eq!(convention::tier_priority("freebsd"), 2);
+        assert_eq!(convention::tier_priority("macbook"), 3);
+        assert_eq!(convention::tier_priority("ubuntu-work"), 3);
     }
 
     #[test]
     fn test_classify_tier_base() {
         assert_eq!(
-            classify_tier(
+            convention::classify_tier(
                 "base/home/.vimrc",
                 &Some("macbook".into()),
                 &Some("macos".into())
@@ -353,7 +320,7 @@ mod tests {
     #[test]
     fn test_classify_tier_platform() {
         assert_eq!(
-            classify_tier(
+            convention::classify_tier(
                 "macos/home/.config/skhd/skhdrc",
                 &Some("macbook".into()),
                 &Some("macos".into())
@@ -365,7 +332,7 @@ mod tests {
     #[test]
     fn test_classify_tier_machine() {
         assert_eq!(
-            classify_tier(
+            convention::classify_tier(
                 "macbook/home/.config/nvim/plugins.lua",
                 &Some("macbook".into()),
                 &Some("macos".into())

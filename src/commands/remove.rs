@@ -1,12 +1,11 @@
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
 use crate::convention::{
     expand_tilde, find_managed_repo_files, read_config, repo_to_target, resolve_repo_path,
-    resolve_state_path, write_config,
+    resolve_state_path, walk_dir, write_config,
 };
 use crate::git;
 use crate::plan::{self, Action, Plan};
@@ -132,7 +131,7 @@ pub fn run(path: String, machine: Option<String>, dry_run: bool) -> Result<()> {
         });
 
         // Remove from managed map
-        config.managed.remove(repo_rel);
+        config.managed.shift_remove(repo_rel);
     }
 
     // Execute plan
@@ -176,26 +175,10 @@ fn collect_target_files(target_path: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// Recursively walk a directory and collect all file paths.
-fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-    for dir_entry in fs::read_dir(dir)
-        .map_err(|e| anyhow::anyhow!("failed to read directory: {}: {}", dir.display(), e))?
-    {
-        let dir_entry =
-            dir_entry.map_err(|e| anyhow::anyhow!("failed to read directory entry: {}", e))?;
-        let path = dir_entry.path();
-
-        if path.is_file() || is_symlink(&path) {
-            files.push(path);
-        } else if path.is_dir() {
-            walk_dir(&path, files)?;
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -117,7 +117,7 @@ pub fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub machine: Option<String>,
-    pub managed: HashMap<String, String>,
+    pub managed: IndexMap<String, String>,
 }
 
 impl Config {
@@ -125,7 +125,7 @@ impl Config {
     pub fn new() -> Self {
         Self {
             machine: None,
-            managed: HashMap::new(),
+            managed: IndexMap::new(),
         }
     }
 
@@ -245,6 +245,72 @@ pub fn validate_machine_name(name: &str) -> Result<(), DottyError> {
             "'{}' is a reserved platform name.",
             name
         )));
+    }
+    Ok(())
+}
+
+/// Classify a repo-relative path into its tier.
+///
+/// Returns `Some("base")`, `Some("macos")`, `Some("macbook")`, etc.
+pub fn classify_tier(
+    file: &str,
+    machine: &Option<String>,
+    platform: &Option<String>,
+) -> Option<String> {
+    if file.starts_with("base/") {
+        return Some("base".to_string());
+    }
+
+    if let Some(plat) = platform {
+        let platform_prefix = format!("{}/", plat);
+        if file.starts_with(&platform_prefix) {
+            return Some(plat.clone());
+        }
+    }
+
+    if let Some(mach) = machine {
+        let machine_prefix = format!("{}/", mach);
+        if file.starts_with(&machine_prefix) {
+            return Some(mach.to_string());
+        }
+    }
+
+    None
+}
+
+/// Return a numeric priority for a tier name (higher = more priority).
+pub fn tier_priority(tier: &str) -> u32 {
+    if tier == "base" {
+        return 1;
+    }
+    if KNOWN_PLATFORMS.contains(&tier) {
+        return 2;
+    }
+    3 // machine tier
+}
+
+/// Recursively walk a directory and collect all file paths.
+pub fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), DottyError> {
+    for dir_entry in fs::read_dir(dir).map_err(DottyError::Io)? {
+        let dir_entry = dir_entry.map_err(|e| {
+            DottyError::Io(std::io::Error::new(
+                e.kind(),
+                "failed to read directory entry",
+            ))
+        })?;
+        let path = dir_entry.path();
+
+        // is_file() follows symlinks; symlink_metadata checks the link itself
+        let is_file_or_symlink = path.is_file()
+            || path
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink());
+
+        if is_file_or_symlink {
+            files.push(path);
+        } else if path.is_dir() {
+            walk_dir(&path, files)?;
+        }
     }
     Ok(())
 }
