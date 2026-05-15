@@ -59,9 +59,8 @@ pub fn git_clone(url: &str, dir: &Path) -> Result<(), DottyError> {
     Ok(())
 }
 
-#[allow(dead_code)]
 /// Stage files in the repository.
-pub fn git_add(dir: &Path, paths: &[PathBuf]) -> Result<(), DottyError> {
+pub(crate) fn git_add(dir: &Path, paths: &[PathBuf]) -> Result<(), DottyError> {
     let path_args: Vec<&str> = paths.iter().filter_map(|p| p.to_str()).collect();
     let mut args = vec!["add"];
     args.extend(path_args);
@@ -69,16 +68,14 @@ pub fn git_add(dir: &Path, paths: &[PathBuf]) -> Result<(), DottyError> {
     Ok(())
 }
 
-#[allow(dead_code)]
 /// Commit staged changes with the given message.
-pub fn git_commit(dir: &Path, message: &str) -> Result<(), DottyError> {
+pub(crate) fn git_commit(dir: &Path, message: &str) -> Result<(), DottyError> {
     git_run(dir, &["commit", "-m", message])?;
     Ok(())
 }
 
-#[allow(dead_code)]
 /// List all tracked files in the repository (one per line).
-pub fn git_ls_files(dir: &Path) -> Result<Vec<String>, DottyError> {
+pub(crate) fn git_ls_files(dir: &Path) -> Result<Vec<String>, DottyError> {
     let output = git_run(dir, &["ls-files"])?;
     Ok(output
         .lines()
@@ -87,30 +84,26 @@ pub fn git_ls_files(dir: &Path) -> Result<Vec<String>, DottyError> {
         .collect())
 }
 
-#[allow(dead_code)]
 /// Get the git status summary (porcelain format).
-pub fn git_status(dir: &Path) -> Result<String, DottyError> {
+pub(crate) fn git_status(dir: &Path) -> Result<String, DottyError> {
     git_run(dir, &["status", "--porcelain"])
 }
 
-#[allow(dead_code)]
 /// Get the current branch name.
-pub fn git_current_branch(dir: &Path) -> Result<String, DottyError> {
+pub(crate) fn git_current_branch(dir: &Path) -> Result<String, DottyError> {
     git_run(dir, &["branch", "--show-current"]).map(|s| s.trim().to_string())
 }
 
-#[allow(dead_code)]
 /// Reset staged files (unstage).
-pub fn git_reset(dir: &Path, paths: &[&str]) -> Result<(), DottyError> {
+pub(crate) fn git_reset(dir: &Path, paths: &[&str]) -> Result<(), DottyError> {
     let mut args = vec!["reset", "HEAD"];
     args.extend_from_slice(paths);
     git_run(dir, &args)?;
     Ok(())
 }
 
-#[allow(dead_code)]
 /// Soft reset to undo the last commit.
-pub fn git_reset_soft_head(dir: &Path) -> Result<(), DottyError> {
+pub(crate) fn git_reset_soft_head(dir: &Path) -> Result<(), DottyError> {
     git_run(dir, &["reset", "--soft", "HEAD~1"])?;
     Ok(())
 }

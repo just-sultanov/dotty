@@ -35,11 +35,10 @@ pub fn resolve_state_path() -> Result<PathBuf, DottyError> {
     Ok(home_dir()?.join(".local").join("state").join("dotty"))
 }
 
-#[allow(dead_code)]
 /// Convert a repo-relative path to its target (real filesystem) path.
 ///
 /// E.g. `base/home/.vimrc` → `~/.vimrc`, `linux/opt/nvim/app` → `/opt/nvim/app`.
-pub fn repo_to_target(repo_path: &Path) -> Result<PathBuf, DottyError> {
+pub(crate) fn repo_to_target(repo_path: &Path) -> Result<PathBuf, DottyError> {
     let mut components = repo_path.components();
 
     // Skip the scope directory (base, macos, macbook, etc.)
@@ -68,13 +67,12 @@ pub fn repo_to_target(repo_path: &Path) -> Result<PathBuf, DottyError> {
     Ok(root.join(relative))
 }
 
-#[allow(dead_code)]
 /// Convert a target (real filesystem) path to its repo-relative path.
 ///
 /// E.g. `~/.vimrc` → `home/.vimrc`, `/opt/nvim/app` → `opt/nvim/app`.
 ///
 /// Returns the path relative to the scope directory (without the scope prefix).
-pub fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
+pub(crate) fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
     let home = home_dir()?;
 
     if let Ok(relative) = target_path.strip_prefix(&home) {

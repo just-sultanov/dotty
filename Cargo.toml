@@ -25,3 +25,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 serial_test = "3"
+
+[lints.rust]
+unused = "warn"
+dead_code = "warn"
+
+[lints.clippy]
+disallowed_methods = "warn"

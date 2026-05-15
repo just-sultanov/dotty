@@ -44,12 +44,7 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
     let merged = merge_tiers(&tracked_files, &machine_name, &platform);
 
     // Build plan
-    let mut plan = Plan::new("apply", &repo_path);
-
-    // Capture current branch
-    if let Ok(branch) = git::git_current_branch(&repo_path) {
-        plan.branch = branch;
-    }
+    let mut plan = Plan::new(&repo_path);
 
     // Collect per-file results for console output
     let mut file_results: Vec<FileResult> = Vec::new();

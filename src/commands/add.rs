@@ -98,14 +98,7 @@ pub fn run(
     let files_to_override = resolve_conflicts(&files_to_add, &conflict_map)?;
 
     // Build the plan
-    let mut plan = Plan::new("add", &repo_path);
-
-    // Capture current branch
-    if repo_path.join(".git").exists()
-        && let Ok(branch) = git::git_current_branch(&repo_path)
-    {
-        plan.branch = branch;
-    }
+    let mut plan = Plan::new(&repo_path);
 
     // Read current config (to update managed map)
     let mut config = read_config(&state_path)?;

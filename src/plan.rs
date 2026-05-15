@@ -12,12 +12,11 @@ use crate::error::DottyError;
 use crate::git;
 use crate::symlink::{self, is_symlink};
 
-#[allow(dead_code)]
 /// A single atomic operation within a plan.
 ///
 /// Each action can be executed and, if needed, rolled back.
 #[derive(Debug, Clone)]
-pub enum Action {
+pub(crate) enum Action {
     CreateDir { path: PathBuf },
     Backup { source: PathBuf, dest: PathBuf },
     CopyFile { source: PathBuf, dest: PathBuf },
@@ -157,27 +156,21 @@ impl Action {
     }
 }
 
-#[allow(dead_code)]
 /// A plan is a sequence of actions to be executed together.
 ///
 /// Built in a pure phase (no side effects), then executed with automatic
 /// rollback on failure.
 #[derive(Debug)]
-pub struct Plan {
+pub(crate) struct Plan {
     pub repo_path: PathBuf,
-    pub branch: String,
-    pub command: String,
     pub actions: Vec<Action>,
 }
 
-#[allow(dead_code)]
 impl Plan {
     /// Create a new empty plan.
-    pub fn new(command: &str, repo_path: &Path) -> Self {
+    pub fn new(repo_path: &Path) -> Self {
         Self {
             repo_path: repo_path.to_path_buf(),
-            branch: String::new(),
-            command: command.to_string(),
             actions: Vec::new(),
         }
     }
@@ -193,13 +186,12 @@ impl Plan {
     }
 }
 
-#[allow(dead_code)]
 /// Execute all actions in the plan.
 ///
 /// If `dry_run` is true, print each action but perform no mutations.
 /// If any action fails, roll back all previously completed actions in
 /// reverse order.
-pub fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
+pub(crate) fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
     if plan.is_empty() {
         return Ok(());
     }
@@ -237,7 +229,6 @@ pub fn execute_plan(plan: &Plan, dry_run: bool) -> Result<(), DottyError> {
     Ok(())
 }
 
-#[allow(dead_code)]
 /// Roll back completed actions in reverse order.
 ///
 /// Handles git actions specially (reset --soft for commits, reset HEAD for adds)
@@ -288,7 +279,6 @@ fn rollback_completed(plan: &Plan, completed_indices: &[usize]) -> Result<(), Do
     Ok(())
 }
 
-#[allow(dead_code)]
 /// Copy a file, dereferencing symlinks (equivalent to `cp -L`).
 fn copy_file_dereference(source: &Path, dest: &Path) -> Result<(), DottyError> {
     let content = fs::read(source)?;
@@ -573,13 +563,13 @@ mod tests {
 
     #[test]
     fn test_plan_empty() {
-        let plan = Plan::new("test", &dummy_repo_path());
+        let plan = Plan::new(&dummy_repo_path());
         assert!(plan.is_empty());
     }
 
     #[test]
     fn test_plan_add_actions() {
-        let mut plan = Plan::new("test", &dummy_repo_path());
+        let mut plan = Plan::new(&dummy_repo_path());
         plan.add(Action::CreateDir {
             path: PathBuf::from("/tmp/test"),
         });
@@ -594,7 +584,7 @@ mod tests {
     #[test]
     fn test_execute_plan_dry_run() {
         let base = setup();
-        let mut plan = Plan::new("test", &base);
+        let mut plan = Plan::new(&base);
         plan.add(Action::CreateDir {
             path: base.join("should_not_exist"),
         });
@@ -607,7 +597,7 @@ mod tests {
 
     #[test]
     fn test_execute_plan_empty() {
-        let plan = Plan::new("test", &dummy_repo_path());
+        let plan = Plan::new(&dummy_repo_path());
         execute_plan(&plan, false).unwrap();
     }
 

@@ -15,11 +15,10 @@ fn map_dialoguer_error(e: dialoguer::Error) -> DottyError {
     }
 }
 
-#[allow(dead_code)]
 /// Prompt the user for a yes/no confirmation.
 ///
 /// Returns `true` if the user confirms, `false` otherwise.
-pub fn prompt_confirm(prompt: &str) -> Result<bool, DottyError> {
+pub(crate) fn prompt_confirm(prompt: &str) -> Result<bool, DottyError> {
     let answer = Confirm::new()
         .with_prompt(prompt)
         .default(true)

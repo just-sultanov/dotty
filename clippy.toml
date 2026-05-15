@@ -6,9 +6,6 @@ disallowed-methods = [
   { path = "std::panic::panic_any", reason = "use anyhow::bail! or panic! with a message instead" },
 ]
 
-# Lint configuration
-allow-unwrap-in-tests = true
-
 # Maximum cognitive complexity for functions
 cognitive-complexity-threshold = 25
 

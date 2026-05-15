@@ -5,9 +5,8 @@ use thiserror::Error;
 ///
 /// Use `thiserror` for domain-specific errors and `anyhow` for the error chain
 /// in `main()` and command dispatch.
-#[allow(dead_code)]
 #[derive(Error, Debug)]
-pub enum DottyError {
+pub(crate) enum DottyError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -22,9 +21,6 @@ pub enum DottyError {
 
     #[error("path error: {0}")]
     Path(String),
-
-    #[error("symlink error: {0}")]
-    Symlink(String),
 
     #[error(
         "circular symlink detected: {path}. This symlink points to itself (directly or indirectly). Remove it manually or fix the target."

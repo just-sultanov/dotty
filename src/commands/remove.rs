@@ -90,12 +90,7 @@ pub fn run(
     managed_pairs.retain(|(_, repo_rel)| seen.insert(repo_rel.clone()));
 
     // Build plan
-    let mut plan = Plan::new("remove", &repo_path);
-
-    // Capture current branch
-    if let Ok(branch) = git::git_current_branch(&repo_path) {
-        plan.branch = branch;
-    }
+    let mut plan = Plan::new(&repo_path);
 
     // Read current config (to update managed map)
     let mut config = read_config(&state_path)?;
