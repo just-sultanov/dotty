@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -30,8 +31,12 @@ pub fn run(
     // Determine scope (tier directory name)
     let scope = resolve_scope(&machine, &platform)?;
 
-    // Reject paths inside the dotty repo itself
-    if target_path.starts_with(&repo_path) {
+    // Reject paths inside the dotty repo itself.
+    // Canonicalize both paths to prevent path traversal via `..` components.
+    let canonical_repo = fs::canonicalize(&repo_path).unwrap_or_else(|_| repo_path.clone());
+    if let Ok(canonical_target) = fs::canonicalize(&target_path)
+        && canonical_target.starts_with(&canonical_repo)
+    {
         anyhow::bail!("Cannot add files from inside the dotty repository.");
     }
 
