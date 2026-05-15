@@ -103,17 +103,26 @@ pub fn run(
     // Collect repo-relative paths for git staging
     let mut git_rm_paths: Vec<PathBuf> = Vec::new();
 
-    for (target_file, repo_rel) in &managed_pairs {
-        let repo_file = repo_path.join(repo_rel);
+    // Track files the user chose to skip (e.g., declined override prompt)
+    let mut skipped: HashSet<String> = HashSet::new();
 
-        // Remove symlink at target if it exists
+    // Phase 1: Remove symlinks at target locations.
+    // Done first so that Phase 2's CopyFile writes a new regular file instead of
+    // following the symlink (`fs::write` follows symlinks). If the later copy fails,
+    // the repo file is still intact and the user can re-apply.
+    for (target_file, _repo_rel) in &managed_pairs {
         if is_symlink(target_file) {
             plan.add(Action::RemoveSymlink {
                 path: target_file.clone(),
             });
         }
+    }
 
-        // Copy file from repo back to target location (restore as regular file)
+    // Phase 2: Copy files from repo back to target (restore as regular files).
+    // Symlinks are already gone, so `fs::write` creates a new regular file.
+    for (target_file, repo_rel) in &managed_pairs {
+        let repo_file = repo_path.join(repo_rel);
+
         if repo_file.exists() {
             // Check if target already exists as regular file — ask for override
             if target_file.exists() && !is_symlink(target_file) {
@@ -122,7 +131,7 @@ pub fn run(
                     target_file.display()
                 ))?;
                 if !ok {
-                    // Skip this file — don't remove from management
+                    skipped.insert(repo_rel.clone());
                     continue;
                 }
             }
@@ -132,6 +141,17 @@ pub fn run(
                 dest: target_file.clone(),
             });
         }
+    }
+
+    // Phase 3: Remove files from repo and update config.
+    // Done last so that if this fails, the target already has a valid regular file
+    // (restored in phase 2) and the repository simply retains the extra file.
+    for (_target_file, repo_rel) in &managed_pairs {
+        if skipped.contains(repo_rel) {
+            continue;
+        }
+
+        let repo_file = repo_path.join(repo_rel);
 
         // Remove file from repo
         plan.add(Action::RemoveFile {
