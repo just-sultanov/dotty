@@ -80,6 +80,8 @@ impl Action {
                 fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
                 // copy_file_dereference already returns DottyError
                 copy_file_dereference(source, dest)?;
+                // Verify backup integrity: check existence and size match
+                verify_backup_integrity(source, dest)?;
             }
             Action::CopyFile { source, dest } => {
                 let parent = dest.parent();
@@ -291,6 +293,38 @@ fn rollback_completed(plan: &Plan, completed_indices: &[usize]) -> Result<(), Do
 fn copy_file_dereference(source: &Path, dest: &Path) -> Result<(), DottyError> {
     let content = fs::read(source)?;
     fs::write(dest, content)?;
+    Ok(())
+}
+
+/// Verify that a backup file was created correctly.
+///
+/// Checks that the backup exists at the destination path and that its size
+/// matches the source file. Returns an error if either check fails, preventing
+/// the plan from proceeding to replace the original file with an unverified backup.
+fn verify_backup_integrity(source: &Path, dest: &Path) -> Result<(), DottyError> {
+    let dest_meta = fs::metadata(dest).map_err(|e| DottyError::BackupVerification {
+        path: dest.to_path_buf(),
+        detail: format!("backup file does not exist or is not readable: {}", e),
+    })?;
+    let source_meta = fs::metadata(source).map_err(|e| DottyError::BackupVerification {
+        path: dest.to_path_buf(),
+        detail: format!("cannot read source file metadata for comparison: {}", e),
+    })?;
+
+    let source_size = source_meta.len();
+    let dest_size = dest_meta.len();
+
+    if source_size != dest_size {
+        return Err(DottyError::BackupVerification {
+            path: dest.to_path_buf(),
+            detail: format!(
+                "size mismatch: source is {} bytes, backup is {} bytes",
+                source_size, dest_size
+            ),
+        });
+    }
+
+    debug!("backup verified: {} ({} bytes)", dest.display(), dest_size);
     Ok(())
 }
 
@@ -607,6 +641,100 @@ mod tests {
         copy_file_dereference(&sym, &dst).unwrap();
         assert!(!is_symlink(&dst));
         assert_eq!(fs::read_to_string(&dst).unwrap(), "real content");
+
+        teardown(&base);
+    }
+
+    #[test]
+    fn test_backup_verification_success() {
+        let base = setup();
+        let src = base.join("source.txt");
+        let dst = base.join("backup.txt");
+
+        fs::write(&src, "original content").unwrap();
+        fs::write(&dst, "original content").unwrap();
+
+        verify_backup_integrity(&src, &dst).unwrap();
+
+        teardown(&base);
+    }
+
+    #[test]
+    fn test_backup_verification_size_mismatch() {
+        let base = setup();
+        let src = base.join("source.txt");
+        let dst = base.join("backup.txt");
+
+        fs::write(&src, "original content").unwrap();
+        fs::write(&dst, "short").unwrap();
+
+        let result = verify_backup_integrity(&src, &dst);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::BackupVerification { path, detail } => {
+                assert_eq!(path, dst);
+                assert!(detail.contains("size mismatch"));
+            }
+            other => panic!("expected BackupVerification error, got: {other}"),
+        }
+
+        teardown(&base);
+    }
+
+    #[test]
+    fn test_backup_verification_missing_backup() {
+        let base = setup();
+        let src = base.join("source.txt");
+        let dst = base.join("backup_missing.txt");
+
+        fs::write(&src, "content").unwrap();
+        // dst does not exist
+
+        let result = verify_backup_integrity(&src, &dst);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::BackupVerification { path, detail } => {
+                assert_eq!(path, dst);
+                assert!(detail.contains("does not exist") || detail.contains("not readable"));
+            }
+            other => panic!("expected BackupVerification error, got: {other}"),
+        }
+
+        teardown(&base);
+    }
+
+    #[test]
+    fn test_backup_verification_empty_files() {
+        let base = setup();
+        let src = base.join("empty.txt");
+        let dst = base.join("empty_backup.txt");
+
+        fs::write(&src, "").unwrap();
+        fs::write(&dst, "").unwrap();
+
+        // Two empty files should pass verification (both 0 bytes)
+        verify_backup_integrity(&src, &dst).unwrap();
+
+        teardown(&base);
+    }
+
+    #[test]
+    fn test_backup_action_with_verification() {
+        let base = setup();
+        let src = base.join("original.txt");
+        let backup_dir = base.join("backups/2024-01-01T00-00-00");
+        let dst = backup_dir.join("original.txt");
+
+        fs::write(&src, "original content").unwrap();
+
+        let action = Action::Backup {
+            source: src,
+            dest: dst.clone(),
+        };
+        // Should succeed: copy + verify
+        action.execute(&dummy_repo_path()).unwrap();
+        assert!(dst.exists());
+        assert_eq!(fs::read_to_string(&dst).unwrap(), "original content");
 
         teardown(&base);
     }
