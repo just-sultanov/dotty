@@ -4,8 +4,74 @@ mod common;
 use common::TestEnv;
 
 // ---------------------------------------------------------------------------
-// remove
+// remove — directory (recursive removal)
 // ---------------------------------------------------------------------------
+
+#[test]
+fn remove_directory_recursively() {
+    let env = TestEnv::new();
+
+    env.run_ok(&["init", "--machine", "testbox"]);
+    env.git_config_identity();
+
+    // Create a directory with multiple files
+    let dir = env.home.join(".config/nvim");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("init.lua"), "vim.g.mapleader = ' '").unwrap();
+    std::fs::write(dir.join("lazy.lua"), "require('lazy').setup()").unwrap();
+    let sub = dir.join("lua");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(sub.join("mappings.lua"), "keymap").unwrap();
+
+    // Add the entire directory
+    env.run_ok(&["add", dir.to_str().unwrap(), "--commit", "add nvim"]);
+
+    // Verify all files are tracked and symlinked
+    let tracked = env.tracked_files();
+    assert!(tracked.contains(&"base/home/.config/nvim/init.lua".to_string()));
+    assert!(tracked.contains(&"base/home/.config/nvim/lazy.lua".to_string()));
+    assert!(tracked.contains(&"base/home/.config/nvim/lua/mappings.lua".to_string()));
+
+    assert!(dir.join("init.lua").is_symlink());
+    assert!(dir.join("lazy.lua").is_symlink());
+    assert!(dir.join("lua/mappings.lua").is_symlink());
+
+    // Remove the entire directory
+    env.run_ok(&["remove", dir.to_str().unwrap()]);
+
+    // All symlinks should be gone
+    assert!(!dir.join("init.lua").is_symlink());
+    assert!(!dir.join("lazy.lua").is_symlink());
+    assert!(!dir.join("lua/mappings.lua").is_symlink());
+
+    // All files should be restored as regular files
+    assert!(dir.join("init.lua").is_file());
+    assert!(dir.join("lazy.lua").is_file());
+    assert!(dir.join("lua/mappings.lua").is_file());
+
+    // Content should be preserved
+    assert_eq!(
+        std::fs::read_to_string(dir.join("init.lua")).unwrap(),
+        "vim.g.mapleader = ' '"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("lazy.lua")).unwrap(),
+        "require('lazy').setup()"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("lua/mappings.lua")).unwrap(),
+        "keymap"
+    );
+
+    // Repo files should be deleted
+    assert!(!env.repo.join("base/home/.config/nvim/init.lua").exists());
+    assert!(!env.repo.join("base/home/.config/nvim/lazy.lua").exists());
+    assert!(
+        !env.repo
+            .join("base/home/.config/nvim/lua/mappings.lua")
+            .exists()
+    );
+}
 
 #[test]
 fn remove_file_from_management() {
@@ -34,6 +100,55 @@ fn remove_file_from_management() {
     assert_eq!(
         std::fs::read_to_string(&target).unwrap(),
         "set nocompatible"
+    );
+}
+
+#[test]
+fn remove_with_commit_stages_and_commits() {
+    let env = TestEnv::new();
+
+    env.run_ok(&["init", "--machine", "testbox"]);
+    env.git_config_identity();
+
+    // Add a file
+    let target = env.create_file(".testrc", "test content");
+    env.run_ok(&["add", target.to_str().unwrap(), "--commit", "add testrc"]);
+
+    assert!(target.is_symlink());
+
+    // Remove with --commit
+    env.run_ok(&[
+        "remove",
+        target.to_str().unwrap(),
+        "--commit",
+        "remove testrc",
+    ]);
+
+    // Symlink should be gone
+    assert!(!target.is_symlink());
+
+    // File should be restored
+    assert!(target.is_file());
+
+    // File should no longer be tracked
+    let tracked = env.tracked_files();
+    assert!(
+        !tracked.contains(&"base/home/.testrc".to_string()),
+        "file should be untracked after remove --commit: {:?}",
+        tracked
+    );
+
+    // There should be a commit for the removal
+    let log_output = std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["log", "--oneline"])
+        .output()
+        .unwrap();
+    let log = String::from_utf8_lossy(&log_output.stdout);
+    assert!(
+        log.contains("remove testrc"),
+        "commit message not found in git log:\n{}",
+        log
     );
 }
 
@@ -179,6 +294,50 @@ fn status_shows_git_dirty() {
     assert!(
         !stdout.contains("Git:       clean"),
         "git dirty status not shown:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn status_shows_inactive_tiers() {
+    let env = TestEnv::new();
+
+    env.run_ok(&["init", "--machine", "testbox"]);
+    env.git_config_identity();
+
+    // Create a file in the linux platform tier
+    let repo_file = env.repo.join("linux/home/.bashrc");
+    std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+    std::fs::write(&repo_file, "export PATH=\"$PATH:/usr/local/bin\"").unwrap();
+
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["add", "linux/home/.bashrc"])
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["commit", "-m", "add linux bashrc"])
+        .output()
+        .unwrap();
+
+    let out = env.run_ok(&["status"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    // On macOS, the linux tier is inactive, so it should be reported
+    assert!(
+        stdout.contains("Inactive:"),
+        "inactive tiers not shown:\n{}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("Inactive:  0"),
+        "linux tier should be reported as inactive:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("linux"),
+        "inactive tier name not shown:\n{}",
         stdout
     );
 }

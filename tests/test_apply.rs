@@ -4,8 +4,51 @@ mod common;
 use common::TestEnv;
 
 // ---------------------------------------------------------------------------
-// apply — basic
+// apply — replaces wrong symlinks
 // ---------------------------------------------------------------------------
+
+#[test]
+fn apply_replaces_wrong_symlink() {
+    let env = TestEnv::new();
+
+    env.run_ok(&["init", "--machine", "testbox"]);
+    env.git_config_identity();
+
+    // Repo file
+    let repo_file = env.repo.join("base/home/.vimrc");
+    std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+    std::fs::write(&repo_file, "set number").unwrap();
+
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["add", "base/home/.vimrc"])
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["commit", "-m", "add vimrc", "--allow-empty"])
+        .output()
+        .unwrap();
+
+    let target = env.home.join(".vimrc");
+
+    // Create a wrong symlink (pointing somewhere else)
+    let wrong_target = env.home.join(".wrong_target");
+    std::fs::write(&wrong_target, "wrong").unwrap();
+    std::fs::remove_file(&wrong_target).unwrap();
+    std::os::unix::fs::symlink(env.home.join("some/nonexistent/path"), &target).unwrap();
+
+    assert!(target.is_symlink());
+    // Verify it points to the wrong place
+    let actual = std::fs::read_link(&target).unwrap();
+    assert_ne!(actual, repo_file);
+
+    // Apply should replace the wrong symlink
+    env.run_ok(&["apply"]);
+
+    // Now it should point to the correct repo file
+    env.assert_symlink(&target, &repo_file);
+}
 
 #[test]
 fn apply_creates_symlinks_for_tracked_files() {
@@ -239,5 +282,51 @@ fn apply_skips_correct_symlinks() {
     // Second apply — should succeed without errors (idempotent)
     env.run_ok(&["apply"]);
     assert!(target.is_symlink());
+    env.assert_symlink(&target, &repo_file);
+}
+
+// ---------------------------------------------------------------------------
+// apply — --platform override
+// ---------------------------------------------------------------------------
+
+#[test]
+fn apply_platform_override_uses_specified_tier() {
+    let env = TestEnv::new();
+
+    env.run_ok(&["init", "--machine", "testbox"]);
+    env.git_config_identity();
+
+    // Create a file in the linux platform tier
+    let repo_file = env.repo.join("linux/home/.bashrc");
+    std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+    std::fs::write(&repo_file, "export PATH=\"$PATH:/usr/local/bin\"").unwrap();
+
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["add", "linux/home/.bashrc"])
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["commit", "-m", "add linux bashrc"])
+        .output()
+        .unwrap();
+
+    let target = env.home.join(".bashrc");
+
+    // On macOS, without --platform override, the linux tier is not active
+    // So the file should not be applied
+    env.run_ok(&["apply"]);
+    assert!(
+        !target.exists(),
+        "linux tier file should not be applied on macos without override"
+    );
+
+    // With --platform linux, the linux tier is active
+    env.run_ok(&["apply", "--platform", "linux"]);
+    assert!(
+        target.is_symlink(),
+        "linux tier file should be applied with --platform linux"
+    );
     env.assert_symlink(&target, &repo_file);
 }

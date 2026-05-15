@@ -171,7 +171,13 @@ pub fn run(
         // Update managed map
         let repo_rel = repo_file
             .strip_prefix(&repo_path)
-            .unwrap()
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Repo file {} is not inside the repository at {}",
+                    repo_file.display(),
+                    repo_path.display()
+                )
+            })?
             .to_string_lossy()
             .to_string();
         let target_rel = target_file
@@ -227,6 +233,9 @@ fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> Result<
 ///
 /// A path is considered "standard" if it's under `~/.config/`, `~/.local/`,
 /// `~/.ssh/`, or is a dotfile (starts with `.` but not `..`).
+///
+/// Also warns if the path is under a sensitive system directory
+/// (`/etc/`, `/usr/`, `/sys/`, `/proc/`).
 fn warn_non_xdg(target_path: &Path) -> Result<()> {
     let home = convention::home_dir()?;
     let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
@@ -249,6 +258,23 @@ fn warn_non_xdg(target_path: &Path) -> Result<()> {
             anyhow::bail!(
                 "Aborted. Re-run with --machine <name> or --platform <name> to target a specific tier."
             );
+        }
+    }
+
+    // Warn on sensitive system paths
+    let sensitive_prefixes = ["/etc", "/usr", "/sys", "/proc"];
+    let path_str = target_path.to_string_lossy();
+    if sensitive_prefixes
+        .iter()
+        .any(|&prefix| path_str == prefix || path_str.starts_with(&format!("{}/", prefix)))
+    {
+        println!(
+            "Warning: '{}' is under a sensitive system directory.",
+            target_path.display()
+        );
+        let ok = prompt_confirm("Proceed anyway?")?;
+        if !ok {
+            anyhow::bail!("Aborted.");
         }
     }
 

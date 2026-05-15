@@ -4,8 +4,116 @@ mod common;
 use common::TestEnv;
 
 // ---------------------------------------------------------------------------
-// add — single file
+// add — special characters in filenames
 // ---------------------------------------------------------------------------
+
+#[test]
+fn add_file_with_spaces_in_name() {
+    let env = TestEnv::new();
+
+    env.run_ok(&["init", "--machine", "testbox"]);
+    env.git_config_identity();
+
+    // Create a file with spaces in the path
+    let target = env.create_file(".config/my app/config", "app setting");
+
+    env.run_ok(&[
+        "add",
+        target.to_str().unwrap(),
+        "--commit",
+        "add app config",
+    ]);
+
+    let tracked = env.tracked_files();
+    assert!(
+        tracked.contains(&"base/home/.config/my app/config".to_string()),
+        "file with spaces not tracked: {:?}",
+        tracked
+    );
+
+    env.assert_symlink(&target, &env.repo.join("base/home/.config/my app/config"));
+}
+
+#[test]
+fn add_file_with_unicode_name() {
+    let env = TestEnv::new();
+
+    env.run_ok(&["init", "--machine", "testbox"]);
+    env.git_config_identity();
+
+    // Create a file with unicode in the name
+    let target = env.create_file(".config/файл.txt", "unicode content");
+
+    env.run_ok(&[
+        "add",
+        target.to_str().unwrap(),
+        "--commit",
+        "add unicode file",
+    ]);
+
+    let tracked = env.tracked_files();
+    // git ls-files may quote non-ASCII paths, so check for the file name
+    // appearing in some form (quoted or not)
+    let has_file = tracked
+        .iter()
+        .any(|f| f.contains("файл.txt") || f.contains("321") || f.contains(".txt"));
+    assert!(
+        has_file,
+        "file with unicode name not tracked: {:?}",
+        tracked
+    );
+
+    assert!(target.is_symlink(), "unicode file should be symlinked");
+}
+
+#[test]
+fn add_file_with_quotes_in_name() {
+    let env = TestEnv::new();
+
+    env.run_ok(&["init", "--machine", "testbox"]);
+    env.git_config_identity();
+
+    // Create a file with a quote in the name
+    let target = env.create_file(".config/it's a config", "quoted content");
+
+    env.run_ok(&[
+        "add",
+        target.to_str().unwrap(),
+        "--commit",
+        "add quoted file",
+    ]);
+
+    let tracked = env.tracked_files();
+    assert!(
+        tracked.iter().any(|f| f.contains("it's a config")),
+        "file with quotes not tracked: {:?}",
+        tracked
+    );
+
+    assert!(target.is_symlink(), "quoted file should be symlinked");
+}
+
+#[test]
+fn add_remove_file_with_special_chars_roundtrip() {
+    let env = TestEnv::new();
+
+    env.run_ok(&["init", "--machine", "testbox"]);
+    env.git_config_identity();
+
+    // Add a file with spaces
+    let target = env.create_file(".config/my app/settings", "setting=value");
+    env.run_ok(&["add", target.to_str().unwrap(), "--commit", "add settings"]);
+
+    assert!(target.is_symlink());
+
+    // Remove it
+    env.run_ok(&["remove", target.to_str().unwrap()]);
+
+    // Symlink should be gone, regular file restored
+    assert!(!target.is_symlink(), "symlink should be removed");
+    assert!(target.is_file(), "file should be restored as regular file");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "setting=value");
+}
 
 #[test]
 fn add_single_file_to_base() {

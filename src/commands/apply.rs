@@ -16,7 +16,7 @@ use crate::prompt::prompt_machine_selection;
 use crate::symlink::is_symlink;
 
 /// Run the `apply` command.
-pub fn run(dry_run: bool) -> Result<()> {
+pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
     let repo_path = resolve_repo_path()?;
     let state_path = resolve_state_path()?;
 
@@ -31,8 +31,8 @@ pub fn run(dry_run: bool) -> Result<()> {
     // Read config (machine + managed map)
     let mut config = read_config(&state_path)?;
 
-    // Detect platform
-    let platform = crate::convention::detect_platform();
+    // Detect platform (or use --platform override)
+    let platform = platform_override.or_else(crate::convention::detect_platform);
 
     // Resolve machine name — prompt if missing
     let machine_name = resolve_machine(&repo_path, &mut config, &state_path, dry_run)?;

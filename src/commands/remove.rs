@@ -13,7 +13,12 @@ use crate::prompt::prompt_confirm;
 use crate::symlink::is_symlink;
 
 /// Run the `remove` command.
-pub fn run(path: String, machine: Option<String>, dry_run: bool) -> Result<()> {
+pub fn run(
+    path: String,
+    machine: Option<String>,
+    commit: Option<String>,
+    dry_run: bool,
+) -> Result<()> {
     let repo_path = resolve_repo_path()?;
     let state_path = resolve_state_path()?;
 
@@ -95,6 +100,9 @@ pub fn run(path: String, machine: Option<String>, dry_run: bool) -> Result<()> {
     // Read current config (to update managed map)
     let mut config = read_config(&state_path)?;
 
+    // Collect repo-relative paths for git staging
+    let mut git_rm_paths: Vec<PathBuf> = Vec::new();
+
     for (target_file, repo_rel) in &managed_pairs {
         let repo_file = repo_path.join(repo_rel);
 
@@ -132,6 +140,23 @@ pub fn run(path: String, machine: Option<String>, dry_run: bool) -> Result<()> {
 
         // Remove from managed map
         config.managed.shift_remove(repo_rel);
+
+        // Track repo-relative path for git staging
+        git_rm_paths.push(PathBuf::from(repo_rel));
+    }
+
+    // Stage deletions in git (git add stages removals of tracked files)
+    if !git_rm_paths.is_empty() {
+        plan.add(Action::GitAdd {
+            paths: git_rm_paths.clone(),
+        });
+    }
+
+    // Git commit (if --commit specified)
+    if let Some(ref msg) = commit {
+        plan.add(Action::GitCommit {
+            message: msg.clone(),
+        });
     }
 
     // Execute plan
@@ -149,6 +174,8 @@ pub fn run(path: String, machine: Option<String>, dry_run: bool) -> Result<()> {
             managed_pairs.len()
         );
         println!("[dry-run] no changes made");
+    } else if commit.is_some() {
+        println!("Removed {} file(s) from management.", managed_pairs.len());
     } else {
         println!(
             "Removed {} file(s) from management. Run `git rm` + `git commit` to finalize.",

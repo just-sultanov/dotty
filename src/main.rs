@@ -1,10 +1,12 @@
 mod cli;
 mod commands;
+mod config;
 mod convention;
 mod error;
 mod git;
 mod log;
 mod plan;
+mod platform;
 mod prompt;
 mod symbols;
 mod symlink;
@@ -32,9 +34,10 @@ fn main() -> Result<()> {
         Commands::Remove {
             path,
             machine,
+            commit,
             dry_run,
-        } => commands::remove::run(path, machine, dry_run)?,
-        Commands::Apply { dry_run } => commands::apply::run(dry_run)?,
+        } => commands::remove::run(path, machine, commit, dry_run)?,
+        Commands::Apply { dry_run, platform } => commands::apply::run(dry_run, platform)?,
         Commands::Status => commands::status::run()?,
         Commands::Clean { keep, before, yes } => commands::clean::run(keep, before, yes)?,
     }

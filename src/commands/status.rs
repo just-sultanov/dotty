@@ -84,6 +84,17 @@ pub fn run() -> Result<()> {
         }
     }
 
+    // Inactive tier overrides
+    let inactive = find_inactive_tiers(&repo_path, &config.machine, &platform);
+    if inactive.is_empty() {
+        println!("Inactive:  0");
+    } else {
+        println!("Inactive:  {}", inactive.len());
+        for (target, tier, repo_rel) in &inactive {
+            println!("  {} (tier: {}, file: {})", target, tier, repo_rel);
+        }
+    }
+
     Ok(())
 }
 
@@ -289,6 +300,45 @@ fn format_target_path(path: &Path) -> String {
 /// Return a numeric priority for a tier name (higher = more priority).
 fn tier_priority(tier: &str) -> u32 {
     convention::tier_priority(tier)
+}
+
+/// Find files in inactive tiers (platforms/machines not active on this system).
+///
+/// Returns a list of (target_path, tier_name, repo_rel_path).
+fn find_inactive_tiers(
+    repo_path: &Path,
+    machine: &Option<String>,
+    platform: &Option<String>,
+) -> Vec<(String, String, String)> {
+    let tracked_files = match git::git_ls_files(repo_path) {
+        Ok(f) => f,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut inactive = Vec::new();
+
+    for file in &tracked_files {
+        // Extract tier from the first path component
+        let tier = match file.split('/').next() {
+            Some("base") => continue, // base is always active
+            Some(t) => t.to_string(),
+            None => continue,
+        };
+
+        // Check if this tier is active
+        let is_active =
+            platform.as_deref() == Some(tier.as_str()) || machine.as_deref() == Some(tier.as_str());
+
+        if !is_active {
+            let repo_path_buf = PathBuf::from(file);
+            if let Ok(target) = repo_to_target(&repo_path_buf) {
+                let target_str = format_target_path(&target);
+                inactive.push((target_str, tier, file.clone()));
+            }
+        }
+    }
+
+    inactive
 }
 
 #[cfg(test)]

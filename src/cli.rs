@@ -76,6 +76,10 @@ pub enum Commands {
         #[arg(long)]
         machine: Option<String>,
 
+        /// Commit after removing (with message)
+        #[arg(long)]
+        commit: Option<String>,
+
         /// Show what would be done without making changes
         #[arg(long)]
         dry_run: bool,
@@ -86,6 +90,10 @@ pub enum Commands {
         /// Show what would be done without making changes
         #[arg(long)]
         dry_run: bool,
+
+        /// Override auto-detected platform (e.g. linux, macos, windows)
+        #[arg(long)]
+        platform: Option<String>,
     },
 
     /// Show repository status

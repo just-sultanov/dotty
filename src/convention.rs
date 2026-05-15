@@ -1,15 +1,15 @@
-use indexmap::IndexMap;
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::error::DottyError;
 
-/// Known platform identifiers.
-pub const KNOWN_PLATFORMS: &[&str] = &["macos", "linux", "freebsd"];
+// Re-export from platform module
+pub use crate::platform::{KNOWN_PLATFORMS, detect_platform};
+
+// Re-export from config module
+pub use crate::config::{Config, read_config, write_config};
 
 /// Resolve the dotty repository path.
 ///
@@ -33,23 +33,6 @@ pub fn resolve_state_path() -> Result<PathBuf, DottyError> {
         return Ok(PathBuf::from(xdg).join("dotty"));
     }
     Ok(home_dir()?.join(".local").join("state").join("dotty"))
-}
-
-#[allow(dead_code)]
-/// Detect the current platform via `uname -s`.
-///
-/// Returns `Some("macos")`, `Some("linux")`, `Some("freebsd")`, or `None`
-/// for unknown platforms.
-pub fn detect_platform() -> Option<String> {
-    let output = Command::new("uname").arg("-s").output().ok()?;
-    let sysname = String::from_utf8(output.stdout).ok()?.trim().to_string();
-
-    match sysname.as_str() {
-        "Darwin" => Some("macos".into()),
-        "Linux" => Some("linux".into()),
-        "FreeBSD" => Some("freebsd".into()),
-        _ => None,
-    }
 }
 
 #[allow(dead_code)]
@@ -113,52 +96,6 @@ pub fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
     )))
 }
 
-/// Configuration stored in `config.toml` inside the state directory.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Config {
-    pub machine: Option<String>,
-    pub managed: IndexMap<String, String>,
-}
-
-impl Config {
-    /// Create a new empty config.
-    pub fn new() -> Self {
-        Self {
-            machine: None,
-            managed: IndexMap::new(),
-        }
-    }
-
-    /// Set the machine name.
-    pub fn set_machine(&mut self, name: String) {
-        self.machine = Some(name);
-    }
-}
-
-/// Read `config.toml` from the state directory.
-///
-/// Returns a default (empty) config if the file doesn't exist.
-pub fn read_config(state_path: &Path) -> Result<Config, DottyError> {
-    let config_path = state_path.join("config.toml");
-    if !config_path.exists() {
-        return Ok(Config::new());
-    }
-
-    let content = std::fs::read_to_string(&config_path)?;
-    let config: Config = toml::from_str(&content)?;
-    Ok(config)
-}
-
-/// Write `config.toml` to the state directory.
-///
-/// Creates the state directory if it doesn't exist.
-pub fn write_config(state_path: &Path, config: &Config) -> Result<(), DottyError> {
-    std::fs::create_dir_all(state_path)?;
-    let content = toml::to_string_pretty(config)?;
-    std::fs::write(state_path.join("config.toml"), content)?;
-    Ok(())
-}
-
 /// Return the user's home directory.
 ///
 /// Uses `std::env::home_dir()` which consults platform-specific mechanisms
@@ -169,9 +106,13 @@ pub fn home_dir() -> Result<PathBuf, DottyError> {
 
 /// Generate a timestamp string for backup directories.
 ///
-/// Format: `YYYY-MM-DDTHH-MM-SS` (e.g. `2024-01-15T10-30-00`).
+/// Format: `YYYY-MM-DDTHH-MM-SS-NNN` (e.g. `2024-01-15T10-30-00-847`).
+/// The trailing 3-digit millisecond component prevents collisions when
+/// two runs happen within the same second.
 pub fn backup_timestamp() -> String {
-    chrono::Local::now().format("%Y-%m-%dT%H-%M-%S").to_string()
+    let now = chrono::Local::now();
+    let millis = now.timestamp_subsec_millis();
+    format!("{}-{:03}", now.format("%Y-%m-%dT%H-%M-%S"), millis)
 }
 
 /// Scan the repo for machine directories.
@@ -421,7 +362,7 @@ pub fn list_backups(state_path: &Path) -> Vec<String> {
 /// Parse a date string in YYYY-MM-DD format and return the corresponding
 /// backup timestamp prefix for comparison.
 ///
-/// Backup timestamps are in format YYYY-MM-DDTHH-MM-SS, so a date "2024-01-15"
+/// Backup timestamps are in format YYYY-MM-DDTHH-MM-SS-NNN, so a date "2024-01-15"
 /// matches all backups starting with "2024-01-15T".
 pub fn date_to_backup_prefix(date: &str) -> Option<String> {
     if date.len() != 10 {
@@ -600,8 +541,15 @@ mod tests {
     #[test]
     fn test_backup_timestamp_format() {
         let ts = backup_timestamp();
-        assert_eq!(ts.len(), 19, "timestamp length should be 19");
+        assert_eq!(ts.len(), 23, "timestamp length should be 23 (with millis)");
         assert!(ts.chars().nth(4) == Some('-'), "missing dash at position 4");
         assert!(ts.chars().nth(10) == Some('T'), "missing T at position 10");
+        // Last 3 chars should be digits (milliseconds), preceded by '-'
+        let millis = ts.rsplit('-').next().unwrap();
+        assert_eq!(millis.len(), 3, "millis should be 3 digits");
+        assert!(
+            millis.chars().all(|c| c.is_ascii_digit()),
+            "millis should be digits"
+        );
     }
 }
