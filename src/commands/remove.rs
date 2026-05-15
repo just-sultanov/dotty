@@ -10,6 +10,7 @@ use crate::convention::{
 };
 use crate::git;
 use crate::plan::{self, Action, Plan};
+use crate::prompt::prompt_confirm;
 use crate::symlink::is_symlink;
 
 /// Run the `remove` command.
@@ -107,12 +108,16 @@ pub fn run(path: String, machine: Option<String>, dry_run: bool) -> Result<()> {
 
         // Copy file from repo back to target location (restore as regular file)
         if repo_file.exists() {
-            // Check if target already exists as regular file
+            // Check if target already exists as regular file — ask for override
             if target_file.exists() && !is_symlink(target_file) {
-                plan.add(Action::Backup {
-                    source: target_file.clone(),
-                    dest: target_file.clone(), // placeholder, will be handled
-                });
+                let ok = prompt_confirm(&format!(
+                    "Override existing file at {}?",
+                    target_file.display()
+                ))?;
+                if !ok {
+                    // Skip this file — don't remove from management
+                    continue;
+                }
             }
 
             plan.add(Action::CopyFile {

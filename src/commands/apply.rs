@@ -50,23 +50,27 @@ pub fn run(dry_run: bool) -> Result<()> {
         plan.branch = branch;
     }
 
-    // Track stats for console output
-    let mut applied_count: usize = 0;
-    let mut override_count: usize = 0;
-    let mut skipped_count: usize = 0;
+    // Collect per-file results for console output
+    let mut file_results: Vec<FileResult> = Vec::new();
 
     // Build override map: target_path → lower tier that was overridden
     let override_map = build_override_map(&tracked_files, &machine_name, &platform);
 
     // Process each merged file
-    for (target_path, (_tier, repo_rel)) in &merged {
+    for (target_path, (tier, repo_rel)) in &merged {
         let repo_file = repo_path.join(repo_rel);
         let target = target_path.to_path_buf();
 
         // Check target state
-        match inspect_target(&target, &repo_file) {
+        let state = match inspect_target(&target, &repo_file) {
             TargetState::Correct => {
-                skipped_count += 1;
+                file_results.push(FileResult {
+                    target: target.clone(),
+                    tier: tier.clone(),
+                    applied: false,
+                    skipped: true,
+                    overrides: override_map.get(target_path).cloned(),
+                });
                 continue;
             }
             TargetState::NeedsSymlink => {
@@ -80,7 +84,7 @@ pub fn run(dry_run: bool) -> Result<()> {
                     target: repo_file.clone(),
                     link: target.clone(),
                 });
-                applied_count += 1;
+                TargetState::NeedsSymlink
             }
             TargetState::NeedsBackup => {
                 // Create parent dirs
@@ -108,14 +112,24 @@ pub fn run(dry_run: bool) -> Result<()> {
                     target: repo_file.clone(),
                     link: target.clone(),
                 });
-                applied_count += 1;
+                TargetState::NeedsBackup
             }
-        }
+        };
 
         // Track overrides
-        if override_map.contains_key(target_path) {
-            override_count += 1;
-        }
+        let overrides = if override_map.contains_key(target_path) {
+            override_map.get(target_path).cloned()
+        } else {
+            None
+        };
+
+        file_results.push(FileResult {
+            target: target.clone(),
+            tier: tier.clone(),
+            applied: state != TargetState::Correct,
+            skipped: false,
+            overrides,
+        });
     }
 
     // Orphan detection: managed entries not in tracked files
@@ -136,15 +150,9 @@ pub fn run(dry_run: bool) -> Result<()> {
     // Execute plan
     plan::execute_plan(&plan, dry_run)?;
 
-    // Print summary before writing config — summary should always appear
+    // Print per-file summary before writing config — summary should always appear
     // even if config write fails (e.g. permission issue on state dir).
-    print_summary(
-        applied_count,
-        override_count,
-        skipped_count,
-        &orphans,
-        dry_run,
-    );
+    print_per_file_summary(&file_results, &orphans, dry_run);
 
     // Rebuild managed map from tracked files
     // TODO: incremental update instead of full rebuild
@@ -410,39 +418,99 @@ fn expand_target_ref(target_ref: &str) -> Result<PathBuf> {
 // Console output
 // ---------------------------------------------------------------------------
 
-/// Print the apply summary.
-fn print_summary(
-    applied: usize,
-    overrides: usize,
-    skipped: usize,
+/// Per-file result for console output.
+struct FileResult {
+    target: PathBuf,
+    tier: String,
+    applied: bool,
+    skipped: bool,
+    overrides: Option<String>,
+}
+
+/// Print per-file apply results in the format specified by the spec.
+///
+/// Format:
+/// ```text
+///   ✓ ~/.gitconfig (base)
+///   ✓ ~/.config/nvim/plugins.lua (macbook ← overrides base)
+///   ────────────────────────────────────────
+///   3 applied, 1 override, 2 skipped (unchanged)
+/// ```
+fn print_per_file_summary(
+    file_results: &[FileResult],
     orphans: &[(String, String)],
     dry_run: bool,
 ) {
     let prefix = if dry_run { "[dry-run] " } else { "" };
+    let check = crate::symbols::check();
     let arrow = crate::symbols::arrow();
 
+    // Print orphan removals first
     if !orphans.is_empty() {
-        for (repo_rel, target_rel) in orphans {
-            eprintln!(
-                "  {}{} orphan removed ({} {} {})",
-                prefix, target_rel, repo_rel, arrow, target_rel
+        for (_repo_rel, target_rel) in orphans {
+            println!("  {}{} orphan removed", prefix, target_rel);
+        }
+    }
+
+    // Sort results by target path for consistent output
+    let mut sorted = file_results.iter().collect::<Vec<_>>();
+    sorted.sort_by(|a, b| a.target.cmp(&b.target));
+
+    let mut applied_count = 0;
+    let mut override_count = 0;
+    let mut skipped_count = 0;
+
+    for result in &sorted {
+        let target_str = if let Ok(home) = crate::convention::home_dir() {
+            if let Ok(relative) = result.target.strip_prefix(&home) {
+                format!("~/{relative}", relative = relative.display())
+            } else {
+                result.target.to_string_lossy().to_string()
+            }
+        } else {
+            result.target.to_string_lossy().to_string()
+        };
+
+        if result.skipped {
+            skipped_count += 1;
+            continue;
+        }
+
+        if result.applied {
+            applied_count += 1;
+        }
+
+        let override_info = if let Some(ref lower_tier) = result.overrides {
+            override_count += 1;
+            format!(" {} {} {}", arrow, lower_tier, arrow)
+        } else {
+            String::new()
+        };
+
+        println!("  {}{} {} ({})", prefix, check, target_str, result.tier);
+
+        if !override_info.is_empty() {
+            println!(
+                "  {}  (overrides {})",
+                prefix,
+                result.overrides.as_ref().unwrap()
             );
         }
     }
 
     let separator = "────────────────────────────────────────";
-    eprintln!("  {}", separator);
+    println!("  {}{}", prefix, separator);
 
     if dry_run {
-        eprintln!(
+        println!(
             "  {}{} would be applied, {} override, {} skipped (unchanged)",
-            prefix, applied, overrides, skipped
+            prefix, applied_count, override_count, skipped_count
         );
-        eprintln!("  {}no changes made", prefix);
+        println!("  {}no changes made", prefix);
     } else {
-        eprintln!(
+        println!(
             "  {} applied, {} override, {} skipped (unchanged)",
-            applied, overrides, skipped
+            applied_count, override_count, skipped_count
         );
     }
 }
