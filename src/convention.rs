@@ -286,26 +286,17 @@ pub fn find_managed_repo_files(
     result
 }
 
-/// Expand a target reference (e.g. "~/.vimrc") to a full path.
-pub fn expand_target_ref(target_ref: &str) -> Result<PathBuf, DottyError> {
+/// Expand `~` prefix in a path string to the full home directory path.
+///
+/// E.g. `"~/.vimrc"` → `/home/user/.vimrc`, `"/opt/app"` → `/opt/app`.
+pub fn expand_tilde(path: &str) -> Result<PathBuf, DottyError> {
     let home = home_dir()?;
 
-    if let Some(rest) = target_ref.strip_prefix("~/") {
+    if let Some(rest) = path.strip_prefix("~/") {
         return Ok(home.join(rest));
     }
-    if target_ref == "~" {
-        return Ok(home);
-    }
-    Ok(PathBuf::from(target_ref))
-}
-
-/// Expand `~` prefix in a path string to the full home directory path.
-pub fn expand_tilde(path: &str) -> Result<PathBuf, DottyError> {
-    if let Some(rest) = path.strip_prefix("~/") {
-        return Ok(home_dir()?.join(rest));
-    }
     if path == "~" {
-        return home_dir();
+        return Ok(home);
     }
     Ok(PathBuf::from(path))
 }

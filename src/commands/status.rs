@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::convention::{
-    self, calculate_dir_size, expand_target_ref, read_config, repo_to_target, resolve_repo_path,
+    self, calculate_dir_size, expand_tilde, read_config, repo_to_target, resolve_repo_path,
     resolve_state_path,
 };
 use crate::git;
@@ -164,7 +164,7 @@ fn find_broken_symlinks(config: &crate::convention::Config) -> Vec<(String, Stri
     let mut broken = Vec::new();
 
     for (repo_rel, target_ref) in &config.managed {
-        let target = match expand_target_ref(target_ref) {
+        let target = match expand_tilde(target_ref) {
             Ok(t) => t,
             Err(_) => {
                 broken.push((

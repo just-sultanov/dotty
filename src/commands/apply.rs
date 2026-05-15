@@ -7,7 +7,7 @@ use anyhow::Result;
 use tracing::warn;
 
 use crate::convention::{
-    backup_timestamp, expand_target_ref, read_config, repo_to_target, resolve_repo_path,
+    backup_timestamp, expand_tilde, read_config, repo_to_target, resolve_repo_path,
     resolve_state_path, scan_machine_directories, write_config,
 };
 use crate::git;
@@ -144,7 +144,7 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
 
     // Remove orphan symlinks
     for (_repo_rel, target_rel) in &orphans {
-        let target = expand_target_ref(target_rel)?;
+        let target = expand_tilde(target_rel)?;
         plan.add(Action::RemoveSymlink { path: target });
     }
 
@@ -607,15 +607,15 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_target_ref_tilde() {
+    fn test_expand_tilde_tilde() {
         let home = crate::convention::home_dir().unwrap();
-        let path = expand_target_ref("~/.vimrc").unwrap();
+        let path = expand_tilde("~/.vimrc").unwrap();
         assert_eq!(path, home.join(".vimrc"));
     }
 
     #[test]
-    fn test_expand_target_ref_absolute() {
-        let path = expand_target_ref("/opt/nvim/appimage").unwrap();
+    fn test_expand_tilde_absolute() {
+        let path = expand_tilde("/opt/nvim/appimage").unwrap();
         assert_eq!(path, PathBuf::from("/opt/nvim/appimage"));
     }
 
