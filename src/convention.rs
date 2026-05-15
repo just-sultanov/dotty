@@ -45,21 +45,21 @@ pub(crate) fn repo_to_target(repo_path: &Path) -> Result<PathBuf, DottyError> {
     components.next();
 
     // The next component determines the target root
-    let root_component = components.next().ok_or_else(|| {
-        DottyError::Path(format!(
-            "repo path has no root component: {}",
-            repo_path.display()
-        ))
-    })?;
+    let root_component = components
+        .next()
+        .ok_or_else(|| DottyError::InvalidRepoPath {
+            path: repo_path.display().to_string(),
+            reason: "repo path has no root component".into(),
+        })?;
 
     let root = match root_component.as_os_str().to_str() {
         Some("home") => home_dir()?,
         Some(dir) => PathBuf::from("/").join(dir),
         None => {
-            return Err(DottyError::Path(format!(
-                "invalid root component in: {}",
-                repo_path.display()
-            )));
+            return Err(DottyError::InvalidRepoPath {
+                path: repo_path.display().to_string(),
+                reason: "root component is not valid UTF-8".into(),
+            });
         }
     };
 
@@ -81,17 +81,18 @@ pub(crate) fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> 
 
     if let Ok(relative) = target_path.strip_prefix("/") {
         if relative.as_os_str().is_empty() {
-            return Err(DottyError::Path(
-                "cannot map root path \"/\" to repo".to_string(),
-            ));
+            return Err(DottyError::InvalidTargetPath {
+                path: "/".to_string(),
+                reason: "cannot map root path to repo".into(),
+            });
         }
         return Ok(relative.to_path_buf());
     }
 
-    Err(DottyError::Path(format!(
-        "cannot map target path: {}",
-        target_path.display()
-    )))
+    Err(DottyError::InvalidTargetPath {
+        path: target_path.display().to_string(),
+        reason: "path does not start with home directory or \"/\"".into(),
+    })
 }
 
 /// Return the user's home directory.
@@ -99,7 +100,11 @@ pub(crate) fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> 
 /// Uses `std::env::home_dir()` which consults platform-specific mechanisms
 /// (not just `$HOME`), falling back to `/` only as a last resort.
 pub fn home_dir() -> Result<PathBuf, DottyError> {
-    std::env::home_dir().ok_or_else(|| DottyError::Config("cannot determine home directory".into()))
+    std::env::home_dir().ok_or_else(|| {
+        DottyError::MissingHomeDirectory(
+            "HOME environment variable not set and unable to determine user home directory".into(),
+        )
+    })
 }
 
 /// Generate a timestamp string for backup directories.
@@ -159,31 +164,40 @@ pub fn scan_machine_directories(repo_path: &Path) -> Vec<String> {
 /// (starting with `.`), and names containing path traversal (`..`).
 pub fn validate_machine_name(name: &str) -> Result<(), DottyError> {
     if name.trim().is_empty() {
-        return Err(DottyError::Config("Machine name cannot be empty.".into()));
+        return Err(DottyError::InvalidMachineName {
+            name: name.to_string(),
+            reason: "machine name cannot be empty".into(),
+        });
     }
     if name.starts_with('.') {
-        return Err(DottyError::Config(
-            "Machine name cannot start with a dot.".into(),
-        ));
+        return Err(DottyError::InvalidMachineName {
+            name: name.to_string(),
+            reason: "machine name cannot start with a dot".into(),
+        });
     }
     if name.contains("..") {
-        return Err(DottyError::Config(
-            "Machine name cannot contain '..'.".into(),
-        ));
+        return Err(DottyError::InvalidMachineName {
+            name: name.to_string(),
+            reason: "machine name cannot contain '..'".into(),
+        });
     }
     if name.contains('/') {
-        return Err(DottyError::Config(
-            "Machine name cannot contain '/'.".into(),
-        ));
+        return Err(DottyError::InvalidMachineName {
+            name: name.to_string(),
+            reason: "machine name cannot contain '/'".into(),
+        });
     }
     if name == "base" {
-        return Err(DottyError::Config("'base' is a reserved name.".into()));
+        return Err(DottyError::InvalidMachineName {
+            name: name.to_string(),
+            reason: "'base' is a reserved name".into(),
+        });
     }
     if KNOWN_PLATFORMS.contains(&name) {
-        return Err(DottyError::Config(format!(
-            "'{}' is a reserved platform name.",
-            name
-        )));
+        return Err(DottyError::InvalidMachineName {
+            name: name.to_string(),
+            reason: format!("'{}' is a reserved platform name", name),
+        });
     }
     Ok(())
 }

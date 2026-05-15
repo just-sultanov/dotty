@@ -16,11 +16,20 @@ pub(crate) enum DottyError {
     #[error("git command failed (exit code {exit_code}): {stderr}")]
     Git { exit_code: i32, stderr: String },
 
-    #[error("config error: {0}")]
-    Config(String),
+    #[error("invalid machine name '{name}': {reason}")]
+    InvalidMachineName { name: String, reason: String },
 
-    #[error("path error: {0}")]
-    Path(String),
+    #[error("cannot determine home directory: {0}")]
+    MissingHomeDirectory(String),
+
+    #[error("invalid repo path '{path}': {reason}")]
+    InvalidRepoPath { path: String, reason: String },
+
+    #[error("cannot map target path '{path}': {reason}")]
+    InvalidTargetPath { path: String, reason: String },
+
+    #[error("path resolution error: {reason}")]
+    PathResolution { path: PathBuf, reason: String },
 
     #[error(
         "circular symlink detected: {path}. This symlink points to itself (directly or indirectly). Remove it manually or fix the target."

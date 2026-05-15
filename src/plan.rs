@@ -70,11 +70,9 @@ impl Action {
                 fs::create_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
             }
             Action::Backup { source, dest } => {
-                let parent = dest.parent().ok_or_else(|| {
-                    DottyError::Path(format!(
-                        "cannot determine parent of backup path: {}",
-                        dest.display()
-                    ))
+                let parent = dest.parent().ok_or_else(|| DottyError::PathResolution {
+                    path: dest.to_path_buf(),
+                    reason: format!("cannot determine parent of backup path: {}", dest.display()),
                 })?;
                 fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
                 // copy_file_dereference already returns DottyError

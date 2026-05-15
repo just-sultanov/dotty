@@ -40,15 +40,17 @@ pub fn git_init(dir: &Path) -> Result<(), DottyError> {
 
 /// Clone a repository into the given directory.
 pub fn git_clone(url: &str, dir: &Path) -> Result<(), DottyError> {
-    let parent = dir.parent().ok_or_else(|| {
-        DottyError::Path(format!("cannot determine parent of: {}", dir.display()))
+    let parent = dir.parent().ok_or_else(|| DottyError::PathResolution {
+        path: dir.to_path_buf(),
+        reason: format!("cannot determine parent of: {}", dir.display()),
     })?;
 
     // Prevent cloning into the root directory
     if parent.as_os_str().is_empty() || parent == Path::new("/") {
-        return Err(DottyError::Path(
-            "cannot clone into the root directory".to_string(),
-        ));
+        return Err(DottyError::PathResolution {
+            path: dir.to_path_buf(),
+            reason: "cannot clone into the root directory".into(),
+        });
     }
 
     git_run(
@@ -56,8 +58,10 @@ pub fn git_clone(url: &str, dir: &Path) -> Result<(), DottyError> {
         &[
             "clone",
             url,
-            dir.to_str()
-                .ok_or_else(|| DottyError::Path(format!("invalid path: {}", dir.display())))?,
+            dir.to_str().ok_or_else(|| DottyError::PathResolution {
+                path: dir.to_path_buf(),
+                reason: format!("path is not valid UTF-8: {}", dir.display()),
+            })?,
         ],
     )?;
     Ok(())
