@@ -15,14 +15,18 @@ fn git_run(dir: &Path, args: &[&str]) -> Result<String, DottyError> {
         .current_dir(dir)
         .args(args)
         .output()
-        .map_err(|e| DottyError::Git(format!("failed to execute git: {e}")))?;
+        .map_err(|e| DottyError::Git {
+            exit_code: -1,
+            stderr: format!("failed to execute git: {e}"),
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        return Err(DottyError::Git(format!(
-            "git {} failed: {stderr}",
-            args.join(" ")
-        )));
+        let exit_code = output.status.code().unwrap_or(-1);
+        return Err(DottyError::Git {
+            exit_code,
+            stderr: format!("git {} failed: {stderr}", args.join(" ")),
+        });
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())

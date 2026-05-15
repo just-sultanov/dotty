@@ -13,8 +13,8 @@ pub(crate) enum DottyError {
     #[error("permission denied: {path}. Check file ownership or run with appropriate privileges.")]
     PermissionDenied { path: PathBuf },
 
-    #[error("git command failed: {0}")]
-    Git(String),
+    #[error("git command failed (exit code {exit_code}): {stderr}")]
+    Git { exit_code: i32, stderr: String },
 
     #[error("config error: {0}")]
     Config(String),
