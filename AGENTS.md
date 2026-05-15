@@ -9,13 +9,11 @@
 - **Language:** Rust (edition 2024)
 - **Package manager:** mise (manages Rust toolchain, tasks, scripts)
 - **Spec:** `readme.md`
-- **Implementation plan:** `plan.md`
 
 ## Rules
 
 1. **Always run commands via `mise run <task>`** — never call `cargo`, `rustup`, or other tools directly.
 2. **Never skip lint or tests.** After any code change, run `mise run check` to verify everything passes.
-3. **Follow the implementation plan** in `plan.md`. Work phase by phase.
 4. **Read `readme.md`** for the full spec before implementing features.
 
 ## Mise Tasks
