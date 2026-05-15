@@ -232,13 +232,8 @@ pub fn tier_priority(tier: &str) -> u32 {
 
 /// Recursively walk a directory and collect all file paths.
 pub fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), DottyError> {
-    for dir_entry in fs::read_dir(dir).map_err(DottyError::Io)? {
-        let dir_entry = dir_entry.map_err(|e| {
-            DottyError::Io(std::io::Error::new(
-                e.kind(),
-                "failed to read directory entry",
-            ))
-        })?;
+    for dir_entry in fs::read_dir(dir)? {
+        let dir_entry = dir_entry?;
         let path = dir_entry.path();
 
         // is_file() follows symlinks; symlink_metadata checks the link itself
