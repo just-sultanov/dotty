@@ -1,5 +1,4 @@
 use std::fs;
-use std::os::unix::fs::symlink as unix_symlink;
 use std::path::{Path, PathBuf};
 
 /// Maximum number of symlink hops to follow before declaring a cycle.
@@ -14,10 +13,11 @@ pub fn is_symlink(path: &Path) -> bool {
 
 /// Create a symlink at `link` pointing to `target`.
 ///
-/// This is a thin wrapper around `std::os::unix::fs::symlink` that returns
-/// a `Result` for consistent error handling across the codebase.
+/// Uses `symlink_rs::symlink_file` for cross-platform support:
+/// on Unix this is equivalent to `std::os::unix::fs::symlink`,
+/// on Windows it calls `std::os::windows::fs::symlink_file`.
 pub fn create_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-    unix_symlink(target, link)
+    symlink_rs::symlink_file(target, link)
 }
 
 /// Check if creating a symlink at `link` pointing to `target` would create
