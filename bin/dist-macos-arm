@@ -2,5 +2,6 @@
 set -euo pipefail
 mkdir -p dist
 VERSION=$(./target/aarch64-apple-darwin/release/dotty --version | awk '{print $2}')
-tar -czf "dist/dotty-v${VERSION}-aarch64-apple-darwin.tar.gz" \
-  -C target/aarch64-apple-darwin/release dotty
+ARCHIVE="dist/dotty-v${VERSION}-aarch64-apple-darwin.tar.gz"
+tar -czf "$ARCHIVE" -C target/aarch64-apple-darwin/release dotty
+shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
