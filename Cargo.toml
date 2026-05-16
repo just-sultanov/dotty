@@ -25,6 +25,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 serial_test = "3"
+temp-env = "0.3"
 
 [lints.rust]
 unused = "warn"

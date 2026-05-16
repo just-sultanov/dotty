@@ -117,61 +117,47 @@ pub fn expand_tilde(path: &str) -> Result<PathBuf, DottyError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
-    use std::env;
-
-    // In Rust 2024, set_var/remove_var are unsafe (data-race risk in multithreaded code).
-    // #[serial] ensures these tests run one at a time, preventing concurrent env mutations.
-    fn set_env(key: &str, val: &str) {
-        unsafe { env::set_var(key, val) };
-    }
-    fn remove_env(key: &str) {
-        unsafe { env::remove_var(key) };
-    }
 
     #[test]
-    #[serial]
     fn test_resolve_repo_path_default() {
-        remove_env("DOTTY_HOME");
-        let path = resolve_repo_path().unwrap();
+        let path = temp_env::with_var_unset("DOTTY_HOME", || resolve_repo_path().unwrap());
         assert!(path.ends_with(".dotty"));
     }
 
     #[test]
-    #[serial]
     fn test_resolve_repo_path_custom() {
-        set_env("DOTTY_HOME", "/custom/dotty/path");
-        let path = resolve_repo_path().unwrap();
+        let path = temp_env::with_var("DOTTY_HOME", Some("/custom/dotty/path"), || {
+            resolve_repo_path().unwrap()
+        });
         assert_eq!(path, PathBuf::from("/custom/dotty/path"));
-        remove_env("DOTTY_HOME");
     }
 
     #[test]
-    #[serial]
     fn test_resolve_state_path_default() {
-        remove_env("DOTTY_STATE_HOME");
-        remove_env("XDG_STATE_HOME");
-        let path = resolve_state_path().unwrap();
+        let path = temp_env::with_vars_unset(["DOTTY_STATE_HOME", "XDG_STATE_HOME"], || {
+            resolve_state_path().unwrap()
+        });
         assert!(path.ends_with(".local/state/dotty"));
     }
 
     #[test]
-    #[serial]
     fn test_resolve_state_path_custom() {
-        set_env("DOTTY_STATE_HOME", "/custom/state");
-        let path = resolve_state_path().unwrap();
+        let path = temp_env::with_var("DOTTY_STATE_HOME", Some("/custom/state"), || {
+            resolve_state_path().unwrap()
+        });
         assert_eq!(path, PathBuf::from("/custom/state"));
-        remove_env("DOTTY_STATE_HOME");
     }
 
     #[test]
-    #[serial]
     fn test_resolve_state_path_xdg() {
-        remove_env("DOTTY_STATE_HOME");
-        set_env("XDG_STATE_HOME", "/var/lib/state");
-        let path = resolve_state_path().unwrap();
+        let path = temp_env::with_vars(
+            [
+                ("DOTTY_STATE_HOME", None::<&str>),
+                ("XDG_STATE_HOME", Some("/var/lib/state")),
+            ],
+            || resolve_state_path().unwrap(),
+        );
         assert_eq!(path, PathBuf::from("/var/lib/state/dotty"));
-        remove_env("XDG_STATE_HOME");
     }
 
     #[test]

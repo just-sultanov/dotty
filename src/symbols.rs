@@ -104,19 +104,13 @@ mod tests {
     #[test]
     fn test_dumb_terminal_ascii() {
         // Note: OnceLock can't be reset, so we test the heuristic directly.
-        // set_var is unsafe in tests due to potential data races, but safe
-        // here since tests run sequentially with #[serial] or in isolation.
-        unsafe {
-            std::env::set_var("TERM", "dumb");
-        }
-        assert!(!supports_unicode());
+        let result = temp_env::with_var("TERM", Some("dumb"), || !supports_unicode());
+        assert!(result);
     }
 
     #[test]
     fn test_xterm_unicode() {
-        unsafe {
-            std::env::set_var("TERM", "xterm-256color");
-        }
-        assert!(supports_unicode());
+        let result = temp_env::with_var("TERM", Some("xterm-256color"), || supports_unicode());
+        assert!(result);
     }
 }
