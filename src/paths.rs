@@ -127,6 +127,7 @@ pub fn expand_tilde(path: &str) -> Result<PathBuf, DottyError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_resolve_repo_path_default() {
@@ -256,5 +257,102 @@ mod tests {
     fn test_expand_tilde_absolute() {
         let path = expand_tilde("/opt/nvim/appimage").unwrap();
         assert_eq!(path, PathBuf::from("/opt/nvim/appimage"));
+    }
+
+    // ── proptest roundtrip tests ──
+
+    proptest::proptest! {
+        #[test]
+        fn roundtrip_repo_to_target_to_repo(
+            // Root component: "home" or a directory name (no leading /)
+            root in "home|opt|etc|usr|var|Library|srv",
+            // File path: 1-4 non-empty components
+            file_components in "[a-zA-Z0-9_.@-]{1,20}(/[a-zA-Z0-9_.@-]{1,20})*".prop_filter(
+                "non-empty file path",
+                |s: &String| !s.is_empty() && !s.starts_with('/'),
+            ),
+        ) {
+            let repo_path = PathBuf::from("base").join(&root).join(&file_components);
+
+            // repo_to_target then target_to_repo should preserve the relative path
+            // (scope component is stripped, which is expected)
+            let target = repo_to_target(&repo_path).expect("valid repo path");
+            let repo_back = target_to_repo(&target).expect("valid target path");
+
+            // Expected: root/file (without the scope "base")
+            let expected = PathBuf::from(&root).join(&file_components);
+
+            prop_assert_eq!(
+                &repo_back, &expected,
+                "repo→target→repo roundtrip failed: {:?} → {:?} → {:?} (expected {:?})",
+                repo_path, target, repo_back, expected
+            );
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn roundtrip_target_to_repo_to_target(
+            // Target path: either home-relative or absolute
+            variant in any::<bool>(),
+            // Home-relative: dotfile or nested path like .config/nvim/init.lua
+            home_components in "[.a-zA-Z0-9_@-]{1,20}(/[a-zA-Z0-9_.@-]{1,20})*".prop_filter(
+                "non-empty home path",
+                |s: &String| !s.is_empty(),
+            ),
+            // Absolute: at least 2 components (dir/file) so repo path has scope+root
+            abs_components in "[a-zA-Z0-9_]{1,10}/[a-zA-Z0-9_.@-]{1,20}(/[a-zA-Z0-9_.@-]{1,20})*".prop_filter(
+                "non-empty abs path",
+                |s: &String| !s.is_empty(),
+            ),
+        ) {
+            let home = home_dir().unwrap();
+
+            let target = if variant {
+                // Home-relative: ~/... → /home/user/...
+                home.join(&home_components)
+            } else {
+                // Absolute: /<dir>/... (at least 2 components)
+                PathBuf::from("/".to_string() + &abs_components)
+            };
+
+            let repo_relative = target_to_repo(&target).expect("valid target path");
+            // repo_to_target expects scope/root/file, but target_to_repo returns root/file.
+            // Prepend a dummy scope to complete the roundtrip.
+            let repo_with_scope = PathBuf::from("base").join(&repo_relative);
+            let target_back = repo_to_target(&repo_with_scope).expect("valid repo path");
+
+            prop_assert_eq!(
+                &target_back, &target,
+                "target→repo→target roundtrip failed: {:?} → {:?} → {:?} → {:?}",
+                target, repo_relative, repo_with_scope, target_back
+            );
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn roundtrip_with_deeply_nested_paths(
+            // Generate 1-8 path components for deep nesting
+            depth in 1usize..8,
+        ) {
+            let components: Vec<String> = (0..depth)
+                .map(|i| format!(".file_{}", i))
+                .collect();
+
+            let file_path = components.join("/");
+            let repo_path = PathBuf::from("base").join("home").join(&file_path);
+
+            let target = repo_to_target(&repo_path).expect("valid repo path");
+            let repo_back = target_to_repo(&target).expect("valid target path");
+
+            let expected = PathBuf::from("home").join(&file_path);
+
+            prop_assert_eq!(
+                &repo_back, &expected,
+                "deep nesting roundtrip failed (depth {}): {:?} → {:?} → {:?}",
+                depth, repo_path, target, repo_back
+            );
+        }
     }
 }
