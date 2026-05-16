@@ -305,26 +305,38 @@ fn status_shows_inactive_tiers() {
     env.run_ok(&["init", "--machine", "testbox"]);
     env.git_config_identity();
 
-    // Create a file in the linux platform tier
-    let repo_file = env.repo.join("linux/home/.bashrc");
+    // Pick a platform tier that is NOT active on the current OS
+    let (inactive_tier, file_name, commit_msg) = if cfg!(target_os = "macos") {
+        ("linux", "linux/home/.bashrc", "add linux bashrc")
+    } else if cfg!(target_os = "linux") {
+        (
+            "macos",
+            "macos/home/.bash_profile",
+            "add macos bash_profile",
+        )
+    } else {
+        // On other platforms, skip the test
+        return;
+    };
+
+    let repo_file = env.repo.join(file_name);
     std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
     std::fs::write(&repo_file, "export PATH=\"$PATH:/usr/local/bin\"").unwrap();
 
     std::process::Command::new("git")
         .current_dir(&env.repo)
-        .args(["add", "linux/home/.bashrc"])
+        .args(["add", file_name])
         .output()
         .unwrap();
     std::process::Command::new("git")
         .current_dir(&env.repo)
-        .args(["commit", "-m", "add linux bashrc"])
+        .args(["commit", "-m", commit_msg])
         .output()
         .unwrap();
 
     let out = env.run_ok(&["status"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
 
-    // On macOS, the linux tier is inactive, so it should be reported
     assert!(
         stdout.contains("Inactive:"),
         "inactive tiers not shown:\n{}",
@@ -332,11 +344,12 @@ fn status_shows_inactive_tiers() {
     );
     assert!(
         !stdout.contains("Inactive:  0"),
-        "linux tier should be reported as inactive:\n{}",
+        "{} tier should be reported as inactive:\n{}",
+        inactive_tier,
         stdout
     );
     assert!(
-        stdout.contains("linux"),
+        stdout.contains(inactive_tier),
         "inactive tier name not shown:\n{}",
         stdout
     );
