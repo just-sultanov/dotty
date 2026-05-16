@@ -72,6 +72,11 @@ fn normalize_paths(output: &str, env: &TestEnv) -> String {
         result = result.replace(&path, placeholder);
     }
 
+    // Normalize Windows path separators to forward slashes so snapshots
+    // are stable across OSes. Done after placeholder substitution so that
+    // any `\` left in the output (e.g., `[HOME]\file`) becomes `[HOME]/file`.
+    result = result.replace('\\', "/");
+
     // Normalize platform-dependent lines so snapshots are stable across OSes.
     // `Platform: <os>` → `Platform:  [PLATFORM]`
     result = result
