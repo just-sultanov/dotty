@@ -382,24 +382,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_expand_tilde_home() {
-        let path = convention::expand_tilde("~/.vimrc").unwrap();
-        assert!(path.to_string_lossy().ends_with(".vimrc"));
-    }
-
-    #[test]
-    fn test_expand_tilde_nested() {
-        let path = convention::expand_tilde("~/.config/nvim/init.lua").unwrap();
-        assert!(path.to_string_lossy().ends_with(".config/nvim/init.lua"));
-    }
-
-    #[test]
-    fn test_expand_tilde_absolute() {
-        let path = convention::expand_tilde("/opt/nvim/appimage").unwrap();
-        assert_eq!(path, PathBuf::from("/opt/nvim/appimage"));
-    }
-
-    #[test]
     fn test_resolve_scope_machine() {
         let scope = resolve_scope(&Some("macbook".into()), &None).unwrap();
         assert_eq!(scope, "macbook");

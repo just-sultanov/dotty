@@ -1,5 +1,4 @@
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tracing::warn;
 
@@ -11,112 +10,16 @@ pub use crate::platform::{KNOWN_PLATFORMS, detect_platform};
 // Re-export from config module
 pub use crate::config::{Config, read_config, write_config};
 
-/// Resolve the dotty repository path.
-///
-/// Checks `$DOTTY_HOME` first, falls back to `~/.dotty`.
-pub fn resolve_repo_path() -> Result<PathBuf, DottyError> {
-    if let Ok(path) = env::var("DOTTY_HOME") {
-        return Ok(PathBuf::from(path));
-    }
-    Ok(home_dir()?.join(".dotty"))
-}
+// Re-export from paths module
+pub use crate::paths::{
+    expand_tilde, home_dir, repo_to_target, resolve_repo_path, resolve_state_path, target_to_repo,
+};
 
-/// Resolve the dotty state directory.
-///
-/// Checks `$DOTTY_STATE_HOME` first, then `$XDG_STATE_HOME/dotty`,
-/// falls back to `~/.local/state/dotty`.
-pub fn resolve_state_path() -> Result<PathBuf, DottyError> {
-    if let Ok(path) = env::var("DOTTY_STATE_HOME") {
-        return Ok(PathBuf::from(path));
-    }
-    if let Ok(xdg) = env::var("XDG_STATE_HOME") {
-        return Ok(PathBuf::from(xdg).join("dotty"));
-    }
-    Ok(home_dir()?.join(".local").join("state").join("dotty"))
-}
+// Re-export from backups module
+pub use crate::backups::{backup_timestamp, date_to_backup_prefix, list_backups};
 
-/// Convert a repo-relative path to its target (real filesystem) path.
-///
-/// E.g. `base/home/.vimrc` → `~/.vimrc`, `linux/opt/nvim/app` → `/opt/nvim/app`.
-pub(crate) fn repo_to_target(repo_path: &Path) -> Result<PathBuf, DottyError> {
-    let mut components = repo_path.components();
-
-    // Skip the scope directory (base, macos, macbook, etc.)
-    components.next();
-
-    // The next component determines the target root
-    let root_component = components
-        .next()
-        .ok_or_else(|| DottyError::InvalidRepoPath {
-            path: repo_path.display().to_string(),
-            reason: "repo path has no root component".into(),
-        })?;
-
-    let root = match root_component.as_os_str().to_str() {
-        Some("home") => home_dir()?,
-        Some(dir) => PathBuf::from("/").join(dir),
-        None => {
-            return Err(DottyError::InvalidRepoPath {
-                path: repo_path.display().to_string(),
-                reason: "root component is not valid UTF-8".into(),
-            });
-        }
-    };
-
-    let relative: PathBuf = components.as_path().to_path_buf();
-    Ok(root.join(relative))
-}
-
-/// Convert a target (real filesystem) path to its repo-relative path.
-///
-/// E.g. `~/.vimrc` → `home/.vimrc`, `/opt/nvim/app` → `opt/nvim/app`.
-///
-/// Returns the path relative to the scope directory (without the scope prefix).
-pub(crate) fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
-    let home = home_dir()?;
-
-    if let Ok(relative) = target_path.strip_prefix(&home) {
-        return Ok(PathBuf::from("home").join(relative));
-    }
-
-    if let Ok(relative) = target_path.strip_prefix("/") {
-        if relative.as_os_str().is_empty() {
-            return Err(DottyError::InvalidTargetPath {
-                path: "/".to_string(),
-                reason: "cannot map root path to repo".into(),
-            });
-        }
-        return Ok(relative.to_path_buf());
-    }
-
-    Err(DottyError::InvalidTargetPath {
-        path: target_path.display().to_string(),
-        reason: "path does not start with home directory or \"/\"".into(),
-    })
-}
-
-/// Return the user's home directory.
-///
-/// Uses `std::env::home_dir()` which consults platform-specific mechanisms
-/// (not just `$HOME`), falling back to `/` only as a last resort.
-pub fn home_dir() -> Result<PathBuf, DottyError> {
-    std::env::home_dir().ok_or_else(|| {
-        DottyError::MissingHomeDirectory(
-            "HOME environment variable not set and unable to determine user home directory".into(),
-        )
-    })
-}
-
-/// Generate a timestamp string for backup directories.
-///
-/// Format: `YYYY-MM-DDTHH-MM-SS-NNN` (e.g. `2024-01-15T10-30-00-847`).
-/// The trailing 3-digit millisecond component prevents collisions when
-/// two runs happen within the same second.
-pub fn backup_timestamp() -> String {
-    let now = chrono::Local::now();
-    let millis = now.timestamp_subsec_millis();
-    format!("{}-{:03}", now.format("%Y-%m-%dT%H-%M-%S"), millis)
-}
+// Re-export from fs_utils module
+pub use crate::fs_utils::{calculate_dir_size, walk_dir};
 
 /// Scan the repo for machine directories.
 ///
@@ -242,27 +145,6 @@ pub fn tier_priority(tier: &str) -> u32 {
     3 // machine tier
 }
 
-/// Recursively walk a directory and collect all file paths.
-pub fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), DottyError> {
-    for dir_entry in fs::read_dir(dir)? {
-        let dir_entry = dir_entry?;
-        let path = dir_entry.path();
-
-        // is_file() follows symlinks; symlink_metadata checks the link itself
-        let is_file_or_symlink = path.is_file()
-            || path
-                .symlink_metadata()
-                .is_ok_and(|m| m.file_type().is_symlink());
-
-        if is_file_or_symlink {
-            files.push(path);
-        } else if path.is_dir() {
-            walk_dir(&path, files)?;
-        }
-    }
-    Ok(())
-}
-
 /// Find all tracked repo files that manage the given target path.
 ///
 /// If `machine_filter` is `Some`, only search within that machine tier.
@@ -275,7 +157,7 @@ pub fn find_managed_repo_files(
     let mut result = Vec::new();
 
     for file in tracked_files {
-        let repo_path = PathBuf::from(file);
+        let repo_path = std::path::PathBuf::from(file);
         if let Ok(target) = repo_to_target(&repo_path)
             && target == target_path
         {
@@ -293,202 +175,167 @@ pub fn find_managed_repo_files(
     result
 }
 
-/// Expand `~` prefix in a path string to the full home directory path.
-///
-/// E.g. `"~/.vimrc"` → `/home/user/.vimrc`, `"/opt/app"` → `/opt/app`.
-pub fn expand_tilde(path: &str) -> Result<PathBuf, DottyError> {
-    let home = home_dir()?;
-
-    if let Some(rest) = path.strip_prefix("~/") {
-        return Ok(home.join(rest));
-    }
-    if path == "~" {
-        return Ok(home);
-    }
-    Ok(PathBuf::from(path))
-}
-
-/// Calculate the total size of a directory recursively in bytes.
-pub fn calculate_dir_size(dir: &Path) -> u64 {
-    let mut total = 0u64;
-
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return 0,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() {
-            if let Ok(meta) = fs::metadata(&path) {
-                total += meta.len();
-            }
-        } else if path.is_dir() {
-            total += calculate_dir_size(&path);
-        }
-    }
-
-    total
-}
-
-/// List backup directory names sorted by name (chronological order).
-pub fn list_backups(state_path: &Path) -> Vec<String> {
-    let backup_dir = state_path.join("backups");
-
-    if !backup_dir.is_dir() {
-        return Vec::new();
-    }
-
-    let mut backups = Vec::new();
-
-    for entry in fs::read_dir(&backup_dir)
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok())
-    {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if entry.path().is_dir() {
-            backups.push(name);
-        }
-    }
-
-    backups.sort();
-    backups
-}
-
-/// Parse a date string in YYYY-MM-DD format and return the corresponding
-/// backup timestamp prefix for comparison.
-///
-/// Backup timestamps are in format YYYY-MM-DDTHH-MM-SS-NNN, so a date "2024-01-15"
-/// matches all backups starting with "2024-01-15T".
-pub fn date_to_backup_prefix(date: &str) -> Option<String> {
-    if date.len() != 10 {
-        return None;
-    }
-    // Basic validation: YYYY-MM-DD
-    let parts: Vec<&str> = date.split('-').collect();
-    if parts.len() != 3
-        || parts[0].len() != 4
-        || parts[1].len() != 2
-        || parts[2].len() != 2
-        || parts[0].parse::<u32>().is_err()
-        || parts[1].parse::<u32>().is_err()
-        || parts[2].parse::<u32>().is_err()
-    {
-        return None;
-    }
-    Some(format!("{}T", date))
-}
-
-use std::fs;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
-    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    // In Rust 2024, set_var/remove_var are unsafe (data-race risk in multithreaded code).
-    // #[serial] ensures these tests run one at a time, preventing concurrent env mutations.
-    fn set_env(key: &str, val: &str) {
-        unsafe { env::set_var(key, val) };
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn unique_temp_dir() -> PathBuf {
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "dotty_convention_test_{}_{}",
+            std::process::id(),
+            id
+        ))
     }
-    fn remove_env(key: &str) {
-        unsafe { env::remove_var(key) };
+
+    // -- scan_machine_directories tests --
+
+    #[test]
+    fn test_scan_machine_directories_finds_machines() {
+        let base = unique_temp_dir();
+        fs::create_dir_all(base.join("base/home")).unwrap();
+        fs::create_dir_all(base.join("macos/home")).unwrap();
+        fs::create_dir_all(base.join("linux/home")).unwrap();
+        fs::create_dir_all(base.join("macbook/home")).unwrap();
+        fs::create_dir_all(base.join("ubuntu-work/home")).unwrap();
+        // This should NOT be detected as a machine (no home/)
+        fs::create_dir_all(base.join("some-other-dir")).unwrap();
+        // Hidden dir should be skipped
+        fs::create_dir_all(base.join(".git")).unwrap();
+
+        let machines = scan_machine_directories(&base);
+        assert_eq!(machines, vec!["macbook", "ubuntu-work"]);
+
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
-    #[serial]
-    fn test_resolve_repo_path_default() {
-        remove_env("DOTTY_HOME");
-        let path = resolve_repo_path().unwrap();
-        assert!(path.ends_with(".dotty"));
+    fn test_scan_machine_directories_empty_repo() {
+        let base = unique_temp_dir();
+        fs::create_dir_all(base.join("base")).unwrap();
+
+        let machines = scan_machine_directories(&base);
+        assert!(machines.is_empty());
+
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
-    #[serial]
-    fn test_resolve_repo_path_custom() {
-        set_env("DOTTY_HOME", "/custom/dotty/path");
-        let path = resolve_repo_path().unwrap();
-        assert_eq!(path, PathBuf::from("/custom/dotty/path"));
-        remove_env("DOTTY_HOME");
+    fn test_scan_machine_directories_sorted() {
+        let base = unique_temp_dir();
+        fs::create_dir_all(base.join("zebra/home")).unwrap();
+        fs::create_dir_all(base.join("alpha/home")).unwrap();
+        fs::create_dir_all(base.join("middle/home")).unwrap();
+
+        let machines = scan_machine_directories(&base);
+        assert_eq!(machines, vec!["alpha", "middle", "zebra"]);
+
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
-    #[serial]
-    fn test_resolve_state_path_default() {
-        remove_env("DOTTY_STATE_HOME");
-        remove_env("XDG_STATE_HOME");
-        let path = resolve_state_path().unwrap();
-        assert!(path.ends_with(".local/state/dotty"));
+    fn test_scan_skips_base_and_platforms() {
+        let base = unique_temp_dir();
+        fs::create_dir_all(base.join("base/home")).unwrap();
+        fs::create_dir_all(base.join("macos/home")).unwrap();
+        fs::create_dir_all(base.join("linux/home")).unwrap();
+        fs::create_dir_all(base.join("freebsd/home")).unwrap();
+        fs::create_dir_all(base.join("my-machine/home")).unwrap();
+
+        let machines = scan_machine_directories(&base);
+        assert_eq!(machines, vec!["my-machine"]);
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    // -- validate_machine_name tests --
+
+    #[test]
+    fn test_validate_machine_name_rejects_empty() {
+        assert!(validate_machine_name("").is_err());
+        assert!(validate_machine_name("   ").is_err());
     }
 
     #[test]
-    #[serial]
-    fn test_resolve_state_path_custom() {
-        set_env("DOTTY_STATE_HOME", "/custom/state");
-        let path = resolve_state_path().unwrap();
-        assert_eq!(path, PathBuf::from("/custom/state"));
-        remove_env("DOTTY_STATE_HOME");
+    fn test_validate_machine_name_accepts_valid() {
+        assert!(validate_machine_name("macbook").is_ok());
+        assert!(validate_machine_name("ubuntu-work").is_ok());
     }
 
     #[test]
-    #[serial]
-    fn test_resolve_state_path_xdg() {
-        remove_env("DOTTY_STATE_HOME");
-        set_env("XDG_STATE_HOME", "/var/lib/state");
-        let path = resolve_state_path().unwrap();
-        assert_eq!(path, PathBuf::from("/var/lib/state/dotty"));
-        remove_env("XDG_STATE_HOME");
+    fn test_validate_machine_name_rejects_slash() {
+        assert!(validate_machine_name("foo/bar").is_err());
+        assert!(validate_machine_name("foo/../bar").is_err());
     }
 
-    #[test]
-    fn test_repo_to_target_home() {
-        let repo = Path::new("base/home/.vimrc");
-        let target = repo_to_target(repo).unwrap();
-        assert!(target.to_string_lossy().ends_with(".vimrc"));
-        assert!(target.starts_with(&home_dir().unwrap()));
-    }
+    // -- classify_tier tests --
 
     #[test]
-    fn test_repo_to_target_opt() {
-        let repo = Path::new("linux/opt/nvim/appimage");
-        let target = repo_to_target(repo).unwrap();
-        assert_eq!(target, PathBuf::from("/opt/nvim/appimage"));
-    }
-
-    #[test]
-    fn test_repo_to_target_library() {
-        let repo = Path::new("macos/Library/Preferences/com.example.plist");
-        let target = repo_to_target(repo).unwrap();
+    fn test_classify_tier_base() {
         assert_eq!(
-            target,
-            PathBuf::from("/Library/Preferences/com.example.plist")
+            classify_tier(
+                "base/home/.vimrc",
+                &Some("macbook".into()),
+                &Some("macos".into())
+            ),
+            Some("base".into())
         );
     }
 
     #[test]
-    fn test_repo_to_target_nested_home() {
-        let repo = Path::new("base/home/.config/nvim/init.lua");
-        let target = repo_to_target(repo).unwrap();
-        assert!(target.to_string_lossy().ends_with(".config/nvim/init.lua"));
+    fn test_classify_tier_platform() {
+        assert_eq!(
+            classify_tier(
+                "macos/home/.config/skhd/skhdrc",
+                &Some("macbook".into()),
+                &Some("macos".into())
+            ),
+            Some("macos".into())
+        );
     }
 
     #[test]
-    fn test_target_to_repo_home() {
-        let home = home_dir().unwrap();
-        let target = home.join(".vimrc");
-        let repo = target_to_repo(&target).unwrap();
-        assert_eq!(repo, PathBuf::from("home/.vimrc"));
+    fn test_classify_tier_machine() {
+        assert_eq!(
+            classify_tier(
+                "macbook/home/.config/nvim/plugins.lua",
+                &Some("macbook".into()),
+                &Some("macos".into())
+            ),
+            Some("macbook".into())
+        );
     }
 
     #[test]
-    fn test_target_to_repo_absolute() {
-        let target = PathBuf::from("/opt/nvim/appimage");
-        let repo = target_to_repo(&target).unwrap();
-        assert_eq!(repo, PathBuf::from("opt/nvim/appimage"));
+    fn test_classify_tier_unknown() {
+        assert_eq!(
+            classify_tier(
+                "random/file.txt",
+                &Some("macbook".into()),
+                &Some("macos".into())
+            ),
+            None
+        );
     }
+
+    // -- tier_priority tests --
+
+    #[test]
+    fn test_tier_priority() {
+        assert_eq!(tier_priority("base"), 1);
+        assert_eq!(tier_priority("macos"), 2);
+        assert_eq!(tier_priority("linux"), 2);
+        assert_eq!(tier_priority("freebsd"), 2);
+        assert_eq!(tier_priority("macbook"), 3);
+        assert_eq!(tier_priority("ubuntu-work"), 3);
+    }
+
+    // -- config roundtrip test (uses re-exported config functions) --
 
     #[test]
     fn test_config_roundtrip() {
@@ -522,32 +369,5 @@ mod tests {
         assert!(config.managed.is_empty());
 
         std::fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    #[test]
-    fn test_repo_to_target_invalid() {
-        let repo = Path::new("base");
-        assert!(repo_to_target(repo).is_err());
-    }
-
-    #[test]
-    fn test_target_to_repo_root_path_returns_error() {
-        let target = PathBuf::from("/");
-        assert!(target_to_repo(&target).is_err());
-    }
-
-    #[test]
-    fn test_backup_timestamp_format() {
-        let ts = backup_timestamp();
-        assert_eq!(ts.len(), 23, "timestamp length should be 23 (with millis)");
-        assert!(ts.chars().nth(4) == Some('-'), "missing dash at position 4");
-        assert!(ts.chars().nth(10) == Some('T'), "missing T at position 10");
-        // Last 3 chars should be digits (milliseconds), preceded by '-'
-        let millis = ts.rsplit('-').next().unwrap();
-        assert_eq!(millis.len(), 3, "millis should be 3 digits");
-        assert!(
-            millis.chars().all(|c| c.is_ascii_digit()),
-            "millis should be digits"
-        );
     }
 }

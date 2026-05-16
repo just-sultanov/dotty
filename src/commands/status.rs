@@ -345,51 +345,7 @@ fn find_inactive_tiers(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_tier_priority() {
-        assert_eq!(convention::tier_priority("base"), 1);
-        assert_eq!(convention::tier_priority("macos"), 2);
-        assert_eq!(convention::tier_priority("linux"), 2);
-        assert_eq!(convention::tier_priority("freebsd"), 2);
-        assert_eq!(convention::tier_priority("macbook"), 3);
-        assert_eq!(convention::tier_priority("ubuntu-work"), 3);
-    }
-
-    #[test]
-    fn test_classify_tier_base() {
-        assert_eq!(
-            convention::classify_tier(
-                "base/home/.vimrc",
-                &Some("macbook".into()),
-                &Some("macos".into())
-            ),
-            Some("base".into())
-        );
-    }
-
-    #[test]
-    fn test_classify_tier_platform() {
-        assert_eq!(
-            convention::classify_tier(
-                "macos/home/.config/skhd/skhdrc",
-                &Some("macbook".into()),
-                &Some("macos".into())
-            ),
-            Some("macos".into())
-        );
-    }
-
-    #[test]
-    fn test_classify_tier_machine() {
-        assert_eq!(
-            convention::classify_tier(
-                "macbook/home/.config/nvim/plugins.lua",
-                &Some("macbook".into()),
-                &Some("macos".into())
-            ),
-            Some("macbook".into())
-        );
-    }
+    // Tests for tier_priority and classify_tier live in convention.rs.
 
     #[test]
     fn test_format_target_path_home() {

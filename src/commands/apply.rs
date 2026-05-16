@@ -473,63 +473,7 @@ fn print_per_file_summary(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_tier_priority() {
-        assert_eq!(crate::convention::tier_priority("base"), 1);
-        assert_eq!(crate::convention::tier_priority("macos"), 2);
-        assert_eq!(crate::convention::tier_priority("linux"), 2);
-        assert_eq!(crate::convention::tier_priority("freebsd"), 2);
-        assert_eq!(crate::convention::tier_priority("macbook"), 3);
-        assert_eq!(crate::convention::tier_priority("ubuntu-work"), 3);
-    }
-
-    #[test]
-    fn test_classify_tier_base() {
-        assert_eq!(
-            crate::convention::classify_tier(
-                "base/home/.vimrc",
-                &Some("macbook".into()),
-                &Some("macos".into())
-            ),
-            Some("base".into())
-        );
-    }
-
-    #[test]
-    fn test_classify_tier_platform() {
-        assert_eq!(
-            crate::convention::classify_tier(
-                "macos/home/.config/skhd/skhdrc",
-                &Some("macbook".into()),
-                &Some("macos".into())
-            ),
-            Some("macos".into())
-        );
-    }
-
-    #[test]
-    fn test_classify_tier_machine() {
-        assert_eq!(
-            crate::convention::classify_tier(
-                "macbook/home/.config/nvim/plugins.lua",
-                &Some("macbook".into()),
-                &Some("macos".into())
-            ),
-            Some("macbook".into())
-        );
-    }
-
-    #[test]
-    fn test_classify_tier_unknown() {
-        assert_eq!(
-            crate::convention::classify_tier(
-                "random/file.txt",
-                &Some("macbook".into()),
-                &Some("macos".into())
-            ),
-            None
-        );
-    }
+    // Tests for tier_priority, classify_tilde, expand_tilde live in convention.rs and paths.rs.
 
     #[test]
     fn test_merge_tiers_basic() {
@@ -599,19 +543,6 @@ mod tests {
         assert!(inspect_target(&target, &repo_file) == TargetState::NeedsBackup);
 
         fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn test_expand_tilde_tilde() {
-        let home = crate::convention::home_dir().unwrap();
-        let path = expand_tilde("~/.vimrc").unwrap();
-        assert_eq!(path, home.join(".vimrc"));
-    }
-
-    #[test]
-    fn test_expand_tilde_absolute() {
-        let path = expand_tilde("/opt/nvim/appimage").unwrap();
-        assert_eq!(path, PathBuf::from("/opt/nvim/appimage"));
     }
 
     #[test]

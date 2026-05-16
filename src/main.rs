@@ -1,10 +1,13 @@
+mod backups;
 mod cli;
 mod commands;
 mod config;
 mod convention;
 mod error;
+mod fs_utils;
 mod git;
 mod log;
+mod paths;
 mod plan;
 mod platform;
 mod prompt;

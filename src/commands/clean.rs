@@ -84,60 +84,6 @@ pub fn run(keep: Option<usize>, before: Option<String>, yes: bool) -> Result<()>
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn test_date_to_backup_prefix_valid() {
-        let prefix = date_to_backup_prefix("2024-01-15");
-        assert_eq!(prefix, Some("2024-01-15T".to_string()));
-    }
-
-    #[test]
-    fn test_date_to_backup_prefix_invalid_short() {
-        assert!(date_to_backup_prefix("2024-1-15").is_none());
-    }
-
-    #[test]
-    fn test_date_to_backup_prefix_invalid_chars() {
-        assert!(date_to_backup_prefix("abcd-ef-gh").is_none());
-    }
-
-    #[test]
-    fn test_date_to_backup_prefix_wrong_length() {
-        assert!(date_to_backup_prefix("2024-01-1").is_none());
-    }
-
-    #[test]
-    fn test_backup_comparison() {
-        // Backup timestamps are lexicographically sortable
-        assert!("2024-01-15T10-30-00" < "2024-01-15T11-00-00");
-        assert!("2024-01-14T23-59-59" < "2024-01-15T00-00-00");
-    }
-
-    #[test]
-    fn test_list_backups_empty() {
-        let dir = std::env::temp_dir().join(format!("dotty_clean_test_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-
-        let backups = list_backups(&dir);
-        assert!(backups.is_empty());
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn test_list_backups_with_entries() {
-        let dir = std::env::temp_dir().join(format!("dotty_clean_test2_{}", std::process::id()));
-        let backup_dir = dir.join("backups");
-        fs::create_dir_all(&backup_dir).unwrap();
-        fs::create_dir_all(backup_dir.join("2024-01-15T10-30-00")).unwrap();
-        fs::create_dir_all(backup_dir.join("2024-01-16T09-15-00")).unwrap();
-
-        let backups = list_backups(&dir);
-        assert_eq!(backups.len(), 2);
-        assert_eq!(backups[0], "2024-01-15T10-30-00");
-        assert_eq!(backups[1], "2024-01-16T09-15-00");
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
+    // Tests for backup utilities (date_to_backup_prefix, list_backups) live in backups.rs.
+    // This module's integration-level tests live in tests/test_remove_status_clean.rs.
 }
