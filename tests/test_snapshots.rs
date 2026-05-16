@@ -54,11 +54,24 @@ fn setup_repo_with_file(env: &TestEnv) {
 }
 
 /// Replace dynamic paths in output with stable placeholders.
+/// Replaces longer paths first to avoid partial matches when one path
+/// is a substring of another (e.g., temp dirs like `dotty_integ_123_6`
+/// and `dotty_integ_123_60`).
 fn normalize_paths(output: &str, env: &TestEnv) -> String {
-    output
-        .replace(env.repo.to_string_lossy().as_ref(), "[REPO]")
-        .replace(env.home.to_string_lossy().as_ref(), "[HOME]")
-        .replace(env.state.to_string_lossy().as_ref(), "[STATE]")
+    let mut replacements: Vec<(String, &str)> = vec![
+        (env.repo.to_string_lossy().into_owned(), "[REPO]"),
+        (env.home.to_string_lossy().into_owned(), "[HOME]"),
+        (env.state.to_string_lossy().into_owned(), "[STATE]"),
+    ];
+    // Sort by path length descending so longer (more specific) paths
+    // are replaced before shorter ones that might be their prefix.
+    replacements.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+    let mut result = output.to_string();
+    for (path, placeholder) in replacements {
+        result = result.replace(&path, placeholder);
+    }
+    result
 }
 
 /// Capture output, normalize paths, and assert snapshot.

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::config::Config;
 use crate::convention::{
     expand_tilde, find_managed_repo_files, read_config, repo_to_target, resolve_repo_path,
     resolve_state_path, walk_dir, write_config,
@@ -89,112 +90,43 @@ pub fn run(
     let mut seen = HashSet::new();
     managed_pairs.retain(|(_, repo_rel)| seen.insert(repo_rel.clone()));
 
-    // Build plan
-    let mut plan = Plan::new(&repo_path);
-
     // Read current config (to update managed map)
-    let mut config = read_config(&state_path)?;
+    let config = read_config(&state_path)?;
 
-    // Collect repo-relative paths for git staging
-    let mut git_rm_paths: Vec<PathBuf> = Vec::new();
+    // Resolve user prompts for files that need override confirmation
+    let skipped = resolve_remove_skipped(&managed_pairs, &repo_path)?;
 
-    // Track files the user chose to skip (e.g., declined override prompt)
-    let mut skipped: HashSet<String> = HashSet::new();
-
-    // Phase 1: Remove symlinks at target locations.
-    // Done first so that Phase 2's CopyFile writes a new regular file instead of
-    // following the symlink (`fs::write` follows symlinks). If the later copy fails,
-    // the repo file is still intact and the user can re-apply.
-    for (target_file, _repo_rel) in &managed_pairs {
-        if is_symlink(target_file) {
-            plan.add(Action::RemoveSymlink {
-                path: target_file.clone(),
-            });
-        }
-    }
-
-    // Phase 2: Copy files from repo back to target (restore as regular files).
-    // Symlinks are already gone, so `fs::write` creates a new regular file.
-    for (target_file, repo_rel) in &managed_pairs {
-        let repo_file = repo_path.join(repo_rel);
-
-        if repo_file.exists() {
-            // Check if target already exists as regular file — ask for override
-            if target_file.exists() && !is_symlink(target_file) {
-                let ok = prompt_confirm(&format!(
-                    "Override existing file at {}?",
-                    target_file.display()
-                ))?;
-                if !ok {
-                    skipped.insert(repo_rel.clone());
-                    continue;
-                }
-            }
-
-            plan.add(Action::CopyFile {
-                source: repo_file.clone(),
-                dest: target_file.clone(),
-            });
-        }
-    }
-
-    // Phase 3: Remove files from repo and update config.
-    // Done last so that if this fails, the target already has a valid regular file
-    // (restored in phase 2) and the repository simply retains the extra file.
-    for (_target_file, repo_rel) in &managed_pairs {
-        if skipped.contains(repo_rel) {
-            continue;
-        }
-
-        let repo_file = repo_path.join(repo_rel);
-
-        // Remove file from repo
-        plan.add(Action::RemoveFile {
-            path: repo_file.clone(),
-        });
-
-        // Remove from managed map
-        config.managed.shift_remove(repo_rel);
-
-        // Track repo-relative path for git staging
-        git_rm_paths.push(PathBuf::from(repo_rel));
-    }
-
-    // Stage deletions in git (git add stages removals of tracked files)
-    if !git_rm_paths.is_empty() {
-        plan.add(Action::GitAdd {
-            paths: git_rm_paths.clone(),
-        });
-    }
-
-    // Git commit (if --commit specified)
-    if let Some(ref msg) = commit {
-        plan.add(Action::GitCommit {
-            message: msg.clone(),
-        });
-    }
+    // Build the plan (pure function — no side effects)
+    let input = RemovePlanInput {
+        repo_path: repo_path.clone(),
+        managed_pairs,
+        skipped,
+        commit: commit.clone(),
+    };
+    let output = build_remove_plan(&input, &config)?;
 
     // Execute plan
-    plan::execute_plan(&plan, dry_run)?;
+    plan::execute_plan(&output.plan, dry_run)?;
 
     // Write updated config only after successful plan execution
-    if !dry_run && !plan.is_empty() {
-        write_config(&state_path, &config)?;
+    if !dry_run && !output.plan.is_empty() {
+        write_config(&state_path, &output.config)?;
     }
 
     // Print summary
+    let total = input.managed_pairs.len();
     if dry_run {
         println!(
             "[dry-run] {} file(s) would be removed from management",
-            managed_pairs.len()
+            total
         );
         println!("[dry-run] no changes made");
     } else if commit.is_some() {
-        println!("Removed {} file(s) from management.", managed_pairs.len());
+        println!("Removed {} file(s) from management.", total);
     } else {
         println!(
             "Removed {} file(s) from management. Run `git rm` + `git commit` to finalize.",
-            managed_pairs.len()
+            total
         );
     }
 
@@ -217,47 +149,321 @@ fn collect_target_files(target_path: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+// ---------------------------------------------------------------------------
+// Plan building (pure — no I/O)
+// ---------------------------------------------------------------------------
+
+/// Input data for building a `remove` plan.
+pub(crate) struct RemovePlanInput {
+    pub repo_path: PathBuf,
+    pub managed_pairs: Vec<(PathBuf, String)>,
+    pub skipped: HashSet<String>,
+    pub commit: Option<String>,
+}
+
+/// Output of `build_remove_plan`.
+pub(crate) struct RemovePlanOutput {
+    pub plan: Plan,
+    pub config: Config,
+}
+
+/// Build a plan for removing files from the dotty repository.
+///
+/// This is a pure function: it takes resolved input data (managed pairs,
+/// skipped files from user prompts) and returns a `Plan` with actions
+/// and an updated `Config`. No filesystem or git operations are performed.
+pub(crate) fn build_remove_plan(
+    input: &RemovePlanInput,
+    config: &Config,
+) -> Result<RemovePlanOutput> {
+    let mut plan = Plan::new(&input.repo_path);
+    let mut config = config.clone();
+
+    // Collect repo-relative paths for git staging
+    let mut git_rm_paths: Vec<PathBuf> = Vec::new();
+
+    // Phase 1: Remove symlinks at target locations.
+    for (target_file, _repo_rel) in &input.managed_pairs {
+        if is_symlink(target_file) {
+            plan.add(Action::RemoveSymlink {
+                path: target_file.clone(),
+            });
+        }
+    }
+
+    // Phase 2: Copy files from repo back to target (restore as regular files).
+    for (target_file, repo_rel) in &input.managed_pairs {
+        if input.skipped.contains(repo_rel) {
+            continue;
+        }
+
+        let repo_file = input.repo_path.join(repo_rel);
+
+        if repo_file.exists() {
+            plan.add(Action::CopyFile {
+                source: repo_file.clone(),
+                dest: target_file.clone(),
+            });
+        }
+    }
+
+    // Phase 3: Remove files from repo and update config.
+    for (_target_file, repo_rel) in &input.managed_pairs {
+        if input.skipped.contains(repo_rel) {
+            continue;
+        }
+
+        let repo_file = input.repo_path.join(repo_rel);
+
+        plan.add(Action::RemoveFile {
+            path: repo_file.clone(),
+        });
+
+        config.managed.shift_remove(repo_rel);
+
+        git_rm_paths.push(PathBuf::from(repo_rel));
+    }
+
+    // Stage deletions in git
+    if !git_rm_paths.is_empty() {
+        plan.add(Action::GitAdd {
+            paths: git_rm_paths,
+        });
+    }
+
+    // Git commit (if --commit specified)
+    if let Some(ref msg) = input.commit {
+        plan.add(Action::GitCommit {
+            message: msg.clone(),
+        });
+    }
+
+    Ok(RemovePlanOutput { plan, config })
+}
+
+/// Resolve which files the user wants to skip during removal.
+///
+/// For each managed pair where the repo file exists and the target already
+/// exists as a regular file (not a symlink), ask the user for override
+/// confirmation. Returns the set of repo-relative paths the user declined.
+fn resolve_remove_skipped(
+    managed_pairs: &[(PathBuf, String)],
+    repo_path: &Path,
+) -> Result<HashSet<String>> {
+    let mut skipped = HashSet::new();
+
+    for (target_file, repo_rel) in managed_pairs {
+        let repo_file = repo_path.join(repo_rel);
+
+        if repo_file.exists() && target_file.exists() && !is_symlink(target_file) {
+            let ok = prompt_confirm(&format!(
+                "Override existing file at {}?",
+                target_file.display()
+            ))?;
+            if !ok {
+                skipped.insert(repo_rel.clone());
+            }
+        }
+    }
+
+    Ok(skipped)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn unique_temp_dir() -> PathBuf {
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("dotty_remove_test_{}_{}", std::process::id(), id))
+    }
 
     #[test]
     fn test_collect_target_files_single() {
-        let dir = std::env::temp_dir().join(format!("dotty_remove_test_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = unique_temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("test.txt");
-        fs::write(&file, "content").unwrap();
+        std::fs::write(&file, "content").unwrap();
 
         let files = collect_target_files(&file).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0], file);
 
-        fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn test_collect_target_files_directory() {
-        let dir =
-            std::env::temp_dir().join(format!("dotty_remove_test_dir_{}", std::process::id()));
-        fs::create_dir_all(&dir.join("sub")).unwrap();
-        fs::write(dir.join("a.txt"), "a").unwrap();
-        fs::write(dir.join("sub").join("b.txt"), "b").unwrap();
+        let dir = unique_temp_dir();
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        std::fs::write(dir.join("sub").join("b.txt"), "b").unwrap();
 
         let files = collect_target_files(&dir).unwrap();
         assert_eq!(files.len(), 2);
 
-        fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn test_collect_target_files_nonexistent() {
-        let path = PathBuf::from(
-            "/tmp/dotty_nonexistent_{}.txt".to_string() + &std::process::id().to_string(),
-        );
+        let path = unique_temp_dir().join("nonexistent.txt");
         let files = collect_target_files(&path).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0], path);
+    }
+
+    // -- build_remove_plan tests --
+
+    #[test]
+    fn test_build_remove_plan_basic() {
+        let base = unique_temp_dir();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        std::fs::write(&target, "content").unwrap();
+
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped: HashSet::new(),
+            commit: None,
+        };
+        let output = build_remove_plan(&input, &config).unwrap();
+
+        // CopyFile + RemoveFile + GitAdd = 3 actions (no symlink to remove)
+        assert_eq!(output.plan.actions.len(), 3);
+        assert!(!output.config.managed.contains_key("base/home/.vimrc"));
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn test_build_remove_plan_with_symlink() {
+        let base = unique_temp_dir();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped: HashSet::new(),
+            commit: None,
+        };
+        let output = build_remove_plan(&input, &config).unwrap();
+
+        // RemoveSymlink + CopyFile + RemoveFile + GitAdd = 4 actions
+        assert_eq!(output.plan.actions.len(), 4);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn test_build_remove_plan_with_skipped() {
+        let base = unique_temp_dir();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        std::fs::write(&target, "content").unwrap();
+
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        let mut skipped = HashSet::new();
+        skipped.insert("base/home/.vimrc".to_string());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped,
+            commit: None,
+        };
+        let output = build_remove_plan(&input, &config).unwrap();
+
+        // Skipped: no actions, managed map unchanged
+        assert!(output.plan.is_empty());
+        assert!(output.config.managed.contains_key("base/home/.vimrc"));
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn test_build_remove_plan_with_git_commit() {
+        let base = unique_temp_dir();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        std::fs::write(&target, "content").unwrap();
+
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped: HashSet::new(),
+            commit: Some("remove vimrc".to_string()),
+        };
+        let output = build_remove_plan(&input, &config).unwrap();
+
+        // CopyFile + RemoveFile + GitAdd + GitCommit = 4
+        assert_eq!(output.plan.actions.len(), 4);
+
+        match &output.plan.actions.last().unwrap() {
+            Action::GitCommit { message } => assert_eq!(message, "remove vimrc"),
+            other => panic!("expected GitCommit, got: {other:?}"),
+        }
+
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

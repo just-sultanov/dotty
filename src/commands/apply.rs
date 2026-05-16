@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tracing::warn;
 
+use crate::config::Config;
 use crate::convention::{
     backup_timestamp, expand_tilde, read_config, repo_to_target, resolve_repo_path,
     resolve_state_path, scan_machine_directories, write_config,
@@ -43,18 +44,74 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
     // Classify files by tier and merge by priority
     let merged = merge_tiers(&tracked_files, &machine_name, &platform);
 
-    // Build plan
-    let mut plan = Plan::new(&repo_path);
-
-    // Collect per-file results for console output
-    let mut file_results: Vec<FileResult> = Vec::new();
-
     // Build override map: target_path → lower tier that was overridden
     let override_map = build_override_map(&tracked_files, &Some(machine_name.clone()), &platform);
 
+    // Build the plan (pure function — no git/config I/O)
+    let input = ApplyPlanInput {
+        repo_path: repo_path.clone(),
+        state_path: state_path.clone(),
+        home: crate::convention::home_dir()?,
+        merged,
+        override_map,
+        config: config.clone(),
+    };
+    let output = build_apply_plan(&input)?;
+
+    // Execute plan
+    plan::execute_plan(&output.plan, dry_run)?;
+
+    // Print per-file summary before writing config — summary should always appear
+    // even if config write fails (e.g. permission issue on state dir).
+    print_per_file_summary(&output.file_results, &output.orphans, dry_run);
+
+    // Rebuild managed map from tracked files
+    // TODO: incremental update instead of full rebuild
+    if !dry_run {
+        let new_managed = rebuild_managed_map(&tracked_files);
+        config.managed = new_managed;
+        if let Err(e) = write_config(&state_path, &config) {
+            warn!("failed to write config: {e}");
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Plan building (pure — no git/config I/O)
+// ---------------------------------------------------------------------------
+
+/// Input data for building an `apply` plan.
+pub(crate) struct ApplyPlanInput {
+    pub repo_path: PathBuf,
+    pub state_path: PathBuf,
+    pub home: PathBuf,
+    pub merged: HashMap<PathBuf, (String, String)>,
+    pub override_map: HashMap<PathBuf, String>,
+    pub config: Config,
+}
+
+/// Output of `build_apply_plan`.
+pub(crate) struct ApplyPlanOutput {
+    pub plan: Plan,
+    pub file_results: Vec<FileResult>,
+    pub orphans: Vec<(String, String)>,
+}
+
+/// Build a plan for applying the dotty repository to the system.
+///
+/// This function inspects the filesystem state of each target path and
+/// builds a `Plan` with the necessary actions (CreateDir, Backup,
+/// CreateSymlink, RemoveSymlink). It also detects orphan managed entries
+/// and produces per-file results for console output.
+pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput> {
+    let mut plan = Plan::new(&input.repo_path);
+    let mut file_results: Vec<FileResult> = Vec::new();
+
     // Process each merged file
-    for (target_path, (tier, repo_rel)) in &merged {
-        let repo_file = repo_path.join(repo_rel);
+    for (target_path, (tier, repo_rel)) in &input.merged {
+        let repo_file = input.repo_path.join(repo_rel);
         let target = target_path.to_path_buf();
 
         // Check target state
@@ -65,12 +122,11 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
                     tier: tier.clone(),
                     applied: false,
                     skipped: true,
-                    overrides: override_map.get(target_path).cloned(),
+                    overrides: input.override_map.get(target_path).cloned(),
                 });
                 continue;
             }
             TargetState::NeedsSymlink => {
-                // Create parent dirs
                 if let Some(parent) = target.parent() {
                     plan.add(Action::CreateDir {
                         path: parent.to_path_buf(),
@@ -83,17 +139,14 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
                 TargetState::NeedsSymlink
             }
             TargetState::NeedsBackup => {
-                // Create parent dirs
                 if let Some(parent) = target.parent() {
                     plan.add(Action::CreateDir {
                         path: parent.to_path_buf(),
                     });
                 }
-                // Backup the existing file
-                let home = crate::convention::home_dir()?;
-                let backup_base = state_path.join("backups");
+                let backup_base = input.state_path.join("backups");
                 let backup_ts = backup_timestamp();
-                let backup_dest = if let Ok(relative) = target.strip_prefix(&home) {
+                let backup_dest = if let Ok(relative) = target.strip_prefix(&input.home) {
                     backup_base.join(&backup_ts).join(relative)
                 } else {
                     backup_base
@@ -112,12 +165,7 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
             }
         };
 
-        // Track overrides
-        let overrides = if override_map.contains_key(target_path) {
-            override_map.get(target_path).cloned()
-        } else {
-            None
-        };
+        let overrides = input.override_map.get(target_path).cloned();
 
         file_results.push(FileResult {
             target: target.clone(),
@@ -129,9 +177,10 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
     }
 
     // Orphan detection: managed entries not in tracked files
-    let tracked_set: std::collections::HashSet<&String> = tracked_files.iter().collect();
+    let tracked_set: std::collections::HashSet<&String> =
+        input.merged.values().map(|(_, r)| r as &String).collect();
     let mut orphans: Vec<(String, String)> = Vec::new();
-    for (repo_rel, target_rel) in &config.managed {
+    for (repo_rel, target_rel) in &input.config.managed {
         if !tracked_set.contains(repo_rel) {
             orphans.push((repo_rel.clone(), target_rel.clone()));
         }
@@ -143,24 +192,11 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
         plan.add(Action::RemoveSymlink { path: target });
     }
 
-    // Execute plan
-    plan::execute_plan(&plan, dry_run)?;
-
-    // Print per-file summary before writing config — summary should always appear
-    // even if config write fails (e.g. permission issue on state dir).
-    print_per_file_summary(&file_results, &orphans, dry_run);
-
-    // Rebuild managed map from tracked files
-    // TODO: incremental update instead of full rebuild
-    if !dry_run {
-        let new_managed = rebuild_managed_map(&tracked_files);
-        config.managed = new_managed;
-        if let Err(e) = write_config(&state_path, &config) {
-            warn!("failed to write config: {e}");
-        }
-    }
-
-    Ok(())
+    Ok(ApplyPlanOutput {
+        plan,
+        file_results,
+        orphans,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +409,7 @@ fn rebuild_managed_map(tracked_files: &[String]) -> IndexMap<String, String> {
 // ---------------------------------------------------------------------------
 
 /// Per-file result for console output.
-struct FileResult {
+pub(crate) struct FileResult {
     target: PathBuf,
     tier: String,
     applied: bool,
@@ -554,5 +590,191 @@ mod tests {
         assert!(managed.contains_key("base/home/.vimrc"));
         assert!(managed.contains_key("base/home/.gitconfig"));
         assert!(managed.get("base/home/.vimrc").unwrap().starts_with("~"));
+    }
+
+    // -- build_apply_plan tests --
+
+    #[test]
+    fn test_build_apply_plan_all_correct() {
+        let base = std::env::temp_dir().join(format!("dotty_apply_correct_{}", std::process::id()));
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+
+        let mut merged = HashMap::new();
+        merged.insert(
+            target.clone(),
+            ("base".to_string(), "base/home/.vimrc".to_string()),
+        );
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: HashMap::new(),
+                config,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            // Symlink is correct — no actions, file is skipped
+            assert!(output.plan.is_empty());
+            assert_eq!(output.file_results.len(), 1);
+            assert!(output.file_results[0].skipped);
+            assert!(output.orphans.is_empty());
+        });
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn test_build_apply_plan_needs_symlink() {
+        let base = std::env::temp_dir().join(format!("dotty_apply_symlink_{}", std::process::id()));
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+        // target does not exist — needs symlink
+
+        let mut merged = HashMap::new();
+        merged.insert(
+            target.clone(),
+            ("base".to_string(), "base/home/.vimrc".to_string()),
+        );
+        let config = Config::new();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: HashMap::new(),
+                config,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            // CreateDir + CreateSymlink = 2 actions
+            assert_eq!(output.plan.actions.len(), 2);
+            assert_eq!(output.file_results.len(), 1);
+            assert!(output.file_results[0].applied);
+        });
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn test_build_apply_plan_needs_backup() {
+        let base = std::env::temp_dir().join(format!("dotty_apply_backup_{}", std::process::id()));
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "new content").unwrap();
+        std::fs::write(&target, "old content").unwrap(); // regular file, not symlink
+
+        let mut merged = HashMap::new();
+        merged.insert(
+            target.clone(),
+            ("base".to_string(), "base/home/.vimrc".to_string()),
+        );
+        let config = Config::new();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: HashMap::new(),
+                config,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            // CreateDir + Backup + CreateSymlink = 3 actions
+            assert_eq!(output.plan.actions.len(), 3);
+            assert_eq!(output.file_results.len(), 1);
+            assert!(output.file_results[0].applied);
+        });
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn test_build_apply_plan_orphan_detection() {
+        let base = std::env::temp_dir().join(format!("dotty_apply_orphan_{}", std::process::id()));
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+
+        let mut merged = HashMap::new();
+        merged.insert(
+            target.clone(),
+            ("base".to_string(), "base/home/.vimrc".to_string()),
+        );
+        // Config has an extra managed entry not in merged (orphan)
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+        config
+            .managed
+            .insert("base/home/.old".into(), "~/.old".into()); // orphan
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: HashMap::new(),
+                config,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            // Orphan detected
+            assert_eq!(output.orphans.len(), 1);
+            assert_eq!(output.orphans[0].0, "base/home/.old");
+            // RemoveSymlink for orphan is added to plan
+            assert!(!output.plan.is_empty());
+        });
+
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

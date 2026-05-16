@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tracing::warn;
 
+use crate::config::Config;
 use crate::convention::{
     self, KNOWN_PLATFORMS, backup_timestamp, expand_tilde, read_config, repo_to_target,
     resolve_repo_path, resolve_state_path, target_to_repo, walk_dir, write_config,
@@ -97,37 +98,79 @@ pub fn run(
     // Resolve conflicts interactively
     let files_to_override = resolve_conflicts(&files_to_add, &conflict_map)?;
 
-    // Build the plan
-    let mut plan = Plan::new(&repo_path);
-
     // Read current config (to update managed map)
-    let mut config = read_config(&state_path)?;
+    let config = read_config(&state_path)?;
+    let home = convention::home_dir()?;
+    let has_git = repo_path.join(".git").exists();
+
+    // Build the plan (pure function — no side effects)
+    let input = AddPlanInput {
+        repo_path: repo_path.clone(),
+        state_path: state_path.clone(),
+        home,
+        scope,
+        files_to_add: files_to_override,
+        commit: commit.clone(),
+        has_git,
+    };
+    let output = build_add_plan(&input, &config)?;
+
+    // Execute the plan
+    plan::execute_plan(&output.plan, dry_run)?;
+
+    // Write updated config only after successful plan execution.
+    if !dry_run && !output.plan.is_empty() {
+        write_config(&state_path, &output.config)?;
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Plan building (pure — no I/O)
+// ---------------------------------------------------------------------------
+
+/// Input data for building an `add` plan.
+///
+/// All filesystem and user-interaction concerns are resolved before this
+/// struct is created, so `build_add_plan` is a pure function suitable for
+/// unit testing.
+pub(crate) struct AddPlanInput {
+    pub repo_path: PathBuf,
+    pub state_path: PathBuf,
+    pub home: PathBuf,
+    pub scope: String,
+    pub files_to_add: Vec<PathBuf>,
+    pub commit: Option<String>,
+    pub has_git: bool,
+}
+
+/// Output of `build_add_plan`.
+pub(crate) struct AddPlanOutput {
+    pub plan: Plan,
+    pub config: Config,
+}
+
+/// Build a plan for adding files to the dotty repository.
+///
+/// This is a pure function: it takes all resolved input data and returns
+/// a `Plan` with actions and an updated `Config`. No filesystem or git
+/// operations are performed.
+pub(crate) fn build_add_plan(input: &AddPlanInput, config: &Config) -> Result<AddPlanOutput> {
+    let mut plan = Plan::new(&input.repo_path);
+    let mut config = config.clone();
 
     // Backup timestamp
     let backup_timestamp = backup_timestamp();
-    let backup_base = state_path.join("backups").join(&backup_timestamp);
-
-    let home = convention::home_dir()?;
+    let backup_base = input.state_path.join("backups").join(&backup_timestamp);
 
     // Collect repo-relative paths for git add alongside plan building
     let mut git_add_paths: Vec<PathBuf> = Vec::new();
 
-    for target_file in &files_to_override {
+    for target_file in &input.files_to_add {
         // Compute repo-relative path (without scope prefix)
         let rel_path = target_to_repo(target_file)?;
-        let repo_file = repo_path.join(&scope).join(&rel_path);
-
-        // Check if file already exists in this tier
-        if repo_file.exists() {
-            let ok = prompt_confirm(&format!(
-                "File already exists in repo at {}/{}. Override?",
-                scope,
-                rel_path.display()
-            ))?;
-            if !ok {
-                continue;
-            }
-        }
+        let repo_file = input.repo_path.join(&input.scope).join(&rel_path);
 
         // Create parent directories in repo
         if let Some(parent) = repo_file.parent() {
@@ -138,7 +181,7 @@ pub fn run(
 
         // Backup original file if it exists at target
         if target_file.exists() {
-            let backup_dest = if let Ok(relative) = target_file.strip_prefix(&home) {
+            let backup_dest = if let Ok(relative) = target_file.strip_prefix(&input.home) {
                 backup_base.join(relative)
             } else {
                 backup_base.join(target_file.file_name().unwrap_or_default())
@@ -162,52 +205,44 @@ pub fn run(
         });
 
         // Track path for git add
-        if let Ok(rel) = repo_file.strip_prefix(&repo_path) {
+        if let Ok(rel) = repo_file.strip_prefix(&input.repo_path) {
             git_add_paths.push(rel.to_path_buf());
         }
 
         // Update managed map
         let repo_rel = repo_file
-            .strip_prefix(&repo_path)
+            .strip_prefix(&input.repo_path)
             .map_err(|_| {
                 anyhow::anyhow!(
                     "Repo file {} is not inside the repository at {}",
                     repo_file.display(),
-                    repo_path.display()
+                    input.repo_path.display()
                 )
             })?
             .to_string_lossy()
             .to_string();
         let target_rel = target_file
-            .strip_prefix(&home)
+            .strip_prefix(&input.home)
             .map(|p| format!("~/{p}", p = p.display()))
             .unwrap_or_else(|_| target_file.to_string_lossy().to_string());
         config.managed.insert(repo_rel, target_rel);
     }
 
     // Git add (stage the copied files)
-    if !git_add_paths.is_empty() && repo_path.join(".git").exists() {
+    if !git_add_paths.is_empty() && input.has_git {
         plan.add(Action::GitAdd {
             paths: git_add_paths,
         });
     }
 
     // Git commit (if --commit specified)
-    if let Some(msg) = &commit {
+    if let Some(msg) = &input.commit {
         plan.add(Action::GitCommit {
             message: msg.clone(),
         });
     }
 
-    // Execute the plan
-    plan::execute_plan(&plan, dry_run)?;
-
-    // Write updated config only after successful plan execution.
-    if !dry_run && !plan.is_empty() {
-        write_config(&state_path, &config)?;
-    }
-
-    Ok(())
+    Ok(AddPlanOutput { plan, config })
 }
 
 // ---------------------------------------------------------------------------
@@ -380,6 +415,14 @@ fn resolve_conflicts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn unique_temp_dir() -> PathBuf {
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("dotty_add_test_{}_{}", std::process::id(), id))
+    }
 
     #[test]
     fn test_resolve_scope_machine() {
@@ -424,5 +467,190 @@ mod tests {
     fn test_conflict_map_empty() {
         let map = build_conflict_map(&[]);
         assert!(map.is_empty());
+    }
+
+    // -- build_add_plan tests --
+
+    #[test]
+    fn test_build_add_plan_single_file() {
+        let base = unique_temp_dir();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        fs::write(&target, "set nocompatible").unwrap();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "base".to_string(),
+                files_to_add: vec![target.clone()],
+                commit: None,
+                has_git: false,
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            // CreateDir + Backup + CopyFile + CreateSymlink = 4 actions
+            assert_eq!(output.plan.actions.len(), 4);
+            assert!(output.config.managed.contains_key("base/home/.vimrc"));
+        });
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn test_build_add_plan_with_git_commit() {
+        let base = unique_temp_dir();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".gitconfig");
+        fs::write(&target, "[user]").unwrap();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "base".to_string(),
+                files_to_add: vec![target.clone()],
+                commit: Some("add gitconfig".to_string()),
+                has_git: true,
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            // CreateDir + Backup + CopyFile + CreateSymlink + GitAdd + GitCommit = 6
+            assert_eq!(output.plan.actions.len(), 6);
+
+            match &output.plan.actions.last().unwrap() {
+                Action::GitCommit { message } => assert_eq!(message, "add gitconfig"),
+                other => panic!("expected GitCommit, got: {other:?}"),
+            }
+        });
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn test_build_add_plan_multiple_files() {
+        let base = unique_temp_dir();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let f1 = home.join(".vimrc");
+        let f2 = home.join(".gitconfig");
+        fs::write(&f1, "vim").unwrap();
+        fs::write(&f2, "git").unwrap();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "base".to_string(),
+                files_to_add: vec![f1.clone(), f2.clone()],
+                commit: None,
+                has_git: false,
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            // 2 files × (CreateDir + Backup + CopyFile + CreateSymlink) = 8
+            assert_eq!(output.plan.actions.len(), 8);
+            assert_eq!(output.config.managed.len(), 2);
+        });
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn test_build_add_plan_nested_path() {
+        let base = unique_temp_dir();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(home.join(".config/nvim")).unwrap();
+
+        let target = home.join(".config/nvim/init.lua");
+        fs::write(&target, "vim.g.mapleader = ' '").unwrap();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "macbook".to_string(),
+                files_to_add: vec![target.clone()],
+                commit: None,
+                has_git: false,
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            assert!(
+                output
+                    .config
+                    .managed
+                    .contains_key("macbook/home/.config/nvim/init.lua"),
+                "expected macbook scope in managed key"
+            );
+        });
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn test_build_add_plan_no_git_skips_git_add() {
+        let base = unique_temp_dir();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        fs::write(&target, "content").unwrap();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "base".to_string(),
+                files_to_add: vec![target.clone()],
+                commit: None,
+                has_git: false,
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            for action in &output.plan.actions {
+                assert!(
+                    !matches!(action, Action::GitAdd { .. }),
+                    "should not have GitAdd when has_git is false"
+                );
+            }
+        });
+
+        fs::remove_dir_all(&base).unwrap();
     }
 }
