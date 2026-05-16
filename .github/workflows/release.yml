@@ -90,7 +90,7 @@ jobs:
       - run: mise run dist-windows
       - uses: actions/upload-artifact@v7
         with:
-          name: dotty-x86_64-pc-windows-gnu
+          name: dotty-x86_64-pc-windows-msvc
           path: dist/*.zip
           if-no-files-found: error
 

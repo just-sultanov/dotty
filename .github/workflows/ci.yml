@@ -75,6 +75,6 @@ jobs:
       - run: mise run build-windows
       - uses: actions/upload-artifact@v7
         with:
-          name: dotty-x86_64-pc-windows-gnu
-          path: target/x86_64-pc-windows-gnu/release/dotty.exe
+          name: dotty-x86_64-pc-windows-msvc
+          path: target/x86_64-pc-windows-msvc/release/dotty.exe
           if-no-files-found: error
