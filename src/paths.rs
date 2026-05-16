@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::DottyError;
 use dir_spec::state_home;
+use path_slash::PathExt;
 
 /// Resolve the dotty repository path.
 ///
@@ -109,6 +110,15 @@ pub fn home_dir() -> Result<PathBuf, DottyError> {
     })
 }
 
+/// Normalize path separators to forward slashes (`/`).
+///
+/// On Windows `PathBuf::to_string_lossy()` produces `\`, but dotty's
+/// config keys and git paths always use `/`. Uses `path-slash` crate
+/// for correct and efficient conversion across all platforms.
+pub fn normalize_path(path: &Path) -> String {
+    path.to_slash_lossy().into_owned()
+}
+
 /// Expand `~` prefix in a path string to the full home directory path.
 ///
 /// E.g. `"~/.vimrc"` → `/home/user/.vimrc`, `"/opt/app"` → `/opt/app`.
@@ -170,6 +180,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "windows"))]
     fn test_resolve_state_path_xdg() {
         let path = temp_env::with_vars(
             [

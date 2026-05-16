@@ -209,22 +209,19 @@ pub(crate) fn build_add_plan(input: &AddPlanInput, config: &Config) -> Result<Ad
             git_add_paths.push(rel.to_path_buf());
         }
 
-        // Update managed map
-        let repo_rel = repo_file
-            .strip_prefix(&input.repo_path)
-            .map_err(|_| {
+        // Update managed map (normalize separators to `/` for cross-platform keys)
+        let repo_rel =
+            convention::normalize_path(repo_file.strip_prefix(&input.repo_path).map_err(|_| {
                 anyhow::anyhow!(
                     "Repo file {} is not inside the repository at {}",
                     repo_file.display(),
                     input.repo_path.display()
                 )
-            })?
-            .to_string_lossy()
-            .to_string();
+            })?);
         let target_rel = target_file
             .strip_prefix(&input.home)
-            .map(|p| format!("~/{p}", p = p.display()))
-            .unwrap_or_else(|_| target_file.to_string_lossy().to_string());
+            .map(|p| format!("~/{p}", p = convention::normalize_path(p)))
+            .unwrap_or_else(|_| convention::normalize_path(target_file));
         config.managed.insert(repo_rel, target_rel);
     }
 

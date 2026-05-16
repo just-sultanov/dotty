@@ -25,6 +25,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dir_spec = "0.5.2"
 symlink-rs = "1.0.0"
+path-slash = "0.2"
 
 [dev-dependencies]
 insta = "1"
