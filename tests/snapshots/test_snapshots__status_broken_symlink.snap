@@ -3,7 +3,7 @@ source: tests/test_snapshots.rs
 expression: normalized
 ---
 Machine:   testbox
-Platform:  macos
+Platform:  [PLATFORM]
 Repo:      [REPO]
 Branch:    master
 Git:       1 deleted

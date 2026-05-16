@@ -71,6 +71,40 @@ fn normalize_paths(output: &str, env: &TestEnv) -> String {
     for (path, placeholder) in replacements {
         result = result.replace(&path, placeholder);
     }
+
+    // Normalize platform-dependent lines so snapshots are stable across OSes.
+    // `Platform: <os>` → `Platform:  [PLATFORM]`
+    result = result
+        .lines()
+        .map(|line| {
+            if line.starts_with("Platform:") {
+                "Platform:  [PLATFORM]".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Normalize inactive-tier lines: `  ~/.bashrc (tier: <os>, file: <os>/home/.bashrc)`
+    // → `  ~/.bashrc (tier: [INACTIVE_TIER], file: [INACTIVE_TIER]/home/.bashrc)`
+    result = result
+        .lines()
+        .map(|line| {
+            if line.starts_with("  ~") && line.contains("(tier:") {
+                let tier = if cfg!(target_os = "macos") {
+                    "linux"
+                } else {
+                    "macos"
+                };
+                line.replace(tier, "[INACTIVE_TIER]")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
     result
 }
 
