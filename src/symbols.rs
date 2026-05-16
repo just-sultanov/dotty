@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_xterm_unicode() {
-        let result = temp_env::with_var("TERM", Some("xterm-256color"), || supports_unicode());
+        let result = temp_env::with_var("TERM", Some("xterm-256color"), supports_unicode);
         assert!(result);
     }
 }

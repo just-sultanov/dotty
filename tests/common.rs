@@ -33,13 +33,7 @@ pub struct TestEnv {
 impl TestEnv {
     /// Create a fresh set of temp directories.
     pub fn new() -> Self {
-        let repo = unique_temp_dir();
-        let state = unique_temp_dir();
-        let home = unique_temp_dir();
-        std::fs::create_dir_all(&repo).unwrap();
-        std::fs::create_dir_all(&state).unwrap();
-        std::fs::create_dir_all(&home).unwrap();
-        Self { repo, state, home }
+        Self::default()
     }
 
     /// Return the binary path (built by `cargo test`).
@@ -149,6 +143,18 @@ impl TestEnv {
             actual.display(),
             expected_target.display()
         );
+    }
+}
+
+impl Default for TestEnv {
+    fn default() -> Self {
+        let repo = unique_temp_dir();
+        let state = unique_temp_dir();
+        let home = unique_temp_dir();
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        Self { repo, state, home }
     }
 }
 

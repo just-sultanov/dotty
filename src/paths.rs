@@ -186,7 +186,7 @@ mod tests {
         let repo = Path::new("base/home/.vimrc");
         let target = repo_to_target(repo).unwrap();
         assert!(target.to_string_lossy().ends_with(".vimrc"));
-        assert!(target.starts_with(&home_dir().unwrap()));
+        assert!(target.starts_with(home_dir().unwrap()));
     }
 
     #[test]
@@ -244,7 +244,7 @@ mod tests {
     fn test_expand_tilde_home() {
         let path = expand_tilde("~/.vimrc").unwrap();
         assert!(path.to_string_lossy().ends_with(".vimrc"));
-        assert!(path.starts_with(&home_dir().unwrap()));
+        assert!(path.starts_with(home_dir().unwrap()));
     }
 
     #[test]
