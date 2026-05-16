@@ -36,7 +36,7 @@ fn apply_replaces_wrong_symlink() {
     let wrong_target = env.home.join(".wrong_target");
     std::fs::write(&wrong_target, "wrong").unwrap();
     std::fs::remove_file(&wrong_target).unwrap();
-    std::os::unix::fs::symlink(env.home.join("some/nonexistent/path"), &target).unwrap();
+    symlink_rs::symlink_file(env.home.join("some/nonexistent/path"), &target).unwrap();
 
     assert!(target.is_symlink());
     // Verify it points to the wrong place
