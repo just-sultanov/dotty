@@ -17,10 +17,13 @@ mod symlink;
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands, ConfigCommands};
+use log::Verbosity;
 
 fn main() -> Result<()> {
-    log::init();
     let cli = Cli::parse();
+
+    let verbosity = Verbosity::from_flags(cli.is_verbose(), cli.is_quiet());
+    log::init(verbosity);
 
     match cli.command {
         Commands::Init { git_url, machine } => commands::init::run(git_url, machine)?,

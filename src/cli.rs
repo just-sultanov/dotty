@@ -23,8 +23,28 @@ pub struct Cli {
     #[arg(long, action = ArgAction::Version)]
     version: (),
 
+    /// Verbose output (show debug logs)
+    #[arg(long, short, global = true)]
+    verbose: bool,
+
+    /// Quiet output (suppress non-essential logs)
+    #[arg(long, short, global = true)]
+    quiet: bool,
+
     #[command(subcommand)]
     pub command: Commands,
+}
+
+impl Cli {
+    /// Return true if verbose mode is enabled.
+    pub fn is_verbose(&self) -> bool {
+        self.verbose
+    }
+
+    /// Return true if quiet mode is enabled.
+    pub fn is_quiet(&self) -> bool {
+        self.quiet
+    }
 }
 
 #[derive(Subcommand, Debug)]
