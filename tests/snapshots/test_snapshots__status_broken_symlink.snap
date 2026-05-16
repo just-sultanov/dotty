@@ -1,0 +1,14 @@
+---
+source: tests/test_snapshots.rs
+expression: normalized
+---
+Machine:   testbox
+Platform:  macos
+Repo:      [REPO]
+Branch:    master
+Git:       1 deleted
+Broken:    1
+  ~/.vimrc → base/home/.vimrc (missing)
+Backups:   0 MB
+Conflicts: 0
+Inactive:  0

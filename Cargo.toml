@@ -25,6 +25,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dir_spec = "0.5.2"
 
 [dev-dependencies]
+insta = "1"
 proptest = "1"
 serial_test = "3"
 temp-env = "0.3"

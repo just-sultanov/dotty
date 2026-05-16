@@ -1,0 +1,13 @@
+---
+source: tests/test_snapshots.rs
+expression: normalized
+---
+[dry-run] Plan (2 actions):
+[dry-run]  1. create dir    [HOME]
+[dry-run]  2. create link   [HOME]/.vimrc → [REPO]/testbox/home/.vimrc
+[dry-run] no changes made
+  [dry-run] ✓ ~/.vimrc (testbox)
+  [dry-run]   (overrides base)
+  [dry-run] ────────────────────────────────────────
+  [dry-run] 1 would be applied, 1 override, 0 skipped (unchanged)
+  [dry-run] no changes made

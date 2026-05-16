@@ -1,0 +1,13 @@
+---
+source: tests/test_snapshots.rs
+expression: normalized
+---
+Machine:   testbox
+Platform:  macos
+Repo:      [REPO]
+Branch:    master
+Git:       clean
+Broken:    0
+Backups:   0 MB
+Conflicts: 0
+Inactive:  0
