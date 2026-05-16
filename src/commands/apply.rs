@@ -59,7 +59,7 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
     let output = build_apply_plan(&input)?;
 
     // Execute plan
-    plan::execute_plan(&output.plan, dry_run)?;
+    plan::execute_plan(&output.plan, dry_run, &state_path)?;
 
     // Print per-file summary before writing config — summary should always appear
     // even if config write fails (e.g. permission issue on state dir).

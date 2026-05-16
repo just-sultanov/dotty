@@ -31,6 +31,10 @@ pub struct Cli {
     #[arg(long, short, global = true)]
     quiet: bool,
 
+    /// Skip pending-plan recovery prompt (proceed with current command)
+    #[arg(long, global = true)]
+    recover: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -44,6 +48,11 @@ impl Cli {
     /// Return true if quiet mode is enabled.
     pub fn is_quiet(&self) -> bool {
         self.quiet
+    }
+
+    /// Return true if pending-plan recovery should be skipped.
+    pub fn skip_recovery(&self) -> bool {
+        self.recover
     }
 }
 

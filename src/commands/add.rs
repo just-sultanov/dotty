@@ -116,7 +116,7 @@ pub fn run(
     let output = build_add_plan(&input, &config)?;
 
     // Execute the plan
-    plan::execute_plan(&output.plan, dry_run)?;
+    plan::execute_plan(&output.plan, dry_run, &state_path)?;
 
     // Write updated config only after successful plan execution.
     if !dry_run && !output.plan.is_empty() {

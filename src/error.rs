@@ -45,6 +45,9 @@ pub(crate) enum DottyError {
     #[error("TOML serialize error: {0}")]
     TomlSerialize(#[from] toml::ser::Error),
 
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
     #[error("backup verification failed for {path}: {detail}")]
     BackupVerification { path: PathBuf, detail: String },
 

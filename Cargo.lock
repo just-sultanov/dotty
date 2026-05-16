@@ -231,6 +231,7 @@ dependencies = [
  "insta",
  "proptest",
  "serde",
+ "serde_json",
  "serial_test",
  "symlink-rs",
  "temp-env",

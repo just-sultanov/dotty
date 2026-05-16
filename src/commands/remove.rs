@@ -106,7 +106,7 @@ pub fn run(
     let output = build_remove_plan(&input, &config)?;
 
     // Execute plan
-    plan::execute_plan(&output.plan, dry_run)?;
+    plan::execute_plan(&output.plan, dry_run, &state_path)?;
 
     // Write updated config only after successful plan execution
     if !dry_run && !output.plan.is_empty() {
