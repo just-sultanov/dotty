@@ -29,6 +29,7 @@ pub struct TestEnv {
     pub home: PathBuf,
 }
 
+#[allow(dead_code)]
 impl TestEnv {
     /// Create a fresh set of temp directories.
     pub fn new() -> Self {

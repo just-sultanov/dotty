@@ -289,6 +289,19 @@ fn apply_skips_correct_symlinks() {
 // apply — --platform override
 // ---------------------------------------------------------------------------
 
+/// Return a known platform name that is different from the current one,
+/// so tests can verify that a non-active platform tier is not applied.
+fn other_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "linux"
+    } else if cfg!(target_os = "linux") {
+        "macos"
+    } else {
+        // On freebsd or unknown, pick macos
+        "macos"
+    }
+}
+
 #[test]
 fn apply_platform_override_uses_specified_tier() {
     let env = TestEnv::new();
@@ -296,37 +309,39 @@ fn apply_platform_override_uses_specified_tier() {
     env.run_ok(&["init", "--machine", "testbox"]);
     env.git_config_identity();
 
-    // Create a file in the linux platform tier
-    let repo_file = env.repo.join("linux/home/.bashrc");
+    // Create a file in a platform tier that is NOT the current platform.
+    // This ensures the test works on any CI runner.
+    let other = other_platform();
+    let repo_file = env.repo.join(format!("{other}/home/.bashrc"));
     std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
     std::fs::write(&repo_file, "export PATH=\"$PATH:/usr/local/bin\"").unwrap();
 
     std::process::Command::new("git")
         .current_dir(&env.repo)
-        .args(["add", "linux/home/.bashrc"])
+        .args(["add", &format!("{other}/home/.bashrc")])
         .output()
         .unwrap();
     std::process::Command::new("git")
         .current_dir(&env.repo)
-        .args(["commit", "-m", "add linux bashrc"])
+        .args(["commit", "-m", &format!("add {other} bashrc")])
         .output()
         .unwrap();
 
     let target = env.home.join(".bashrc");
 
-    // On macOS, without --platform override, the linux tier is not active
-    // So the file should not be applied
+    // Without --platform override, the other platform tier is not active.
+    // So the file should not be applied.
     env.run_ok(&["apply"]);
     assert!(
         !target.exists(),
-        "linux tier file should not be applied on macos without override"
+        "{other} tier file should not be applied without --platform override"
     );
 
-    // With --platform linux, the linux tier is active
-    env.run_ok(&["apply", "--platform", "linux"]);
+    // With --platform override, the other platform tier is active
+    env.run_ok(&["apply", "--platform", other]);
     assert!(
         target.is_symlink(),
-        "linux tier file should be applied with --platform linux"
+        "{other} tier file should be applied with --platform {other}"
     );
     env.assert_symlink(&target, &repo_file);
 }
