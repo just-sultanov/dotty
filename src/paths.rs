@@ -100,9 +100,19 @@ pub fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
 
 /// Return the user's home directory.
 ///
-/// Uses `std::env::home_dir()` which consults platform-specific mechanisms
-/// (not just `$HOME`), falling back to `/` only as a last resort.
+/// Checks `$HOME` first (for cross-platform consistency and testability),
+/// then falls back to `std::env::home_dir()` which consults platform-specific
+/// mechanisms (`USERPROFILE` on Windows, `$HOME` on Unix).
 pub fn home_dir() -> Result<PathBuf, DottyError> {
+    // Check $HOME first for cross-platform consistency.
+    // On Windows std::env::home_dir() reads USERPROFILE, not HOME,
+    // so tests that set HOME to a temp dir would fail without this.
+    if let Ok(home) = env::var("HOME") {
+        let path = PathBuf::from(home);
+        if path.is_absolute() {
+            return Ok(path);
+        }
+    }
     std::env::home_dir().ok_or_else(|| {
         DottyError::MissingHomeDirectory(
             "HOME environment variable not set and unable to determine user home directory".into(),
