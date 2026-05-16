@@ -5,17 +5,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Monotonically increasing counter so that concurrent tests never
-/// share a temp directory even if they run in parallel.
-static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Return a unique temp directory path.
-fn unique_temp_dir() -> PathBuf {
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("dotty_integ_{}_{}", std::process::id(), id,))
-}
 
 /// A handle that owns a set of temp directories (repo + state + home) and
 /// cleans them up on drop.
@@ -27,6 +16,9 @@ pub struct TestEnv {
     pub repo: PathBuf,
     pub state: PathBuf,
     pub home: PathBuf,
+    _repo_dir: tempfile::TempDir,
+    _state_dir: tempfile::TempDir,
+    _home_dir: tempfile::TempDir,
 }
 
 #[allow(dead_code)]
@@ -148,20 +140,16 @@ impl TestEnv {
 
 impl Default for TestEnv {
     fn default() -> Self {
-        let repo = unique_temp_dir();
-        let state = unique_temp_dir();
-        let home = unique_temp_dir();
-        std::fs::create_dir_all(&repo).unwrap();
-        std::fs::create_dir_all(&state).unwrap();
-        std::fs::create_dir_all(&home).unwrap();
-        Self { repo, state, home }
-    }
-}
-
-impl Drop for TestEnv {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.repo);
-        let _ = std::fs::remove_dir_all(&self.state);
-        let _ = std::fs::remove_dir_all(&self.home);
+        let repo_dir = tempfile::tempdir().unwrap();
+        let state_dir = tempfile::tempdir().unwrap();
+        let home_dir = tempfile::tempdir().unwrap();
+        Self {
+            repo: repo_dir.path().to_path_buf(),
+            state: state_dir.path().to_path_buf(),
+            home: home_dir.path().to_path_buf(),
+            _repo_dir: repo_dir,
+            _state_dir: state_dir,
+            _home_dir: home_dir,
+        }
     }
 }

@@ -511,92 +511,114 @@ mod tests {
 
     // Tests for tier_priority, classify_tilde, expand_tilde live in convention.rs and paths.rs.
 
+    /// Test fixture: creates a temporary home directory, sets `$HOME` for the duration
+    /// of the closure, and cleans up the directory afterward.
+    ///
+    /// Use this in every test that calls `home_dir()` or any function that depends on it
+    /// (e.g. `repo_to_target`, `merge_tiers`, `build_override_map`).
+    fn with_test_home<F: FnOnce(&Path)>(test: F) {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            test(&home);
+        });
+
+        // `dir` is dropped here, which cleans up the entire temp tree
+    }
+
     #[test]
     fn test_merge_tiers_basic() {
-        let files = vec![
-            "base/home/.vimrc".into(),
-            "base/home/.gitconfig".into(),
-            "macos/home/.config/skhd/skhdrc".into(),
-            "macbook/home/.config/nvim/plugins.lua".into(),
-        ];
-        let merged = merge_tiers(&files, "macbook", &Some("macos".into()));
+        with_test_home(|home| {
+            let files = vec![
+                "base/home/.vimrc".into(),
+                "base/home/.gitconfig".into(),
+                "macos/home/.config/skhd/skhdrc".into(),
+                "macbook/home/.config/nvim/plugins.lua".into(),
+            ];
+            let merged = merge_tiers(&files, "macbook", &Some("macos".into()));
 
-        assert_eq!(merged.len(), 4);
+            assert_eq!(merged.len(), 4);
 
-        // Check that base files are classified correctly
-        let home = crate::convention::home_dir().unwrap();
-        assert!(merged.contains_key(&home.join(".vimrc")));
-        assert!(merged.contains_key(&home.join(".gitconfig")));
+            // Check that base files are classified correctly
+            assert!(merged.contains_key(&home.join(".vimrc")));
+            assert!(merged.contains_key(&home.join(".gitconfig")));
+        });
     }
 
     #[test]
     fn test_merge_tiers_override() {
-        let files = vec![
-            "base/home/.config/nvim/plugins.lua".into(),
-            "macbook/home/.config/nvim/plugins.lua".into(),
-        ];
-        let merged = merge_tiers(&files, "macbook", &Some("macos".into()));
+        with_test_home(|home| {
+            let files = vec![
+                "base/home/.config/nvim/plugins.lua".into(),
+                "macbook/home/.config/nvim/plugins.lua".into(),
+            ];
+            let merged = merge_tiers(&files, "macbook", &Some("macos".into()));
 
-        let home = crate::convention::home_dir().unwrap();
-        let target = home.join(".config/nvim/plugins.lua");
+            let target = home.join(".config/nvim/plugins.lua");
 
-        // Should have only one entry (machine tier wins)
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged.get(&target).unwrap().0, "macbook");
+            // Should have only one entry (machine tier wins)
+            assert_eq!(merged.len(), 1);
+            assert_eq!(merged.get(&target).unwrap().0, "macbook");
+        });
     }
 
     #[test]
     fn test_override_map_detection() {
-        let files = vec![
-            "base/home/.config/nvim/plugins.lua".into(),
-            "macbook/home/.config/nvim/plugins.lua".into(),
-            "base/home/.vimrc".into(),
-        ];
-        let overrides = build_override_map(&files, &Some("macbook".into()), &Some("macos".into()));
+        with_test_home(|home| {
+            let files = vec![
+                "base/home/.config/nvim/plugins.lua".into(),
+                "macbook/home/.config/nvim/plugins.lua".into(),
+                "base/home/.vimrc".into(),
+            ];
+            let overrides =
+                build_override_map(&files, &Some("macbook".into()), &Some("macos".into()));
 
-        let home = crate::convention::home_dir().unwrap();
-        assert!(overrides.contains_key(&home.join(".config/nvim/plugins.lua")));
-        assert!(!overrides.contains_key(&home.join(".vimrc")));
+            assert!(overrides.contains_key(&home.join(".config/nvim/plugins.lua")));
+            assert!(!overrides.contains_key(&home.join(".vimrc")));
+        });
     }
 
     #[test]
     fn test_inspect_target_missing() {
-        let target = PathBuf::from(
-            "/tmp/dotty_test_nonexistent_{}.txt".to_string() + &std::process::id().to_string(),
-        );
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("nonexistent.txt");
         let repo_file = PathBuf::from("/tmp/dotty_repo_file.txt");
         assert!(inspect_target(&target, &repo_file) == TargetState::NeedsSymlink);
     }
 
     #[test]
     fn test_inspect_target_regular_file() {
-        let dir = std::env::temp_dir().join(format!("dotty_inspect_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let target = dir.join("file.txt");
-        fs::write(&target, "content").unwrap();
-        let repo_file = PathBuf::from("/tmp/repo.txt");
+        with_test_home(|home| {
+            let target = home.join("file.txt");
+            fs::write(&target, "content").unwrap();
+            let repo_file = PathBuf::from("/tmp/repo.txt");
 
-        assert!(inspect_target(&target, &repo_file) == TargetState::NeedsBackup);
-
-        fs::remove_dir_all(&dir).unwrap();
+            assert!(inspect_target(&target, &repo_file) == TargetState::NeedsBackup);
+        });
     }
 
     #[test]
     fn test_rebuild_managed_map() {
-        let files = vec!["base/home/.vimrc".into(), "base/home/.gitconfig".into()];
-        let managed = rebuild_managed_map(&files);
+        with_test_home(|home| {
+            let files = vec!["base/home/.vimrc".into(), "base/home/.gitconfig".into()];
+            let managed = rebuild_managed_map(&files);
 
-        assert_eq!(managed.len(), 2);
-        assert!(managed.contains_key("base/home/.vimrc"));
-        assert!(managed.contains_key("base/home/.gitconfig"));
-        assert!(managed.get("base/home/.vimrc").unwrap().starts_with("~"));
+            assert_eq!(managed.len(), 2);
+            assert!(managed.contains_key("base/home/.vimrc"));
+            assert!(managed.contains_key("base/home/.gitconfig"));
+            assert!(managed.get("base/home/.vimrc").unwrap().starts_with("~"));
+            let _ = home; // used by fixture for HOME isolation
+        });
     }
 
     // -- build_apply_plan tests --
 
     #[test]
     fn test_build_apply_plan_all_correct() {
-        let base = std::env::temp_dir().join(format!("dotty_apply_correct_{}", std::process::id()));
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -637,13 +659,12 @@ mod tests {
             assert!(output.file_results[0].skipped);
             assert!(output.orphans.is_empty());
         });
-
-        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_build_apply_plan_needs_symlink() {
-        let base = std::env::temp_dir().join(format!("dotty_apply_symlink_{}", std::process::id()));
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -680,13 +701,12 @@ mod tests {
             assert_eq!(output.file_results.len(), 1);
             assert!(output.file_results[0].applied);
         });
-
-        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_build_apply_plan_needs_backup() {
-        let base = std::env::temp_dir().join(format!("dotty_apply_backup_{}", std::process::id()));
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -723,13 +743,12 @@ mod tests {
             assert_eq!(output.file_results.len(), 1);
             assert!(output.file_results[0].applied);
         });
-
-        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_build_apply_plan_orphan_detection() {
-        let base = std::env::temp_dir().join(format!("dotty_apply_orphan_{}", std::process::id()));
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -774,7 +793,5 @@ mod tests {
             // RemoveSymlink for orphan is added to plan
             assert!(!output.plan.is_empty());
         });
-
-        std::fs::remove_dir_all(&base).unwrap();
     }
 }

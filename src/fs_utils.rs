@@ -54,66 +54,57 @@ mod tests {
 
     #[test]
     fn test_walk_dir_single_file() {
-        let dir = std::env::temp_dir().join(format!("dotty_walk_test_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("a.txt"), "content").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        fs::write(path.join("a.txt"), "content").unwrap();
 
         let mut files = Vec::new();
-        walk_dir(&dir, &mut files).unwrap();
+        walk_dir(&path, &mut files).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].file_name().unwrap(), "a.txt");
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn test_walk_dir_nested() {
-        let dir = std::env::temp_dir().join(format!("dotty_walk_test2_{}", std::process::id()));
-        fs::create_dir_all(dir.join("sub")).unwrap();
-        fs::write(dir.join("a.txt"), "a").unwrap();
-        fs::write(dir.join("sub").join("b.txt"), "b").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        fs::create_dir_all(path.join("sub")).unwrap();
+        fs::write(path.join("a.txt"), "a").unwrap();
+        fs::write(path.join("sub").join("b.txt"), "b").unwrap();
 
         let mut files = Vec::new();
-        walk_dir(&dir, &mut files).unwrap();
+        walk_dir(&path, &mut files).unwrap();
         assert_eq!(files.len(), 2);
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn test_walk_dir_empty() {
-        let dir = std::env::temp_dir().join(format!("dotty_walk_test3_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
 
         let mut files = Vec::new();
-        walk_dir(&dir, &mut files).unwrap();
+        walk_dir(&path, &mut files).unwrap();
         assert!(files.is_empty());
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn test_calculate_dir_size() {
-        let dir = std::env::temp_dir().join(format!("dotty_size_test_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("a.txt"), "12345").unwrap(); // 5 bytes
-        fs::write(dir.join("b.txt"), "1234567890").unwrap(); // 10 bytes
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        fs::write(path.join("a.txt"), "12345").unwrap(); // 5 bytes
+        fs::write(path.join("b.txt"), "1234567890").unwrap(); // 10 bytes
 
-        let size = calculate_dir_size(&dir);
+        let size = calculate_dir_size(&path);
         assert_eq!(size, 15);
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn test_calculate_dir_size_empty() {
-        let dir = std::env::temp_dir().join(format!("dotty_size_test2_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
 
-        let size = calculate_dir_size(&dir);
+        let size = calculate_dir_size(&path);
         assert_eq!(size, 0);
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

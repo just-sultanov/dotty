@@ -412,13 +412,10 @@ fn resolve_conflicts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn unique_temp_dir() -> PathBuf {
-        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("dotty_add_test_{}_{}", std::process::id(), id))
+    /// Create a unique temporary directory that is automatically cleaned up on drop.
+    fn test_dir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     #[test]
@@ -447,17 +444,20 @@ mod tests {
 
     #[test]
     fn test_build_conflict_map() {
-        let existing = vec![
-            "base/home/.vimrc".into(),
-            "base/home/.gitconfig".into(),
-            "macbook/home/.config/nvim/plugins.lua".into(),
-        ];
-        let map = build_conflict_map(&existing);
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let existing = vec![
+                "base/home/.vimrc".into(),
+                "base/home/.gitconfig".into(),
+                "macbook/home/.config/nvim/plugins.lua".into(),
+            ];
+            let map = build_conflict_map(&existing);
 
-        let home = convention::home_dir().unwrap();
-        assert!(map.contains_key(&home.join(".vimrc")));
-        assert!(map.contains_key(&home.join(".gitconfig")));
-        assert!(map.contains_key(&home.join(".config/nvim/plugins.lua")));
+            assert!(map.contains_key(&home.join(".vimrc")));
+            assert!(map.contains_key(&home.join(".gitconfig")));
+            assert!(map.contains_key(&home.join(".config/nvim/plugins.lua")));
+        });
     }
 
     #[test]
@@ -470,7 +470,8 @@ mod tests {
 
     #[test]
     fn test_build_add_plan_single_file() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -498,13 +499,12 @@ mod tests {
             assert_eq!(output.plan.actions.len(), 4);
             assert!(output.config.managed.contains_key("base/home/.vimrc"));
         });
-
-        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_build_add_plan_with_git_commit() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -536,13 +536,12 @@ mod tests {
                 other => panic!("expected GitCommit, got: {other:?}"),
             }
         });
-
-        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_build_add_plan_multiple_files() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -572,13 +571,12 @@ mod tests {
             assert_eq!(output.plan.actions.len(), 8);
             assert_eq!(output.config.managed.len(), 2);
         });
-
-        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_build_add_plan_nested_path() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -610,13 +608,12 @@ mod tests {
                 "expected macbook scope in managed key"
             );
         });
-
-        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_build_add_plan_no_git_skips_git_add() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -647,7 +644,5 @@ mod tests {
                 );
             }
         });
-
-        fs::remove_dir_all(&base).unwrap();
     }
 }

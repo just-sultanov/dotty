@@ -112,28 +112,25 @@ mod tests {
 
     #[test]
     fn test_list_backups_empty() {
-        let dir = std::env::temp_dir().join(format!("dotty_backups_test_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
 
-        let backups = list_backups(&dir);
+        let backups = list_backups(&path);
         assert!(backups.is_empty());
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn test_list_backups_with_entries() {
-        let dir = std::env::temp_dir().join(format!("dotty_backups_test2_{}", std::process::id()));
-        let backup_dir = dir.join("backups");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let backup_dir = path.join("backups");
         fs::create_dir_all(&backup_dir).unwrap();
         fs::create_dir_all(backup_dir.join("2024-01-15T10-30-00")).unwrap();
         fs::create_dir_all(backup_dir.join("2024-01-16T09-15-00")).unwrap();
 
-        let backups = list_backups(&dir);
+        let backups = list_backups(&path);
         assert_eq!(backups.len(), 2);
         assert_eq!(backups[0], "2024-01-15T10-30-00");
         assert_eq!(backups[1], "2024-01-16T09-15-00");
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 }

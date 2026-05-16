@@ -180,25 +180,18 @@ pub fn find_managed_repo_files(
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn unique_temp_dir() -> PathBuf {
-        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "dotty_convention_test_{}_{}",
-            std::process::id(),
-            id
-        ))
+    /// Create a unique temporary directory that is automatically cleaned up on drop.
+    fn test_dir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     // -- scan_machine_directories tests --
 
     #[test]
     fn test_scan_machine_directories_finds_machines() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         fs::create_dir_all(base.join("base/home")).unwrap();
         fs::create_dir_all(base.join("macos/home")).unwrap();
         fs::create_dir_all(base.join("linux/home")).unwrap();
@@ -211,37 +204,34 @@ mod tests {
 
         let machines = scan_machine_directories(&base);
         assert_eq!(machines, vec!["macbook", "ubuntu-work"]);
-
-        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_scan_machine_directories_empty_repo() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         fs::create_dir_all(base.join("base")).unwrap();
 
         let machines = scan_machine_directories(&base);
         assert!(machines.is_empty());
-
-        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_scan_machine_directories_sorted() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         fs::create_dir_all(base.join("zebra/home")).unwrap();
         fs::create_dir_all(base.join("alpha/home")).unwrap();
         fs::create_dir_all(base.join("middle/home")).unwrap();
 
         let machines = scan_machine_directories(&base);
         assert_eq!(machines, vec!["alpha", "middle", "zebra"]);
-
-        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_scan_skips_base_and_platforms() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         fs::create_dir_all(base.join("base/home")).unwrap();
         fs::create_dir_all(base.join("macos/home")).unwrap();
         fs::create_dir_all(base.join("linux/home")).unwrap();
@@ -250,8 +240,6 @@ mod tests {
 
         let machines = scan_machine_directories(&base);
         assert_eq!(machines, vec!["my-machine"]);
-
-        fs::remove_dir_all(&base).unwrap();
     }
 
     // -- validate_machine_name tests --
@@ -340,9 +328,8 @@ mod tests {
 
     #[test]
     fn test_config_roundtrip() {
-        let tmp = std::env::temp_dir().join(format!("dotty_test_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
+        let dir = test_dir();
+        let tmp = dir.path().to_path_buf();
 
         let mut config = Config::new();
         config.set_machine("macbook".into());
@@ -355,20 +342,15 @@ mod tests {
 
         assert_eq!(read.machine, Some("macbook".into()));
         assert!(read.managed.contains_key("base/home/.vimrc"));
-
-        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]
     fn test_read_config_missing_returns_default() {
-        let tmp = std::env::temp_dir().join(format!("dotty_test_empty_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
+        let dir = test_dir();
+        let tmp = dir.path().to_path_buf();
 
         let config = read_config(&tmp).unwrap();
         assert!(config.machine.is_none());
         assert!(config.managed.is_empty());
-
-        std::fs::remove_dir_all(&tmp).unwrap();
     }
 }

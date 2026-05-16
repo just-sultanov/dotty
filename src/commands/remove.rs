@@ -272,45 +272,40 @@ fn resolve_remove_skipped(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn unique_temp_dir() -> PathBuf {
-        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("dotty_remove_test_{}_{}", std::process::id(), id))
+    /// Create a unique temporary directory that is automatically cleaned up on drop.
+    fn test_dir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     #[test]
     fn test_collect_target_files_single() {
-        let dir = unique_temp_dir();
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("test.txt");
+        let dir = test_dir();
+        let path = dir.path().to_path_buf();
+        let file = path.join("test.txt");
         std::fs::write(&file, "content").unwrap();
 
         let files = collect_target_files(&file).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0], file);
-
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn test_collect_target_files_directory() {
-        let dir = unique_temp_dir();
-        std::fs::create_dir_all(dir.join("sub")).unwrap();
-        std::fs::write(dir.join("a.txt"), "a").unwrap();
-        std::fs::write(dir.join("sub").join("b.txt"), "b").unwrap();
+        let dir = test_dir();
+        let path = dir.path().to_path_buf();
+        std::fs::create_dir_all(path.join("sub")).unwrap();
+        std::fs::write(path.join("a.txt"), "a").unwrap();
+        std::fs::write(path.join("sub").join("b.txt"), "b").unwrap();
 
-        let files = collect_target_files(&dir).unwrap();
+        let files = collect_target_files(&path).unwrap();
         assert_eq!(files.len(), 2);
-
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn test_collect_target_files_nonexistent() {
-        let path = unique_temp_dir().join("nonexistent.txt");
+        let dir = test_dir();
+        let path = dir.path().join("nonexistent.txt");
         let files = collect_target_files(&path).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0], path);
@@ -320,7 +315,8 @@ mod tests {
 
     #[test]
     fn test_build_remove_plan_basic() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -351,13 +347,12 @@ mod tests {
         // CopyFile + RemoveFile + GitAdd = 3 actions (no symlink to remove)
         assert_eq!(output.plan.actions.len(), 3);
         assert!(!output.config.managed.contains_key("base/home/.vimrc"));
-
-        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_build_remove_plan_with_symlink() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -386,13 +381,12 @@ mod tests {
 
         // RemoveSymlink + CopyFile + RemoveFile + GitAdd = 4 actions
         assert_eq!(output.plan.actions.len(), 4);
-
-        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_build_remove_plan_with_skipped() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -422,13 +416,12 @@ mod tests {
         // Skipped: no actions, managed map unchanged
         assert!(output.plan.is_empty());
         assert!(output.config.managed.contains_key("base/home/.vimrc"));
-
-        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn test_build_remove_plan_with_git_commit() {
-        let base = unique_temp_dir();
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
         let repo = base.join("repo");
         let state = base.join("state");
         let home = base.join("home");
@@ -463,7 +456,5 @@ mod tests {
             Action::GitCommit { message } => assert_eq!(message, "remove vimrc"),
             other => panic!("expected GitCommit, got: {other:?}"),
         }
-
-        std::fs::remove_dir_all(&base).unwrap();
     }
 }

@@ -518,23 +518,17 @@ fn io_error_with_path(err: io::Error, path: &Path) -> DottyError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn unique_temp_dir() -> PathBuf {
-        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("dotty_plan_test_{}_{}", std::process::id(), id))
+    /// Create a unique temporary directory that is automatically cleaned up on drop.
+    fn test_dir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
-    fn setup() -> PathBuf {
-        let dir = unique_temp_dir();
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    fn teardown(dir: &Path) {
-        let _ = fs::remove_dir_all(dir);
+    fn setup() -> (tempfile::TempDir, PathBuf) {
+        let dir = test_dir();
+        let path = dir.path().to_path_buf();
+        fs::create_dir_all(&path).unwrap();
+        (dir, path)
     }
 
     fn dummy_repo_path() -> PathBuf {
@@ -543,19 +537,17 @@ mod tests {
 
     #[test]
     fn test_create_dir_action() {
-        let base = setup();
+        let (_dir, base) = setup();
         let path = base.join("new_dir/nested");
 
         let action = Action::CreateDir { path: path.clone() };
         action.execute(&dummy_repo_path()).unwrap();
         assert!(path.is_dir());
-
-        teardown(&base);
     }
 
     #[test]
     fn test_copy_file_action() {
-        let base = setup();
+        let (_dir, base) = setup();
         let src = base.join("source.txt");
         let dst = base.join("dest.txt");
 
@@ -568,13 +560,11 @@ mod tests {
         action.execute(&dummy_repo_path()).unwrap();
         assert!(dst.exists());
         assert_eq!(fs::read_to_string(&dst).unwrap(), "hello world");
-
-        teardown(&base);
     }
 
     #[test]
     fn test_copy_file_creates_parent_dirs() {
-        let base = setup();
+        let (_dir, base) = setup();
         let src = base.join("source.txt");
         let dst = base.join("a/b/c/dest.txt");
 
@@ -586,13 +576,11 @@ mod tests {
         };
         action.execute(&dummy_repo_path()).unwrap();
         assert!(dst.exists());
-
-        teardown(&base);
     }
 
     #[test]
     fn test_backup_action() {
-        let base = setup();
+        let (_dir, base) = setup();
         let src = base.join("original.txt");
         let backup_dir = base.join("backups/2024-01-01T00-00-00");
         let dst = backup_dir.join("original.txt");
@@ -606,37 +594,31 @@ mod tests {
         action.execute(&dummy_repo_path()).unwrap();
         assert!(dst.exists());
         assert_eq!(fs::read_to_string(&dst).unwrap(), "original content");
-
-        teardown(&base);
     }
 
     #[test]
     fn test_remove_file_action() {
-        let base = setup();
+        let (_dir, base) = setup();
         let path = base.join("to_remove.txt");
         fs::write(&path, "delete me").unwrap();
 
         let action = Action::RemoveFile { path: path.clone() };
         action.execute(&dummy_repo_path()).unwrap();
         assert!(!path.exists());
-
-        teardown(&base);
     }
 
     #[test]
     fn test_remove_file_idempotent() {
-        let base = setup();
+        let (_dir, base) = setup();
         let path = base.join("does_not_exist.txt");
 
         let action = Action::RemoveFile { path };
         action.execute(&dummy_repo_path()).unwrap();
-
-        teardown(&base);
     }
 
     #[test]
     fn test_create_symlink_action() {
-        let base = setup();
+        let (_dir, base) = setup();
         let target = base.join("real_file.txt");
         let link = base.join("link_to_file");
 
@@ -649,13 +631,11 @@ mod tests {
         action.execute(&dummy_repo_path()).unwrap();
         assert!(is_symlink(&link));
         assert_eq!(fs::read_link(&link).unwrap(), target);
-
-        teardown(&base);
     }
 
     #[test]
     fn test_create_symlink_replaces_existing() {
-        let base = setup();
+        let (_dir, base) = setup();
         let target1 = base.join("file1.txt");
         let target2 = base.join("file2.txt");
         let link = base.join("link");
@@ -679,13 +659,11 @@ mod tests {
 
         assert!(is_symlink(&link));
         assert_eq!(fs::read_link(&link).unwrap(), target2);
-
-        teardown(&base);
     }
 
     #[test]
     fn test_rollback_create_dir() {
-        let base = setup();
+        let (_dir, base) = setup();
         let path = base.join("rollback_dir");
 
         let action = Action::CreateDir { path: path.clone() };
@@ -695,13 +673,11 @@ mod tests {
         let rollback = action.rollback().unwrap();
         rollback.execute(&dummy_repo_path()).unwrap();
         assert!(!path.exists());
-
-        teardown(&base);
     }
 
     #[test]
     fn test_rollback_copy_file() {
-        let base = setup();
+        let (_dir, base) = setup();
         let src = base.join("src.txt");
         let dst = base.join("dst.txt");
 
@@ -717,13 +693,11 @@ mod tests {
         let rollback = action.rollback().unwrap();
         rollback.execute(&dummy_repo_path()).unwrap();
         assert!(!dst.exists());
-
-        teardown(&base);
     }
 
     #[test]
     fn test_rollback_symlink() {
-        let base = setup();
+        let (_dir, base) = setup();
         let target = base.join("target.txt");
         let link = base.join("link");
 
@@ -740,8 +714,6 @@ mod tests {
         rollback.execute(&dummy_repo_path()).unwrap();
         assert!(!is_symlink(&link));
         assert!(!link.exists());
-
-        teardown(&base);
     }
 
     #[test]
@@ -766,7 +738,7 @@ mod tests {
 
     #[test]
     fn test_execute_plan_dry_run() {
-        let base = setup();
+        let (_dir, base) = setup();
         let state = base.join("state");
         fs::create_dir_all(&state).unwrap();
         let mut plan = Plan::new(&base);
@@ -776,18 +748,15 @@ mod tests {
 
         execute_plan(&plan, true, &state).unwrap();
         assert!(!base.join("should_not_exist").exists());
-
-        teardown(&base);
     }
 
     #[test]
     fn test_execute_plan_empty() {
-        let base = setup();
+        let (_dir, base) = setup();
         let state = base.join("state");
         fs::create_dir_all(&state).unwrap();
         let plan = Plan::new(&base);
         execute_plan(&plan, false, &state).unwrap();
-        teardown(&base);
     }
 
     #[test]
@@ -809,7 +778,7 @@ mod tests {
 
     #[test]
     fn test_copy_file_dereferences_symlink() {
-        let base = setup();
+        let (_dir, base) = setup();
         let real = base.join("real.txt");
         let sym = base.join("sym.txt");
         let dst = base.join("copied.txt");
@@ -820,13 +789,11 @@ mod tests {
         copy_file_dereference(&sym, &dst).unwrap();
         assert!(!is_symlink(&dst));
         assert_eq!(fs::read_to_string(&dst).unwrap(), "real content");
-
-        teardown(&base);
     }
 
     #[test]
     fn test_backup_verification_success() {
-        let base = setup();
+        let (_dir, base) = setup();
         let src = base.join("source.txt");
         let dst = base.join("backup.txt");
 
@@ -834,13 +801,11 @@ mod tests {
         fs::write(&dst, "original content").unwrap();
 
         verify_backup_integrity(&src, &dst).unwrap();
-
-        teardown(&base);
     }
 
     #[test]
     fn test_backup_verification_size_mismatch() {
-        let base = setup();
+        let (_dir, base) = setup();
         let src = base.join("source.txt");
         let dst = base.join("backup.txt");
 
@@ -856,13 +821,11 @@ mod tests {
             }
             other => panic!("expected BackupVerification error, got: {other}"),
         }
-
-        teardown(&base);
     }
 
     #[test]
     fn test_backup_verification_missing_backup() {
-        let base = setup();
+        let (_dir, base) = setup();
         let src = base.join("source.txt");
         let dst = base.join("backup_missing.txt");
 
@@ -878,13 +841,11 @@ mod tests {
             }
             other => panic!("expected BackupVerification error, got: {other}"),
         }
-
-        teardown(&base);
     }
 
     #[test]
     fn test_backup_verification_empty_files() {
-        let base = setup();
+        let (_dir, base) = setup();
         let src = base.join("empty.txt");
         let dst = base.join("empty_backup.txt");
 
@@ -893,13 +854,11 @@ mod tests {
 
         // Two empty files should pass verification (both 0 bytes)
         verify_backup_integrity(&src, &dst).unwrap();
-
-        teardown(&base);
     }
 
     #[test]
     fn test_backup_action_with_verification() {
-        let base = setup();
+        let (_dir, base) = setup();
         let src = base.join("original.txt");
         let backup_dir = base.join("backups/2024-01-01T00-00-00");
         let dst = backup_dir.join("original.txt");
@@ -914,15 +873,13 @@ mod tests {
         action.execute(&dummy_repo_path()).unwrap();
         assert!(dst.exists());
         assert_eq!(fs::read_to_string(&dst).unwrap(), "original content");
-
-        teardown(&base);
     }
 
     // -- pending plan tests --
 
     #[test]
     fn test_save_and_load_pending_plan() {
-        let base = setup();
+        let (_dir, base) = setup();
         let state = base.join("state");
         fs::create_dir_all(&state).unwrap();
 
@@ -946,25 +903,21 @@ mod tests {
         let loaded_plan = loaded.unwrap();
         assert_eq!(loaded_plan.actions.len(), 2);
         assert_eq!(loaded_plan.repo_path, base);
-
-        teardown(&base);
     }
 
     #[test]
     fn test_load_pending_plan_missing() {
-        let base = setup();
+        let (_dir, base) = setup();
         let state = base.join("state");
         fs::create_dir_all(&state).unwrap();
 
         let loaded = load_pending_plan(&state).unwrap();
         assert!(loaded.is_none());
-
-        teardown(&base);
     }
 
     #[test]
     fn test_clear_pending_plan() {
-        let base = setup();
+        let (_dir, base) = setup();
         let state = base.join("state");
         fs::create_dir_all(&state).unwrap();
 
@@ -978,26 +931,22 @@ mod tests {
 
         clear_pending_plan(&state).unwrap();
         assert!(!state.join("pending_plan.json").exists());
-
-        teardown(&base);
     }
 
     #[test]
     fn test_clear_pending_plan_idempotent() {
-        let base = setup();
+        let (_dir, base) = setup();
         let state = base.join("state");
         fs::create_dir_all(&state).unwrap();
 
         // Clearing when no file exists should not error
         clear_pending_plan(&state).unwrap();
         clear_pending_plan(&state).unwrap();
-
-        teardown(&base);
     }
 
     #[test]
     fn test_pending_plan_roundtrip_all_action_types() {
-        let base = setup();
+        let (_dir, base) = setup();
         let state = base.join("state");
         fs::create_dir_all(&state).unwrap();
 
@@ -1044,13 +993,11 @@ mod tests {
             Action::GitCommit { message } => assert_eq!(message, "test commit"),
             other => panic!("expected GitCommit, got {:?}", other),
         }
-
-        teardown(&base);
     }
 
     #[test]
     fn test_execute_plan_saves_and_clears_pending() {
-        let base = setup();
+        let (_dir, base) = setup();
         let state = base.join("state");
         fs::create_dir_all(&state).unwrap();
 
@@ -1068,13 +1015,11 @@ mod tests {
         // After successful execution, pending plan is cleared
         assert!(!state.join("pending_plan.json").exists());
         assert!(base.join("test_dir").is_dir());
-
-        teardown(&base);
     }
 
     #[test]
     fn test_execute_plan_dry_run_does_not_save_pending() {
-        let base = setup();
+        let (_dir, base) = setup();
         let state = base.join("state");
         fs::create_dir_all(&state).unwrap();
 
@@ -1088,7 +1033,5 @@ mod tests {
         // Dry run should not create pending plan file
         assert!(!state.join("pending_plan.json").exists());
         assert!(!base.join("should_not_exist").exists());
-
-        teardown(&base);
     }
 }

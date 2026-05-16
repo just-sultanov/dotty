@@ -98,88 +98,64 @@ fn resolve_path(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use serial_test::serial;
-    use std::env::temp_dir;
-    use std::path::PathBuf;
 
     #[test]
     #[serial]
     fn test_is_symlink_regular_file() {
-        let dir = temp_dir().join(format!("dotty_symlink_test_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("regular.txt");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("regular.txt");
         fs::write(&file, "content").unwrap();
 
         assert!(!is_symlink(&file));
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     #[serial]
     fn test_is_symlink_symlink() {
-        let dir = temp_dir().join(format!("dotty_symlink_test_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let target = dir.join("target.txt");
-        let link = dir.join("link.txt");
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.txt");
+        let link = dir.path().join("link.txt");
         fs::write(&target, "content").unwrap();
         crate::symlink::create_symlink(&target, &link).unwrap();
 
         assert!(is_symlink(&link));
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn test_is_symlink_nonexistent() {
-        let path = PathBuf::from(format!("/tmp/dotty_nonexistent_{}.txt", std::process::id()));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.txt");
         assert!(!is_symlink(&path));
     }
 
     #[test]
     #[serial]
     fn test_would_be_circular_self_reference() {
-        let dir = temp_dir().join(format!("dotty_circular_test_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        let link = dir.join("self_link");
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("self_link");
         // A symlink pointing to itself
         assert!(would_be_circular(&link, &link));
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     #[serial]
     fn test_would_be_circular_chain() {
-        let dir = temp_dir().join(format!("dotty_circular_test_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        let a = dir.join("a");
-        let b = dir.join("b");
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
         // Create a -> b, then check if b -> a would be circular
         create_symlink(&b, &a).unwrap();
         assert!(would_be_circular(&a, &b));
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     #[serial]
     fn test_would_not_be_circular_normal() {
-        let dir = temp_dir().join(format!("dotty_circular_test_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        let target = dir.join("real_file");
-        let link = dir.join("link_to_file");
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real_file");
+        let link = dir.path().join("link_to_file");
         fs::write(&target, "content").unwrap();
 
         assert!(!would_be_circular(&target, &link));
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 }
