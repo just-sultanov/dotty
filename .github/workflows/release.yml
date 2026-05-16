@@ -12,17 +12,23 @@ permissions:
 
 jobs:
   lint:
-    name: Lint
-    runs-on: ubuntu-latest
+    name: Lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4
       - run: mise run lint
 
   test:
-    name: Test
+    name: Test (${{ matrix.os }})
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4
@@ -74,26 +80,23 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
-  # build-windows:
-  #   name: Build (Windows x86_64)
-  #   needs: test
-  #   runs-on: windows-latest
-  #   defaults:
-  #     run:
-  #       shell: pwsh
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: jdx/mise-action@v4
-  #     - run: mise run dist-windows
-  #     - uses: actions/upload-artifact@v7
-  #       with:
-  #         name: dotty-x86_64-pc-windows-gnu
-  #         path: dist/*.zip
-  #         if-no-files-found: error
+  build-windows:
+    name: Build (Windows x86_64)
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+      - run: mise run dist-windows
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dotty-x86_64-pc-windows-gnu
+          path: dist/*.zip
+          if-no-files-found: error
 
   release:
     name: Create Draft Release
-    needs: [build-linux, build-macos-arm, build-macos-x86]
+    needs: [build-linux, build-macos-arm, build-macos-x86, build-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
