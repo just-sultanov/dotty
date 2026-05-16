@@ -2,6 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::error::DottyError;
+use dir_spec::state_home;
 
 /// Resolve the dotty repository path.
 ///
@@ -15,15 +16,24 @@ pub fn resolve_repo_path() -> Result<PathBuf, DottyError> {
 
 /// Resolve the dotty state directory.
 ///
-/// Checks `$DOTTY_STATE_HOME` first, then `$XDG_STATE_HOME/dotty`,
-/// falls back to `~/.local/state/dotty`.
+/// Checks `$DOTTY_STATE_HOME` first, then uses the platform-specific
+/// state directory via `dir_spec::state_home()` (which respects
+/// `$XDG_STATE_HOME` on Linux), falling back to the platform default.
+///
+/// Platform defaults:
+/// - Linux: `~/.local/state/dotty` (or `$XDG_STATE_HOME/dotty`)
+/// - macOS: `~/Library/Application Support/dotty`
+/// - Windows: `%LOCALAPPDATA%/dotty`
 pub fn resolve_state_path() -> Result<PathBuf, DottyError> {
     if let Ok(path) = env::var("DOTTY_STATE_HOME") {
         return Ok(PathBuf::from(path));
     }
-    if let Ok(xdg) = env::var("XDG_STATE_HOME") {
-        return Ok(PathBuf::from(xdg).join("dotty"));
+    // dir_spec::state_home() checks XDG_STATE_HOME and falls back to
+    // platform-specific defaults (Linux: ~/.local/state, macOS: ~/Library/Application Support)
+    if let Some(state) = state_home() {
+        return Ok(state.join("dotty"));
     }
+    // Fallback if home dir can't be determined
     Ok(home_dir()?.join(".local").join("state").join("dotty"))
 }
 
@@ -137,7 +147,17 @@ mod tests {
         let path = temp_env::with_vars_unset(["DOTTY_STATE_HOME", "XDG_STATE_HOME"], || {
             resolve_state_path().unwrap()
         });
+        // dir_spec uses platform-specific defaults:
+        // Linux: ~/.local/state/dotty, macOS: ~/Library/Application Support/dotty
+        #[cfg(target_os = "linux")]
         assert!(path.ends_with(".local/state/dotty"));
+        #[cfg(target_os = "macos")]
+        assert!(
+            path.to_string_lossy()
+                .contains("Library/Application Support/dotty")
+        );
+        // Always ends with /dotty
+        assert!(path.ends_with("dotty"));
     }
 
     #[test]

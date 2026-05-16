@@ -22,6 +22,7 @@ indexmap = { version = "2", features = ["serde"] }
 toml = "1.1.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dir_spec = "0.5.2"
 
 [dev-dependencies]
 serial_test = "3"
