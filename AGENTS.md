@@ -30,6 +30,7 @@
 | Command                  | Description                                                                        |
 | ------------------------ | ---------------------------------------------------------------------------------- |
 | `mise run setup-linters` | Ensure lint tools (rustfmt, clippy) are available                                  |
+| `mise run format`        | Format code with `cargo fmt`                                                       |
 | `mise run lint`          | Run formatters and linters (`cargo fmt -- --check`, `cargo clippy -- -D warnings`) |
 | `mise run test`          | Run all tests (`cargo test -- --nocapture`)                                        |
 | `mise run check`         | Run lint **and** tests (combined)                                                  |
