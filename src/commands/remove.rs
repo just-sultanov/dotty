@@ -59,8 +59,11 @@ pub fn run(
     if target_path.is_dir() || target_path.to_string_lossy().ends_with('/') {
         for tracked in &tracked_files {
             let repo_path_buf = PathBuf::from(tracked);
+            // Use ancestors() for component-aware prefix matching.
+            // String-based starts_with() produces false positives:
+            // "~/.config/nvim" would incorrectly match "~/.config/nvim-legacy/file.lua".
             if let Ok(target) = repo_to_target(&repo_path_buf)
-                && target.starts_with(&target_path)
+                && target.ancestors().any(|a| a == target_path)
             {
                 // Check if already added
                 let already = managed_pairs.iter().any(|(_, r)| r == tracked);
@@ -304,6 +307,66 @@ mod tests {
         let files = collect_target_files(&path).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0], path);
+    }
+
+    // -- build_remove_plan tests --
+
+    // -- prefix matching tests --
+
+    /// Verify that `ancestors()`-based matching correctly handles edge cases.
+    /// This is the logic used in the directory removal block of `run()`.
+    fn is_target_under_path(target: &Path, target_path: &Path) -> bool {
+        target.ancestors().any(|a| a == target_path)
+    }
+
+    #[test]
+    fn test_prefix_match_exact() {
+        let target = Path::new("~/.config/nvim");
+        let target_path = Path::new("~/.config/nvim");
+        assert!(
+            is_target_under_path(target, target_path),
+            "exact match should match"
+        );
+    }
+
+    #[test]
+    fn test_prefix_match_subdirectory() {
+        let target = Path::new("~/.config/nvim/init.lua");
+        let target_path = Path::new("~/.config/nvim");
+        assert!(
+            is_target_under_path(target, target_path),
+            "subdirectory should match"
+        );
+    }
+
+    #[test]
+    fn test_prefix_match_false_positive_sibling() {
+        let target = Path::new("~/.config/nvim-legacy/file.lua");
+        let target_path = Path::new("~/.config/nvim");
+        assert!(
+            !is_target_under_path(target, target_path),
+            "nvim-legacy should NOT match nvim (false positive)"
+        );
+    }
+
+    #[test]
+    fn test_prefix_match_false_positive_longer_prefix() {
+        let target = Path::new("~/.config/nvimrc");
+        let target_path = Path::new("~/.config/nvim");
+        assert!(
+            !is_target_under_path(target, target_path),
+            "nvimrc should NOT match nvim (false positive)"
+        );
+    }
+
+    #[test]
+    fn test_prefix_match_deeply_nested() {
+        let target = Path::new("~/.config/nvim/lua/plugins/my-plugin/init.lua");
+        let target_path = Path::new("~/.config/nvim");
+        assert!(
+            is_target_under_path(target, target_path),
+            "deeply nested file should match"
+        );
     }
 
     // -- build_remove_plan tests --
