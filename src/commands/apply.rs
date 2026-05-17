@@ -14,7 +14,7 @@ use crate::convention::{
 use crate::git;
 use crate::plan::{self, Action, Plan};
 use crate::prompt::prompt_machine_selection;
-use crate::symlink::is_symlink;
+use crate::symlink::{is_symlink, would_be_circular};
 
 /// Run the `apply` command.
 pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
@@ -126,6 +126,22 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 });
                 continue;
             }
+            TargetState::CircularSymlink => {
+                // Remove the circular symlink first, then create the correct one.
+                plan.add(Action::RemoveSymlink {
+                    path: target.clone(),
+                });
+                if let Some(parent) = target.parent() {
+                    plan.add(Action::CreateDir {
+                        path: parent.to_path_buf(),
+                    });
+                }
+                plan.add(Action::CreateSymlink {
+                    target: repo_file.clone(),
+                    link: target.clone(),
+                });
+                TargetState::CircularSymlink
+            }
             TargetState::NeedsSymlink => {
                 if let Some(parent) = target.parent() {
                     plan.add(Action::CreateDir {
@@ -212,15 +228,28 @@ enum TargetState {
     NeedsSymlink,
     /// Target is a regular file — needs backup before symlink replacement.
     NeedsBackup,
+    /// Existing symlink is circular (externally created) — must be removed first.
+    CircularSymlink,
 }
 
 /// Inspect the target path and determine what action is needed.
 fn inspect_target(target: &Path, expected_repo_file: &Path) -> TargetState {
     if is_symlink(target) {
-        if let Ok(link_target) = fs::read_link(target)
-            && link_target == expected_repo_file
-        {
-            return TargetState::Correct;
+        match fs::read_link(target) {
+            Ok(link_target) => {
+                if link_target == expected_repo_file {
+                    return TargetState::Correct;
+                }
+                // Check if the existing symlink is circular (externally created cycle).
+                // would_be_circular(link_target, target) returns true if following the
+                // chain from link_target eventually leads back to target itself.
+                if would_be_circular(&link_target, target) {
+                    return TargetState::CircularSymlink;
+                }
+            }
+            Err(_) => {
+                // Can't read the link — treat as needing replacement
+            }
         }
         TargetState::NeedsSymlink
     } else if target.exists() {
@@ -589,6 +618,36 @@ mod tests {
     }
 
     #[test]
+    fn test_inspect_target_circular_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("circular_link");
+        let repo_file = PathBuf::from("/tmp/repo.txt");
+
+        // Create a self-referencing circular symlink: target → target
+        crate::symlink::create_symlink(&target, &target).unwrap();
+        assert!(is_symlink(&target));
+
+        // inspect_target should detect the circular symlink
+        assert!(inspect_target(&target, &repo_file) == TargetState::CircularSymlink);
+    }
+
+    #[test]
+    fn test_inspect_target_circular_symlink_two_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        let repo_file = PathBuf::from("/tmp/repo.txt");
+
+        // Create a two-node cycle: a → b, b → a
+        crate::symlink::create_symlink(&b, &a).unwrap();
+        crate::symlink::create_symlink(&a, &b).unwrap();
+
+        // Both should be detected as circular
+        assert!(inspect_target(&a, &repo_file) == TargetState::CircularSymlink);
+        assert!(inspect_target(&b, &repo_file) == TargetState::CircularSymlink);
+    }
+
+    #[test]
     fn test_inspect_target_regular_file() {
         with_test_home(|home| {
             let target = home.join("file.txt");
@@ -698,6 +757,49 @@ mod tests {
 
             // CreateDir + CreateSymlink = 2 actions
             assert_eq!(output.plan.actions.len(), 2);
+            assert_eq!(output.file_results.len(), 1);
+            assert!(output.file_results[0].applied);
+        });
+    }
+
+    #[test]
+    fn test_build_apply_plan_circular_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+        // Create a self-referencing circular symlink at target
+        crate::symlink::create_symlink(&target, &target).unwrap();
+
+        let mut merged = HashMap::new();
+        merged.insert(
+            target.clone(),
+            ("base".to_string(), "base/home/.vimrc".to_string()),
+        );
+        let config = Config::new();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: HashMap::new(),
+                config,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            // CreateDir + RemoveSymlink (circular) + CreateSymlink = 3 actions
+            assert_eq!(output.plan.actions.len(), 3);
             assert_eq!(output.file_results.len(), 1);
             assert!(output.file_results[0].applied);
         });
