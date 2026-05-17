@@ -11,6 +11,7 @@ mod paths;
 mod plan;
 mod platform;
 mod prompt;
+mod repo_state;
 mod symbols;
 mod symlink;
 

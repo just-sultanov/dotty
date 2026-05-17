@@ -7,12 +7,13 @@ use tracing::warn;
 
 use crate::config::Config;
 use crate::convention::{
-    self, KNOWN_PLATFORMS, backup_timestamp, expand_tilde, read_config, repo_to_target,
-    resolve_repo_path, resolve_state_path, target_to_repo, walk_dir, write_config,
+    self, KNOWN_PLATFORMS, backup_timestamp, expand_tilde, repo_to_target, target_to_repo,
+    walk_dir, write_config,
 };
 use crate::git;
 use crate::plan::{self, Action, Plan};
 use crate::prompt::{prompt_confirm, prompt_select};
+use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
 
 /// Run the `add` command.
@@ -23,8 +24,10 @@ pub fn run(
     commit: Option<String>,
     dry_run: bool,
 ) -> Result<()> {
-    let repo_path = resolve_repo_path()?;
-    let state_path = resolve_state_path()?;
+    let repo = RepoState::new().map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let repo_path = &repo.repo_path;
+    let state_path = &repo.state_path;
 
     // Expand ~ in the input path
     let target_path = expand_tilde(&path)?;
@@ -34,7 +37,7 @@ pub fn run(
 
     // Reject paths inside the dotty repo itself.
     // Canonicalize both paths to prevent path traversal via `..` components.
-    let canonical_repo = fs::canonicalize(&repo_path).unwrap_or_else(|_| repo_path.clone());
+    let canonical_repo = fs::canonicalize(repo_path).unwrap_or_else(|_| repo_path.clone());
     if let Ok(canonical_target) = fs::canonicalize(&target_path)
         && canonical_target.starts_with(&canonical_repo)
     {
@@ -82,8 +85,8 @@ pub fn run(
     }
 
     // Build conflict map from existing tracked files
-    let existing_files = if repo_path.join(".git").exists() {
-        match git::git_ls_files(&repo_path) {
+    let existing_files = if repo.is_git_repo {
+        match git::git_ls_files(repo_path) {
             Ok(files) => files,
             Err(e) => {
                 warn!("failed to list tracked files: {e}");
@@ -98,10 +101,9 @@ pub fn run(
     // Resolve conflicts interactively
     let files_to_override = resolve_conflicts(&files_to_add, &conflict_map)?;
 
-    // Read current config (to update managed map)
-    let config = read_config(&state_path)?;
     let home = convention::home_dir()?;
-    let has_git = repo_path.join(".git").exists();
+    let has_git = repo.is_git_repo;
+    let config = repo.config;
 
     // Build the plan (pure function — no side effects)
     let input = AddPlanInput {
@@ -116,11 +118,11 @@ pub fn run(
     let output = build_add_plan(&input, &config)?;
 
     // Execute the plan
-    plan::execute_plan(&output.plan, dry_run, &state_path)?;
+    plan::execute_plan(&output.plan, dry_run, state_path)?;
 
     // Write updated config only after successful plan execution.
     if !dry_run && !output.plan.is_empty() {
-        write_config(&state_path, &output.config)?;
+        write_config(state_path, &output.config)?;
     }
 
     Ok(())

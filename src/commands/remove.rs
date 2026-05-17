@@ -5,12 +5,12 @@ use anyhow::Result;
 
 use crate::config::Config;
 use crate::convention::{
-    expand_tilde, find_managed_repo_files, read_config, repo_to_target, resolve_repo_path,
-    resolve_state_path, walk_dir, write_config,
+    expand_tilde, find_managed_repo_files, repo_to_target, walk_dir, write_config,
 };
 use crate::git;
 use crate::plan::{self, Action, Plan};
 use crate::prompt::prompt_confirm;
+use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
 
 /// Run the `remove` command.
@@ -20,16 +20,11 @@ pub fn run(
     commit: Option<String>,
     dry_run: bool,
 ) -> Result<()> {
-    let repo_path = resolve_repo_path()?;
-    let state_path = resolve_state_path()?;
+    let repo = RepoState::new().map_err(|e| anyhow::anyhow!("{e}"))?;
+    repo.require_git().map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Ensure repo exists
-    if !repo_path.join(".git").exists() {
-        anyhow::bail!(
-            "No dotty repository found at {}. Run `dotty init` first.",
-            repo_path.display()
-        );
-    }
+    let repo_path = &repo.repo_path;
+    let state_path = &repo.state_path;
 
     // Expand ~ in the input path
     let target_path = expand_tilde(&path)?;
@@ -41,7 +36,7 @@ pub fn run(
     }
 
     // Get tracked files from repo
-    let tracked_files = git::git_ls_files(&repo_path)?;
+    let tracked_files = git::git_ls_files(repo_path)?;
 
     // For each target file, find corresponding repo files
     let mut managed_pairs: Vec<(PathBuf, String)> = Vec::new();
@@ -91,10 +86,10 @@ pub fn run(
     managed_pairs.retain(|(_, repo_rel)| seen.insert(repo_rel.clone()));
 
     // Read current config (to update managed map)
-    let config = read_config(&state_path)?;
+    let config = repo.config;
 
     // Resolve user prompts for files that need override confirmation
-    let skipped = resolve_remove_skipped(&managed_pairs, &repo_path)?;
+    let skipped = resolve_remove_skipped(&managed_pairs, repo_path)?;
 
     // Build the plan (pure function — no side effects)
     let input = RemovePlanInput {
@@ -106,11 +101,11 @@ pub fn run(
     let output = build_remove_plan(&input, &config)?;
 
     // Execute plan
-    plan::execute_plan(&output.plan, dry_run, &state_path)?;
+    plan::execute_plan(&output.plan, dry_run, state_path)?;
 
     // Write updated config only after successful plan execution
     if !dry_run && !output.plan.is_empty() {
-        write_config(&state_path, &output.config)?;
+        write_config(state_path, &output.config)?;
     }
 
     // Print summary

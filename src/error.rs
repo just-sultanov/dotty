@@ -54,6 +54,13 @@ pub(crate) enum DottyError {
     #[error("backup verification failed for {path}: {detail}")]
     BackupVerification { path: PathBuf, detail: String },
 
+    #[error("no dotty repository found at {path}. Run `dotty init` first.")]
+    MissingGitRepository { path: PathBuf },
+
+    #[allow(dead_code)]
+    #[error("no machine configured. Run `dotty config machine <name>` to set one.")]
+    MissingMachineName,
+
     #[error("user cancelled operation")]
     Cancelled,
 }

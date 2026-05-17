@@ -8,38 +8,33 @@ use tracing::warn;
 
 use crate::config::Config;
 use crate::convention::{
-    backup_timestamp, expand_tilde, read_config, repo_to_target, resolve_repo_path,
-    resolve_state_path, scan_machine_directories, write_config,
+    backup_timestamp, expand_tilde, repo_to_target, scan_machine_directories, write_config,
 };
 use crate::git;
 use crate::plan::{self, Action, Plan};
 use crate::prompt::prompt_machine_selection;
+use crate::repo_state::RepoState;
 use crate::symlink::{is_symlink, would_be_circular};
 
 /// Run the `apply` command.
 pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
-    let repo_path = resolve_repo_path()?;
-    let state_path = resolve_state_path()?;
+    let repo = RepoState::new().map_err(|e| anyhow::anyhow!("{e}"))?;
+    repo.require_git().map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Ensure repo exists
-    if !repo_path.join(".git").exists() {
-        anyhow::bail!(
-            "No dotty repository found at {}. Run `dotty init` first.",
-            repo_path.display()
-        );
-    }
+    let repo_path = &repo.repo_path;
+    let state_path = &repo.state_path;
 
     // Read config (machine + managed map)
-    let mut config = read_config(&state_path)?;
+    let mut config = repo.config;
 
     // Detect platform (or use --platform override)
     let platform = platform_override.or_else(crate::convention::detect_platform);
 
     // Resolve machine name — prompt if missing
-    let machine_name = resolve_machine(&repo_path, &mut config, &state_path, dry_run)?;
+    let machine_name = resolve_machine(repo_path, &mut config, state_path, dry_run)?;
 
     // Collect all tracked files from git
-    let tracked_files = git::git_ls_files(&repo_path)?;
+    let tracked_files = git::git_ls_files(repo_path)?;
 
     // Classify files by tier and merge by priority
     let merged = merge_tiers(&tracked_files, &machine_name, &platform);
@@ -59,7 +54,7 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
     let output = build_apply_plan(&input)?;
 
     // Execute plan
-    plan::execute_plan(&output.plan, dry_run, &state_path)?;
+    plan::execute_plan(&output.plan, dry_run, state_path)?;
 
     // Print per-file summary before writing config — summary should always appear
     // even if config write fails (e.g. permission issue on state dir).
@@ -70,7 +65,7 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
     if !dry_run {
         let new_managed = rebuild_managed_map(&tracked_files);
         config.managed = new_managed;
-        if let Err(e) = write_config(&state_path, &config) {
+        if let Err(e) = write_config(state_path, &config) {
             warn!("failed to write config: {e}");
         }
     }

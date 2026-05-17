@@ -4,28 +4,21 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::config::Config;
-use crate::convention::{
-    self, calculate_dir_size, expand_tilde, read_config, repo_to_target, resolve_repo_path,
-    resolve_state_path,
-};
+use crate::convention::{self, calculate_dir_size, expand_tilde, repo_to_target};
 use crate::git;
+use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
 
 /// Run the `status` command.
 pub fn run() -> Result<()> {
-    let repo_path = resolve_repo_path()?;
-    let state_path = resolve_state_path()?;
+    let repo = RepoState::new().map_err(|e| anyhow::anyhow!("{e}"))?;
+    repo.require_git().map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Ensure repo exists
-    if !repo_path.join(".git").exists() {
-        anyhow::bail!(
-            "No dotty repository found at {}. Run `dotty init` first.",
-            repo_path.display()
-        );
-    }
+    let repo_path = &repo.repo_path;
+    let state_path = &repo.state_path;
 
     // Read config
-    let config = read_config(&state_path)?;
+    let config = &repo.config;
 
     // Detect platform
     let platform = convention::detect_platform();
@@ -39,16 +32,16 @@ pub fn run() -> Result<()> {
     println!("Repo:      {}", repo_path.display());
 
     // Current branch
-    if let Ok(branch) = git::git_current_branch(&repo_path) {
+    if let Ok(branch) = git::git_current_branch(repo_path) {
         println!("Branch:    {}", branch);
     }
 
     // Git dirty status
-    let git_status = git_status_summary(&repo_path);
+    let git_status = git_status_summary(repo_path);
     println!("Git:       {}", git_status);
 
     // Broken symlinks
-    let broken = find_broken_symlinks(&config);
+    let broken = find_broken_symlinks(repo_path, config);
     if broken.is_empty() {
         println!("Broken:    0");
     } else {
@@ -60,7 +53,7 @@ pub fn run() -> Result<()> {
 
     // Backup size
     let backup_size = calculate_dir_size(&state_path.join("backups"));
-    let backup_entries = count_backup_entries(&state_path);
+    let backup_entries = count_backup_entries(state_path);
     if backup_size > 0 {
         let size_mb = backup_size as f64 / (1024.0 * 1024.0);
         println!("Backups:   {:.1} MB ({} entries)", size_mb, backup_entries);
@@ -75,7 +68,7 @@ pub fn run() -> Result<()> {
     }
 
     // Tier conflicts
-    let conflicts = find_tier_conflicts(&repo_path, &config.machine, &platform);
+    let conflicts = find_tier_conflicts(repo_path, &config.machine, &platform);
     if conflicts.is_empty() {
         println!("Conflicts: 0");
     } else {
@@ -86,7 +79,7 @@ pub fn run() -> Result<()> {
     }
 
     // Inactive tier overrides
-    let inactive = find_inactive_tiers(&repo_path, &config.machine, &platform);
+    let inactive = find_inactive_tiers(repo_path, &config.machine, &platform);
     if inactive.is_empty() {
         println!("Inactive:  0");
     } else {
@@ -161,7 +154,7 @@ fn git_status_summary(repo_path: &Path) -> String {
 /// Find broken symlinks from the managed map.
 ///
 /// Returns a list of (target_path, repo_rel_path, reason).
-fn find_broken_symlinks(config: &Config) -> Vec<(String, String, String)> {
+fn find_broken_symlinks(repo_path: &Path, config: &Config) -> Vec<(String, String, String)> {
     let mut broken = Vec::new();
 
     for (repo_rel, target_ref) in &config.managed {
@@ -183,7 +176,7 @@ fn find_broken_symlinks(config: &Config) -> Vec<(String, String, String)> {
         }
 
         // Check if the symlink target (repo file) exists
-        let repo_file = resolve_repo_path().unwrap_or_default().join(repo_rel);
+        let repo_file = repo_path.join(repo_rel);
         if !repo_file.exists() {
             broken.push((target_ref.clone(), repo_rel.clone(), "missing".to_string()));
         }
