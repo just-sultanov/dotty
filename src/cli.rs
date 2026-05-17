@@ -59,6 +59,9 @@ impl Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Bootstrap a new repository or clone an existing one
+    #[command(
+        after_help = "Examples:\n  # Create a fresh repository in the current directory\n  dotty init\n\n  # Clone an existing dotty repository\n  dotty init git@github.com:user/dotty.git\n\n  # Clone and set machine name in one step\n  dotty init git@github.com:user/dotty.git --machine macbook"
+    )]
     Init {
         /// Git URL to clone (optional — omit for fresh repo)
         git_url: Option<String>,
@@ -75,6 +78,9 @@ pub enum Commands {
     },
 
     /// Add a file or directory to the repository
+    #[command(
+        after_help = "Examples:\n  # Add a config file to the base tier\n  dotty add ~/.vimrc\n\n  # Add to a machine-specific tier\n  dotty add ~/.vimrc --machine macbook\n\n  # Add to a platform-specific tier\n  dotty add ~/.bashrc --platform linux\n\n  # Add and commit in one step\n  dotty add ~/.config/alacritty --commit \"add alacritty config\""
+    )]
     Add {
         /// Path to add (file or directory)
         path: String,
@@ -97,6 +103,9 @@ pub enum Commands {
     },
 
     /// Remove a file or directory from the repository
+    #[command(
+        after_help = "Examples:\n  # Remove a tracked file (restores original if backed up)\n  dotty remove ~/.old-config\n\n  # Remove from a specific machine tier\n  dotty remove ~/.vimrc --machine macbook\n\n  # Remove and commit in one step\n  dotty remove ~/.old-config --commit \"remove old config\""
+    )]
     Remove {
         /// Path to remove
         path: String,
@@ -115,6 +124,9 @@ pub enum Commands {
     },
 
     /// Create symlinks for all tracked files
+    #[command(
+        after_help = "Examples:\n  # Apply all tracked files (create/update symlinks)\n  dotty apply\n\n  # Preview changes without applying\n  dotty apply --dry-run\n\n  # Override platform detection\n  dotty apply --platform linux"
+    )]
     Apply {
         /// Show what would be done without making changes
         #[arg(long)]
