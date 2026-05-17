@@ -1,3 +1,5 @@
+use std::io::IsTerminal;
+
 use dialoguer::Confirm;
 
 use crate::error::DottyError;
@@ -15,10 +17,30 @@ fn map_dialoguer_error(e: dialoguer::Error) -> DottyError {
     }
 }
 
+/// Check if we are running in an interactive terminal.
+///
+/// Returns `false` in CI, pipes, or any non-TTY environment where
+/// interactive prompts would hang or behave unpredictably.
+fn is_interactive() -> bool {
+    std::io::stdout().is_terminal() && std::io::stdin().is_terminal()
+}
+
+/// Ensure we are in an interactive terminal, returning a helpful error if not.
+fn require_interactive() -> Result<(), DottyError> {
+    if !is_interactive() {
+        return Err(DottyError::NotInteractive {
+            hint: "Use --dry-run or run in an interactive terminal".into(),
+        });
+    }
+    Ok(())
+}
+
 /// Prompt the user for a yes/no confirmation.
 ///
 /// Returns `true` if the user confirms, `false` otherwise.
+/// Returns `DottyError::NotInteractive` when not running in a TTY.
 pub(crate) fn prompt_confirm(prompt: &str) -> Result<bool, DottyError> {
+    require_interactive()?;
     let answer = Confirm::new()
         .with_prompt(prompt)
         .default(true)
@@ -30,7 +52,9 @@ pub(crate) fn prompt_confirm(prompt: &str) -> Result<bool, DottyError> {
 /// Prompt the user for a text input.
 ///
 /// Returns the entered string.
-pub fn prompt_input(prompt: &str) -> Result<String, DottyError> {
+/// Returns `DottyError::NotInteractive` when not running in a TTY.
+pub(crate) fn prompt_input(prompt: &str) -> Result<String, DottyError> {
+    require_interactive()?;
     let input = dialoguer::Input::<String>::new()
         .with_prompt(prompt)
         .interact_text()
@@ -41,7 +65,9 @@ pub fn prompt_input(prompt: &str) -> Result<String, DottyError> {
 /// Prompt the user to select from a list of options.
 ///
 /// Returns the index of the selected option.
-pub fn prompt_select(prompt: &str, options: &[&str]) -> Result<usize, DottyError> {
+/// Returns `DottyError::NotInteractive` when not running in a TTY.
+pub(crate) fn prompt_select(prompt: &str, options: &[&str]) -> Result<usize, DottyError> {
+    require_interactive()?;
     let index = dialoguer::Select::new()
         .with_prompt(prompt)
         .items(options)
@@ -54,7 +80,8 @@ pub fn prompt_select(prompt: &str, options: &[&str]) -> Result<usize, DottyError
 /// Prompt the user to select a machine from known machines or enter a new name.
 ///
 /// Returns the selected or entered machine name.
-pub fn prompt_machine_selection(known_machines: &[String]) -> Result<String, DottyError> {
+/// Returns `DottyError::NotInteractive` when not running in a TTY.
+pub(crate) fn prompt_machine_selection(known_machines: &[String]) -> Result<String, DottyError> {
     if known_machines.is_empty() {
         return prompt_input("What is this machine called? (e.g. macbook, ubuntu-work)");
     }
@@ -71,5 +98,32 @@ pub fn prompt_machine_selection(known_machines: &[String]) -> Result<String, Dot
         prompt_input("Enter a new machine name:")
     } else {
         Ok(options[selected].clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_interactive_returns_bool() {
+        // In test environment (non-TTY), should return false
+        assert!(!is_interactive());
+    }
+
+    #[test]
+    fn test_require_interactive_fails_in_non_tty() {
+        // In test environment (non-TTY), should return NotInteractive error
+        let result = require_interactive();
+        assert!(matches!(result, Err(DottyError::NotInteractive { .. })));
+    }
+
+    #[test]
+    fn test_require_interactive_error_message() {
+        let result = require_interactive();
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not running in an interactive terminal"));
+        assert!(msg.contains("--dry-run"));
     }
 }

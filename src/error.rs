@@ -39,6 +39,9 @@ pub(crate) enum DottyError {
     #[error("prompt error: {0}")]
     Prompt(#[from] dialoguer::Error),
 
+    #[error("not running in an interactive terminal: {hint}")]
+    NotInteractive { hint: String },
+
     #[error("TOML parse error: {0}")]
     TomlParse(#[from] toml::de::Error),
 
