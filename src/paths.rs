@@ -336,6 +336,61 @@ mod tests {
         assert_eq!(path, PathBuf::from("/opt/nvim/appimage"));
     }
 
+    // ── edge-case tests ──
+
+    #[test]
+    fn test_target_to_repo_relative_path_returns_error() {
+        // A relative path (not starting with ~ or /) cannot be mapped to repo.
+        let target = PathBuf::from("relative/path/.vimrc");
+        let err = target_to_repo(&target).unwrap_err();
+        match err {
+            DottyError::InvalidTargetPath { reason, .. } => {
+                assert!(
+                    reason.contains("home") || reason.contains("/"),
+                    "error should mention home or /: {reason}"
+                );
+            }
+            _ => panic!("expected InvalidTargetPath error, got {err:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(target_family = "unix")]
+    fn test_repo_to_target_non_utf8_root_returns_error() {
+        use std::os::unix::ffi::OsStrExt;
+
+        // A repo path with a non-UTF8 root component should fail.
+        let repo = PathBuf::from("base").join(std::ffi::OsStr::from_bytes(&[0x80, 0x81]));
+        let err = repo_to_target(&repo).unwrap_err();
+        match err {
+            DottyError::InvalidRepoPath { reason, .. } => {
+                assert!(
+                    reason.contains("UTF-8"),
+                    "error should mention UTF-8: {reason}"
+                );
+            }
+            _ => panic!("expected InvalidRepoPath error, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn test_repo_to_target_with_dotdot_components() {
+        // Path containing ".." components — repo_to_target doesn't canonicalize,
+        // it just joins. The ".." is preserved in the output.
+        let repo = Path::new("base/home/.config/../.vimrc");
+        let target = repo_to_target(repo).unwrap();
+        // The ".." is preserved in the joined path (not resolved)
+        let target_str = target.to_string_lossy();
+        assert!(target_str.contains(".config") || target_str.contains(".."));
+    }
+
+    #[test]
+    fn test_expand_tilde_in_middle_of_path() {
+        // "~/" in the middle of a path should NOT be expanded.
+        let path = expand_tilde("/some/dir/~/file").unwrap();
+        assert_eq!(path, PathBuf::from("/some/dir/~/file"));
+    }
+
     // ── proptest roundtrip tests ──
 
     /// Check that a path string has no ".." component (for proptest filtering).
