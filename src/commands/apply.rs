@@ -232,7 +232,24 @@ fn inspect_target(target: &Path, expected_repo_file: &Path) -> TargetState {
     if is_symlink(target) {
         match fs::read_link(target) {
             Ok(link_target) => {
-                if link_target == expected_repo_file {
+                // Canonicalize both paths before comparison to handle:
+                // - `..` components (e.g., `/home/user/../user/.dotty` vs `/home/user/.dotty`)
+                // - Intermediate symlinks in path components
+                // If canonicalization fails (e.g., permission denied), fall back to
+                // the original string comparison.
+                let is_correct = match (
+                    canonicalize_path(&link_target),
+                    canonicalize_path(expected_repo_file),
+                ) {
+                    (Some(canonical_link), Some(canonical_expected)) => {
+                        canonical_link == canonical_expected
+                    }
+                    _ => {
+                        // Fallback: compare raw paths when canonicalization is not possible
+                        link_target == *expected_repo_file
+                    }
+                };
+                if is_correct {
                     return TargetState::Correct;
                 }
                 // Check if the existing symlink is circular (externally created cycle).
@@ -251,6 +268,24 @@ fn inspect_target(target: &Path, expected_repo_file: &Path) -> TargetState {
         TargetState::NeedsBackup
     } else {
         TargetState::NeedsSymlink
+    }
+}
+
+/// Canonicalize a path for comparison purposes.
+///
+/// For paths that exist, uses `fs::canonicalize` directly.
+/// For paths that may not exist yet (e.g., repo files), canonicalizes
+/// the parent directory and rejoins the filename.
+/// Returns `None` if canonicalization fails (e.g., parent doesn't exist).
+fn canonicalize_path(path: &Path) -> Option<PathBuf> {
+    if path.exists() {
+        fs::canonicalize(path).ok()
+    } else {
+        // Path doesn't exist — canonicalize parent and rejoin filename
+        let parent = path.parent()?;
+        let filename = path.file_name()?;
+        let canonical_parent = fs::canonicalize(parent).ok()?;
+        Some(canonical_parent.join(filename))
     }
 }
 
@@ -840,6 +875,109 @@ mod tests {
             assert_eq!(output.file_results.len(), 1);
             assert!(output.file_results[0].applied);
         });
+    }
+
+    // -- canonicalize_path tests --
+
+    #[test]
+    fn test_canonicalize_path_with_dotdot_components() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let sub = base.join("a");
+        fs::create_dir_all(&sub).unwrap();
+        let file = sub.join("file.txt");
+        fs::write(&file, "content").unwrap();
+
+        // Path with .. components should resolve to the same canonical path
+        let with_dotdot = base.join("a").join("..").join("a").join("file.txt");
+        let canonical_simple = canonicalize_path(&file).unwrap();
+        let canonical_dotdot = canonicalize_path(&with_dotdot).unwrap();
+        assert_eq!(canonical_simple, canonical_dotdot);
+    }
+
+    #[test]
+    fn test_canonicalize_path_with_intermediate_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let real_dir = base.join("real_dir");
+        fs::create_dir_all(&real_dir).unwrap();
+        let file = real_dir.join("file.txt");
+        fs::write(&file, "content").unwrap();
+
+        // Create a symlink to the directory
+        let link_dir = base.join("link_dir");
+        crate::symlink::create_symlink(&real_dir, &link_dir).unwrap();
+
+        // Access file through symlinked directory
+        let file_via_link = link_dir.join("file.txt");
+        let canonical_direct = canonicalize_path(&file).unwrap();
+        let canonical_via_link = canonicalize_path(&file_via_link).unwrap();
+        // Both should resolve to the same canonical path
+        assert_eq!(canonical_direct, canonical_via_link);
+    }
+
+    #[test]
+    fn test_canonicalize_path_nonexistent_file_existing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        fs::create_dir_all(base).unwrap();
+
+        // File doesn't exist but parent does
+        let nonexistent = base.join("not_yet_created.txt");
+        let canonical = canonicalize_path(&nonexistent);
+        assert!(canonical.is_some());
+        let canonical = canonical.unwrap();
+        assert_eq!(canonical.file_name().unwrap(), "not_yet_created.txt");
+    }
+
+    #[test]
+    fn test_canonicalize_path_nonexistent_parent_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        // Neither file nor parent exists
+        let nonexistent = base.join("no_such_dir").join("file.txt");
+        let canonical = canonicalize_path(&nonexistent);
+        assert!(canonical.is_none());
+    }
+
+    #[test]
+    fn test_inspect_target_correct_with_dotdot_in_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let sub = base.join("repo");
+        fs::create_dir_all(&sub).unwrap();
+        let repo_file = sub.join("file.txt");
+        fs::write(&repo_file, "content").unwrap();
+
+        let target_dir = base.join("home");
+        fs::create_dir_all(&target_dir).unwrap();
+        let target = target_dir.join("link");
+
+        // Create symlink pointing to repo file using .. in path
+        let link_target = base.join("repo").join("..").join("repo").join("file.txt");
+        crate::symlink::create_symlink(&link_target, &target).unwrap();
+
+        // Should detect as Correct because canonicalized paths match
+        assert!(inspect_target(&target, &repo_file) == TargetState::Correct);
+    }
+
+    #[test]
+    fn test_inspect_target_fallback_when_canonicalization_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let target_dir = base.join("home");
+        fs::create_dir_all(&target_dir).unwrap();
+        let target = target_dir.join("link");
+
+        // Create symlink to a file in a non-existent parent directory
+        let nonexistent_parent = base.join("no_such_dir").join("file.txt");
+        crate::symlink::create_symlink(&nonexistent_parent, &target).unwrap();
+
+        // expected_repo_file also has non-existent parent — fallback comparison
+        // Both paths won't match, so it should be NeedsSymlink
+        let expected = base.join("other_dir").join("file.txt");
+        assert!(inspect_target(&target, &expected) == TargetState::NeedsSymlink);
     }
 
     #[test]
