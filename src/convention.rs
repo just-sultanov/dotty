@@ -8,7 +8,7 @@ use crate::error::DottyError;
 pub use crate::platform::{KNOWN_PLATFORMS, detect_platform};
 
 // Re-export from config module
-pub use crate::config::{Config, read_config, write_config};
+pub use crate::config::{read_config, write_config};
 
 // Re-export from paths module
 pub use crate::paths::{
@@ -179,6 +179,7 @@ pub fn find_managed_repo_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use std::fs;
 
     /// Create a unique temporary directory that is automatically cleaned up on drop.

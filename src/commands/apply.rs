@@ -342,7 +342,7 @@ fn build_override_map(
 /// Resolve the machine name. If missing from config, prompt user to select.
 fn resolve_machine(
     repo_path: &Path,
-    config: &mut crate::convention::Config,
+    config: &mut Config,
     state_path: &Path,
     dry_run: bool,
 ) -> Result<String> {

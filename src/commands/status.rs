@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::config::Config;
 use crate::convention::{
     self, calculate_dir_size, expand_tilde, read_config, repo_to_target, resolve_repo_path,
     resolve_state_path,
@@ -160,7 +161,7 @@ fn git_status_summary(repo_path: &Path) -> String {
 /// Find broken symlinks from the managed map.
 ///
 /// Returns a list of (target_path, repo_rel_path, reason).
-fn find_broken_symlinks(config: &crate::convention::Config) -> Vec<(String, String, String)> {
+fn find_broken_symlinks(config: &Config) -> Vec<(String, String, String)> {
     let mut broken = Vec::new();
 
     for (repo_rel, target_ref) in &config.managed {
