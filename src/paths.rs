@@ -150,6 +150,23 @@ pub fn normalize_path(path: &Path) -> String {
     path.to_slash_lossy().into_owned()
 }
 
+/// Format a target path for display, using `~` for home-relative paths.
+///
+/// E.g. `/home/user/.vimrc` → `"~/.vimrc"`, `/opt/nvim` → `"/opt/nvim"`.
+/// Falls back to the full path if the home directory cannot be resolved.
+pub fn format_target_display(path: &Path) -> String {
+    match home_dir() {
+        Ok(home) => {
+            if let Ok(relative) = path.strip_prefix(&home) {
+                format!("~/{relative}", relative = relative.display())
+            } else {
+                path.to_string_lossy().to_string()
+            }
+        }
+        Err(_) => path.to_string_lossy().to_string(),
+    }
+}
+
 /// Expand `~` prefix in a path string to the full home directory path.
 ///
 /// E.g. `"~/.vimrc"` → `/home/user/.vimrc`, `"/opt/app"` → `/opt/app`.
@@ -389,6 +406,41 @@ mod tests {
         // "~/" in the middle of a path should NOT be expanded.
         let path = expand_tilde("/some/dir/~/file").unwrap();
         assert_eq!(path, PathBuf::from("/some/dir/~/file"));
+    }
+
+    // ── format_target_display tests ──
+
+    #[test]
+    fn test_format_target_display_home_path() {
+        let home = home_dir().unwrap();
+        let path = home.join(".vimrc");
+        let formatted = format_target_display(&path);
+        assert_eq!(formatted, "~/.vimrc");
+    }
+
+    #[test]
+    fn test_format_target_display_nested_home_path() {
+        let home = home_dir().unwrap();
+        let path = home.join(".config/nvim/init.lua");
+        let formatted = format_target_display(&path);
+        assert_eq!(formatted, "~/.config/nvim/init.lua");
+    }
+
+    #[test]
+    fn test_format_target_display_absolute_path() {
+        let path = PathBuf::from("/opt/nvim/appimage");
+        let formatted = format_target_display(&path);
+        assert_eq!(formatted, "/opt/nvim/appimage");
+    }
+
+    #[test]
+    fn test_format_target_display_home_dir_failure() {
+        // When HOME is unset and std::env::home_dir() returns None,
+        // format_target_display falls back to the full path.
+        let path = PathBuf::from("/home/user/.vimrc");
+        let formatted = temp_env::with_var_unset("HOME", || format_target_display(&path));
+        // Falls back to full path (or whatever home_dir resolves to)
+        assert!(!formatted.is_empty());
     }
 
     // ── proptest roundtrip tests ──

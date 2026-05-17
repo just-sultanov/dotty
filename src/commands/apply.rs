@@ -439,19 +439,11 @@ fn resolve_machine(
 /// Rebuild the managed map from tracked files.
 fn rebuild_managed_map(tracked_files: &[String]) -> IndexMap<String, String> {
     let mut managed = IndexMap::new();
-    let home = match crate::convention::home_dir() {
-        Ok(h) => h,
-        Err(_) => return managed,
-    };
 
     for file in tracked_files {
         let repo_path = PathBuf::from(file);
         if let Ok(target) = repo_to_target(&repo_path) {
-            let target_str = if let Ok(relative) = target.strip_prefix(&home) {
-                format!("~/{relative}", relative = relative.display())
-            } else {
-                target.to_string_lossy().to_string()
-            };
+            let target_str = crate::convention::format_target_display(&target);
             managed.insert(file.clone(), target_str);
         }
     }
@@ -510,15 +502,7 @@ fn print_per_file_summary(
     let mut skipped_count = 0;
 
     for result in &sorted {
-        let target_str = if let Ok(home) = crate::convention::home_dir() {
-            if let Ok(relative) = result.target.strip_prefix(&home) {
-                format!("~/{relative}", relative = relative.display())
-            } else {
-                result.target.to_string_lossy().to_string()
-            }
-        } else {
-            result.target.to_string_lossy().to_string()
-        };
+        let target_str = crate::convention::format_target_display(&result.target);
 
         if result.skipped {
             skipped_count += 1;

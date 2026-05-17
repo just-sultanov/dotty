@@ -12,8 +12,8 @@ pub use crate::config::{read_config, write_config};
 
 // Re-export from paths module
 pub use crate::paths::{
-    expand_tilde, home_dir, normalize_path, repo_to_target, resolve_repo_path, resolve_state_path,
-    target_to_repo,
+    expand_tilde, format_target_display, home_dir, normalize_path, repo_to_target,
+    resolve_repo_path, resolve_state_path, target_to_repo,
 };
 
 // Re-export from backups module

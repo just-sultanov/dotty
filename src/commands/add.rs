@@ -220,10 +220,7 @@ pub(crate) fn build_add_plan(input: &AddPlanInput, config: &Config) -> Result<Ad
                     input.repo_path.display()
                 )
             })?);
-        let target_rel = target_file
-            .strip_prefix(&input.home)
-            .map(|p| format!("~/{p}", p = convention::normalize_path(p)))
-            .unwrap_or_else(|_| convention::normalize_path(target_file));
+        let target_rel = convention::format_target_display(target_file);
         config.managed.insert(repo_rel, target_rel);
     }
 

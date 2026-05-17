@@ -264,31 +264,13 @@ fn find_tier_conflicts(
                     .map(|(t, _)| t.clone())
                     .unwrap_or_default();
 
-                let target_str = format_target_path(target);
+                let target_str = convention::format_target_display(target);
                 conflicts.push((target_str, overriding, tier.clone()));
             }
         }
     }
 
     conflicts
-}
-
-/// Format a target path for display (with ~ prefix for home paths).
-fn format_target_path(path: &Path) -> String {
-    let home = match convention::home_dir() {
-        Ok(h) => h,
-        Err(_) => return path.display().to_string(),
-    };
-
-    if let Ok(relative) = path.strip_prefix(&home) {
-        if relative.as_os_str().is_empty() {
-            "~".to_string()
-        } else {
-            format!("~/{relative}", relative = relative.display())
-        }
-    } else {
-        path.display().to_string()
-    }
 }
 
 /// Return a numeric priority for a tier name (higher = more priority).
@@ -326,7 +308,7 @@ fn find_inactive_tiers(
         if !is_active {
             let repo_path_buf = PathBuf::from(file);
             if let Ok(target) = repo_to_target(&repo_path_buf) {
-                let target_str = format_target_path(&target);
+                let target_str = convention::format_target_display(&target);
                 inactive.push((target_str, tier, file.clone()));
             }
         }
@@ -342,28 +324,24 @@ mod tests {
     // Tests for tier_priority and classify_tier live in convention.rs.
 
     #[test]
-    fn test_format_target_path_home() {
+    fn test_format_target_display_home() {
         let home = convention::home_dir().unwrap();
         let path = home.join(".vimrc");
-        let formatted = format_target_path(&path);
+        let formatted = convention::format_target_display(&path);
         assert_eq!(formatted, "~/.vimrc");
     }
 
     #[test]
-    fn test_format_target_path_absolute() {
+    fn test_format_target_display_absolute() {
         let path = PathBuf::from("/opt/nvim/appimage");
-        let formatted = format_target_path(&path);
+        let formatted = convention::format_target_display(&path);
         assert_eq!(formatted, "/opt/nvim/appimage");
     }
 
     #[test]
-    fn test_git_status_summary_clean() {
-        // git_status_summary calls git::git_status internally, so we test
-        // the parsing logic by providing a mock via a temp repo.
-        // Instead, we test the counting logic indirectly through the public API.
-        // For a pure unit test we verify the format_target_path helper used by status.
+    fn test_format_target_display_tilde_only() {
         let path = PathBuf::from("~");
-        let formatted = format_target_path(&path);
+        let formatted = convention::format_target_display(&path);
         // ~ without home_dir match stays as-is
         assert_eq!(formatted, "~");
     }
