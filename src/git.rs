@@ -1,3 +1,4 @@
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -11,13 +12,20 @@ use crate::error::DottyError;
 /// containing the stderr output.
 fn git_run(dir: &Path, args: &[&str]) -> Result<String, DottyError> {
     debug!("git {}", args.join(" "));
+    // Check for NotFound separately so users see "git is not installed" instead of "exit code -1".
     let output = Command::new("git")
         .current_dir(dir)
         .args(args)
         .output()
-        .map_err(|e| DottyError::Git {
-            exit_code: -1,
-            stderr: format!("failed to execute git: {e}"),
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                DottyError::GitNotInstalled { source: e }
+            } else {
+                DottyError::Git {
+                    exit_code: -1,
+                    stderr: format!("failed to execute git: {e}"),
+                }
+            }
         })?;
 
     if !output.status.success() {

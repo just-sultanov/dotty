@@ -16,6 +16,9 @@ pub(crate) enum DottyError {
     #[error("git command failed (exit code {exit_code}): {stderr}")]
     Git { exit_code: i32, stderr: String },
 
+    #[error("git is not installed. Please install git and try again.")]
+    GitNotInstalled { source: std::io::Error },
+
     #[error(
         "invalid machine name '{name}': {reason}. Use alphanumeric characters and hyphens (e.g. 'my-laptop')."
     )]
@@ -132,6 +135,16 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("128"));
         assert!(msg.contains("fatal: not a git repository"));
+    }
+
+    #[test]
+    fn test_git_not_installed_message() {
+        let err = DottyError::GitNotInstalled {
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "git not found"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("git is not installed"));
+        assert!(msg.contains("Please install git"));
     }
 
     #[test]
