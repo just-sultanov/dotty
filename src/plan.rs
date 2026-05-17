@@ -241,51 +241,110 @@ pub(crate) fn execute_plan(
     Ok(())
 }
 
+/// A rollback operation that can be executed independently.
+///
+/// Filesystem rollbacks delegate to `Action::rollback()`. Git rollbacks
+/// (`GitResetSoft`, `GitResetHead`) use dedicated git commands because their
+/// inverse is not expressible as a simple `Action`.
+#[derive(Debug)]
+enum RollbackAction {
+    /// Rollback a filesystem action by executing its inverse `Action`.
+    Filesystem(Action),
+    /// Undo the last commit via `git reset --soft HEAD~1`.
+    GitResetSoft,
+    /// Unstage files via `git reset HEAD <paths>`.
+    GitResetHead { paths: Vec<PathBuf> },
+}
+
+impl RollbackAction {
+    /// Execute this rollback operation.
+    fn execute(&self, repo_path: &Path) -> Result<(), DottyError> {
+        match self {
+            RollbackAction::Filesystem(action) => action.execute(repo_path),
+            RollbackAction::GitResetSoft => git::git_reset_soft_head(repo_path),
+            RollbackAction::GitResetHead { paths } => {
+                let path_strs: Vec<&str> = paths.iter().filter_map(|p| p.to_str()).collect();
+                git::git_reset(repo_path, &path_strs)
+            }
+        }
+    }
+
+    /// Format a human-readable description for logging.
+    fn display(&self) -> String {
+        match self {
+            RollbackAction::Filesystem(action) => format!("{action}"),
+            RollbackAction::GitResetSoft => "git reset --soft HEAD~1".to_string(),
+            RollbackAction::GitResetHead { paths } => {
+                let path_strs: Vec<&str> = paths.iter().filter_map(|p| p.to_str()).collect();
+                format!("git reset HEAD {}", path_strs.join(" "))
+            }
+        }
+    }
+
+    /// Convert an `Action` into the appropriate `RollbackAction`.
+    ///
+    /// Returns `None` if the action has no rollback (e.g. `RemoveFile`).
+    fn from_action(action: &Action) -> Option<RollbackAction> {
+        match action {
+            Action::GitCommit { .. } => Some(RollbackAction::GitResetSoft),
+            Action::GitAdd { paths } => {
+                if paths.is_empty() {
+                    None
+                } else {
+                    Some(RollbackAction::GitResetHead {
+                        paths: paths.clone(),
+                    })
+                }
+            }
+            _ => action.rollback().map(RollbackAction::Filesystem),
+        }
+    }
+}
+
 /// Roll back completed actions in reverse order.
 ///
-/// Handles git actions specially (reset --soft for commits, reset HEAD for adds)
-/// because their rollback is not expressible as a simple inverse Action.
+/// Each action is converted to a `RollbackAction` (filesystem or git) and
+/// executed in reverse order. Git actions are batched per type so that
+/// `git reset HEAD` is called once with all paths.
 fn rollback_completed(plan: &Plan, completed_indices: &[usize]) -> Result<(), DottyError> {
     debug!("rolling back {} completed actions", completed_indices.len());
     let actions = &plan.actions;
     let repo_path = &plan.repo_path;
 
-    let mut has_git_add = false;
-    let mut git_add_paths: Vec<PathBuf> = Vec::new();
-
     let mut indices: Vec<usize> = completed_indices.to_vec();
     indices.sort_unstable();
     indices.reverse();
 
+    // Collect all rollback actions, then execute in reverse order.
+    // GitAdd rollbacks are batched: all paths are collected and reset in one call.
+    let mut rollbacks: Vec<RollbackAction> = Vec::new();
+    let mut git_add_paths: Vec<PathBuf> = Vec::new();
+
     for &idx in &indices {
         let action = &actions[idx];
-
-        match action {
-            Action::GitCommit { .. } => {
-                println!("  rollback: git reset --soft HEAD~1");
-                git::git_reset_soft_head(repo_path)?;
-                continue;
+        if let Some(rb) = RollbackAction::from_action(action) {
+            match &rb {
+                RollbackAction::GitResetHead { paths } => {
+                    git_add_paths.extend(paths.clone());
+                }
+                _ => rollbacks.push(rb),
             }
-            Action::GitAdd { paths } => {
-                has_git_add = true;
-                git_add_paths.extend(paths.clone());
-                continue;
-            }
-            _ => {}
-        }
-
-        if let Some(rollback_action) = action.rollback() {
-            println!("  rollback: {}", rollback_action);
-            rollback_action.execute(repo_path)?;
         }
     }
 
-    if has_git_add {
-        let path_strs: Vec<&str> = git_add_paths.iter().filter_map(|p| p.to_str()).collect();
-        if !path_strs.is_empty() {
-            println!("  rollback: git reset HEAD {}", path_strs.join(" "));
-            git::git_reset(repo_path, &path_strs)?;
-        }
+    // Execute non-GitAdd rollbacks in order
+    for rb in &rollbacks {
+        println!("  rollback: {}", rb.display());
+        rb.execute(repo_path)?;
+    }
+
+    // Batch GitAdd rollback (all paths in one git reset call)
+    if !git_add_paths.is_empty() {
+        let rb = RollbackAction::GitResetHead {
+            paths: git_add_paths,
+        };
+        println!("  rollback: {}", rb.display());
+        rb.execute(repo_path)?;
     }
 
     Ok(())
