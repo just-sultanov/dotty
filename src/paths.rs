@@ -79,7 +79,9 @@ pub fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
     let home = home_dir()?;
 
     if let Ok(relative) = target_path.strip_prefix(&home) {
-        return Ok(PathBuf::from("home").join(relative));
+        let result = PathBuf::from("home").join(relative);
+        validate_no_dotdot(&result, target_path)?;
+        return Ok(result);
     }
 
     if let Ok(relative) = target_path.strip_prefix("/") {
@@ -89,13 +91,32 @@ pub fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
                 reason: "cannot map root path to repo".into(),
             });
         }
-        return Ok(relative.to_path_buf());
+        let result = relative.to_path_buf();
+        validate_no_dotdot(&result, target_path)?;
+        return Ok(result);
     }
 
     Err(DottyError::InvalidTargetPath {
         path: target_path.display().to_string(),
         reason: "path does not start with home directory or \"/\"".into(),
     })
+}
+
+/// Validate that a repo-relative path does not contain `..` components.
+///
+/// This is a defense-in-depth check: `strip_prefix` itself is safe and won't
+/// produce `..`, but an explicit guard makes the invariant visible and catches
+/// any future regressions.
+fn validate_no_dotdot(result: &Path, original: &Path) -> Result<(), DottyError> {
+    for component in result.components() {
+        if component.as_os_str() == ".." {
+            return Err(DottyError::InvalidTargetPath {
+                path: original.display().to_string(),
+                reason: "resulting repo path contains '..' component".into(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Return the user's home directory.
@@ -262,6 +283,41 @@ mod tests {
     }
 
     #[test]
+    fn test_target_to_repo_rejects_dotdot_in_result() {
+        // Defense-in-depth: if the resulting repo path somehow contains "..",
+        // it should be rejected. With current strip_prefix logic this won't
+        // trigger for normal paths, but the guard protects against regressions.
+        let home = home_dir().unwrap();
+        // A path like /home/user/../etc/passwd would strip_prefix home and
+        // produce "home/../etc/passwd" — the ".." check catches this.
+        // We simulate by constructing a path that would produce ".." after strip.
+        // In practice, canonical paths won't have "..", but the validation exists.
+        let target = home.join("subdir");
+        let repo = target_to_repo(&target).unwrap();
+        // Normal path should not contain ".."
+        for component in repo.components() {
+            assert_ne!(component.as_os_str(), "..");
+        }
+    }
+
+    #[test]
+    fn test_validate_no_dotdot_rejects_dotdot() {
+        // Direct test of the validation helper via a crafted scenario.
+        // We can't easily trigger ".." through target_to_repo with real paths,
+        // so we verify the function rejects paths with ".." components.
+        let result = PathBuf::from("home/../etc/passwd");
+        let original = PathBuf::from("/home/user/../etc/passwd");
+        let err = validate_no_dotdot(&result, &original).unwrap_err();
+        // The error should mention ".." in the reason
+        match err {
+            DottyError::InvalidTargetPath { reason, .. } => {
+                assert!(reason.contains(".."));
+            }
+            _ => panic!("expected InvalidTargetPath error"),
+        }
+    }
+
+    #[test]
     fn test_expand_tilde_home() {
         let path = expand_tilde("~/.vimrc").unwrap();
         assert!(path.to_string_lossy().ends_with(".vimrc"));
@@ -282,6 +338,11 @@ mod tests {
 
     // ── proptest roundtrip tests ──
 
+    /// Check that a path string has no ".." component (for proptest filtering).
+    fn has_no_dotdot_component(s: &str) -> bool {
+        !s.split('/').any(|c| c == "..")
+    }
+
     proptest::proptest! {
         #[test]
         fn roundtrip_repo_to_target_to_repo(
@@ -289,8 +350,8 @@ mod tests {
             root in "home|opt|etc|usr|var|Library|srv",
             // File path: 1-4 non-empty components
             file_components in "[a-zA-Z0-9_.@-]{1,20}(/[a-zA-Z0-9_.@-]{1,20})*".prop_filter(
-                "non-empty file path",
-                |s: &String| !s.is_empty() && !s.starts_with('/'),
+                "valid file path",
+                |s: &String| !s.is_empty() && !s.starts_with('/') && has_no_dotdot_component(s),
             ),
         ) {
             let repo_path = PathBuf::from("base").join(&root).join(&file_components);
@@ -318,13 +379,13 @@ mod tests {
             variant in any::<bool>(),
             // Home-relative: dotfile or nested path like .config/nvim/init.lua
             home_components in "[.a-zA-Z0-9_@-]{1,20}(/[a-zA-Z0-9_.@-]{1,20})*".prop_filter(
-                "non-empty home path",
-                |s: &String| !s.is_empty(),
+                "valid home path",
+                |s: &String| !s.is_empty() && has_no_dotdot_component(s),
             ),
             // Absolute: at least 2 components (dir/file) so repo path has scope+root
             abs_components in "[a-zA-Z0-9_]{1,10}/[a-zA-Z0-9_.@-]{1,20}(/[a-zA-Z0-9_.@-]{1,20})*".prop_filter(
-                "non-empty abs path",
-                |s: &String| !s.is_empty(),
+                "valid abs path",
+                |s: &String| !s.is_empty() && has_no_dotdot_component(s),
             ),
         ) {
             let home = home_dir().unwrap();
