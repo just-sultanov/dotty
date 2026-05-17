@@ -8,8 +8,7 @@ use std::path::Path;
 /// two runs happen within the same second.
 pub fn backup_timestamp() -> String {
     let now = chrono::Local::now();
-    let millis = now.timestamp_subsec_millis();
-    format!("{}-{:03}", now.format("%Y-%m-%dT%H-%M-%S"), millis)
+    now.format("%Y-%m-%dT%H-%M-%S-%3f").to_string()
 }
 
 /// List backup directory names sorted by name (chronological order).
