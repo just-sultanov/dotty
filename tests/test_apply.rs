@@ -89,7 +89,13 @@ fn apply_fails_without_repo() {
     let env = TestEnv::new();
 
     // No init — should fail
-    env.run_err(&["apply"]);
+    let out = env.run_err(&["apply"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no dotty repository found"),
+        "expected 'no dotty repository found' error:\\n{}",
+        stderr
+    );
 }
 
 #[test]

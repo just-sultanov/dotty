@@ -261,7 +261,13 @@ fn add_rejects_files_inside_repo() {
     std::fs::create_dir_all(inside.parent().unwrap()).unwrap();
     std::fs::write(&inside, "should fail").unwrap();
 
-    env.run_err(&["add", inside.to_str().unwrap()]);
+    let out = env.run_err(&["add", inside.to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Cannot add files from inside the dotty repository"),
+        "expected 'Cannot add files from inside the dotty repository' error:\n{}",
+        stderr
+    );
 }
 
 #[test]

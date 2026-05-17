@@ -180,7 +180,13 @@ fn remove_unmanaged_path_fails() {
     // Create a file that is NOT managed by dotty
     let unmanaged = env.create_file(".unmanaged", "not tracked");
 
-    env.run_err(&["remove", unmanaged.to_str().unwrap()]);
+    let out = env.run_err(&["remove", unmanaged.to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Path not managed by dotty"),
+        "expected 'Path not managed by dotty' error:\n{}",
+        stderr
+    );
 }
 
 #[test]
