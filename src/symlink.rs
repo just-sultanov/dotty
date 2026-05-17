@@ -13,11 +13,33 @@ pub fn is_symlink(path: &Path) -> bool {
 
 /// Create a symlink at `link` pointing to `target`.
 ///
-/// Uses `symlink_rs::symlink_file` for cross-platform support:
-/// on Unix this is equivalent to `std::os::unix::fs::symlink`,
-/// on Windows it calls `std::os::windows::fs::symlink_file`.
+/// Uses `symlink_rs` for cross-platform support:
+/// - On Unix, this is equivalent to `std::os::unix::fs::symlink` (no distinction
+///   between file and directory symlinks).
+/// - On Windows, `symlink_file` is used for file targets and `symlink_dir`
+///   (junction) for directory targets. Windows requires this distinction:
+///   `symlink_file` fails when the target is a directory, and `symlink_dir`
+///   creates a reparse point (junction) that works for directories.
+///
+/// When the target does not yet exist, a file symlink is created as the default.
 pub fn create_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-    symlink_rs::symlink_file(target, link)
+    // On Windows, directory symlinks require `symlink_dir` (junctions).
+    // `symlink_file` silently fails or errors when the target is a directory.
+    // On Unix, `symlink_file` handles both files and directories transparently,
+    // so we only need the platform-specific branch for Windows.
+    #[cfg(windows)]
+    {
+        let target_is_dir = target.is_dir();
+        if target_is_dir {
+            symlink_rs::symlink_dir(target, link)
+        } else {
+            symlink_rs::symlink_file(target, link)
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        symlink_rs::symlink_file(target, link)
+    }
 }
 
 /// Check if creating a symlink at `link` pointing to `target` would create
@@ -157,5 +179,52 @@ mod tests {
         fs::write(&target, "content").unwrap();
 
         assert!(!would_be_circular(&target, &link));
+    }
+
+    /// Verify that creating a symlink to an existing directory succeeds.
+    ///
+    /// On Unix, `symlink_file` handles directory targets transparently.
+    /// On Windows, this test exercises the `symlink_dir` branch.
+    #[test]
+    #[serial]
+    fn test_create_symlink_to_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let target_dir = dir.path().join("target_dir");
+        let link = dir.path().join("link_to_dir");
+
+        fs::create_dir(&target_dir).unwrap();
+
+        create_symlink(&target_dir, &link).unwrap();
+        assert!(is_symlink(&link));
+        assert_eq!(fs::read_link(&link).unwrap(), target_dir);
+    }
+
+    /// Verify that replacing an existing directory with a symlink succeeds.
+    ///
+    /// This is the core Windows bug scenario: when the link path is already a
+    /// real directory, it must be removed before the symlink can be created.
+    /// On Windows, the replacement symlink must use `symlink_dir` (junction)
+    /// because the target is a directory.
+    #[test]
+    #[serial]
+    fn test_create_symlink_replaces_existing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let target_dir = dir.path().join("target_dir");
+        let link = dir.path().join("link_to_dir");
+
+        // Create a real directory at the link location
+        fs::create_dir(&link).unwrap();
+        assert!(link.is_dir());
+        assert!(!is_symlink(&link));
+
+        // Create the actual target directory
+        fs::create_dir(&target_dir).unwrap();
+
+        // Remove the existing directory and create symlink
+        fs::remove_dir_all(&link).unwrap();
+        create_symlink(&target_dir, &link).unwrap();
+
+        assert!(is_symlink(&link));
+        assert_eq!(fs::read_link(&link).unwrap(), target_dir);
     }
 }

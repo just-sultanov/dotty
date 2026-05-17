@@ -747,6 +747,37 @@ mod tests {
         assert_eq!(fs::read_link(&link).unwrap(), target2);
     }
 
+    /// Verify that CreateSymlink replaces an existing directory with a symlink.
+    ///
+    /// This tests the Windows bug scenario where a real directory exists at the
+    /// link path and must be replaced with a symlink to a directory target.
+    /// On Windows, this requires `symlink_dir` (junction) instead of `symlink_file`.
+    #[test]
+    fn test_create_symlink_replaces_existing_directory_with_dir_target() {
+        let (_dir, base) = setup();
+        let target_dir = base.join("target_dir");
+        let link = base.join("link_to_dir");
+
+        // Create a real directory at the link location
+        fs::create_dir(&link).unwrap();
+        assert!(link.is_dir());
+        assert!(!is_symlink(&link));
+
+        // Create the actual target directory
+        fs::create_dir(&target_dir).unwrap();
+
+        // CreateSymlink should remove the existing directory and create a symlink
+        Action::CreateSymlink {
+            target: target_dir.clone(),
+            link: link.clone(),
+        }
+        .execute(&dummy_repo_path())
+        .unwrap();
+
+        assert!(is_symlink(&link));
+        assert_eq!(fs::read_link(&link).unwrap(), target_dir);
+    }
+
     #[test]
     fn test_rollback_create_dir() {
         let (_dir, base) = setup();
