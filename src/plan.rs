@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
+use indicatif::ProgressBar;
+
 /// Maximum number of paths to show in `GitAdd` action display.
 const GIT_ADD_MAX_SHOWN: usize = 3;
 
@@ -217,22 +219,47 @@ pub(crate) fn execute_plan(
 
     let mut completed: Vec<usize> = Vec::new();
     let check = crate::symbols::check();
+    let use_progress_bar = plan.actions.len() > 20;
+    let mut pb: Option<ProgressBar> = if use_progress_bar {
+        Some(ProgressBar::new(plan.actions.len() as u64))
+    } else {
+        None
+    };
 
     for (i, action) in plan.actions.iter().enumerate() {
         trace!("executing action {}: {}", i + 1, action);
-        print!("  {}. {} ... ", i + 1, action);
+        if use_progress_bar {
+            if let Some(ref bar) = pb {
+                bar.set_message(format!("{action}"));
+            }
+        } else {
+            print!("  {}. {} ... ", i + 1, action);
+        }
         match action.execute(&plan.repo_path) {
             Ok(()) => {
-                println!("{check}");
+                if use_progress_bar {
+                    if let Some(ref bar) = pb {
+                        bar.inc(1);
+                    }
+                } else {
+                    println!("{check}");
+                }
                 completed.push(i);
             }
             Err(e) => {
                 warn!("action {} failed: {}", i + 1, e);
+                if use_progress_bar && let Some(ref bar) = pb {
+                    bar.finish();
+                }
                 println!("FAILED: {e}");
                 rollback_completed(plan, &completed)?;
                 return Err(e);
             }
         }
+    }
+
+    if use_progress_bar && let Some(bar) = pb.take() {
+        bar.finish_and_clear();
     }
 
     // All actions succeeded — clear pending plan
@@ -1092,5 +1119,50 @@ mod tests {
         // Dry run should not create pending plan file
         assert!(!state.join("pending_plan.json").exists());
         assert!(!base.join("should_not_exist").exists());
+    }
+
+    #[test]
+    fn test_execute_plan_with_many_actions_uses_progress_bar() {
+        let (_dir, base) = setup();
+        let state = base.join("state");
+        fs::create_dir_all(&state).unwrap();
+
+        let mut plan = Plan::new(&base);
+        // Add 25 actions (>20 threshold) to trigger progress bar path
+        for i in 0..25 {
+            plan.add(Action::CreateDir {
+                path: base.join(format!("dir_{i}")),
+            });
+        }
+
+        execute_plan(&plan, false, &state).unwrap();
+
+        // All directories should be created
+        for i in 0..25 {
+            assert!(base.join(format!("dir_{i}")).is_dir());
+        }
+        // Pending plan should be cleared after success
+        assert!(!state.join("pending_plan.json").exists());
+    }
+
+    #[test]
+    fn test_execute_plan_with_exactly_20_actions_no_progress_bar() {
+        let (_dir, base) = setup();
+        let state = base.join("state");
+        fs::create_dir_all(&state).unwrap();
+
+        let mut plan = Plan::new(&base);
+        // Exactly 20 actions — at the threshold, should NOT use progress bar
+        for i in 0..20 {
+            plan.add(Action::CreateDir {
+                path: base.join(format!("dir_{i}")),
+            });
+        }
+
+        execute_plan(&plan, false, &state).unwrap();
+
+        for i in 0..20 {
+            assert!(base.join(format!("dir_{i}")).is_dir());
+        }
     }
 }
