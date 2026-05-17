@@ -1,3 +1,6 @@
+#![allow(missing_docs)]
+//! Build script — sets compile-time environment variables for version info.
+
 use std::process::Command;
 
 fn main() {

@@ -37,6 +37,7 @@ tempfile = "3"
 [lints.rust]
 unused = "warn"
 dead_code = "warn"
+missing_docs = "warn"
 
 [lints.clippy]
 disallowed_methods = "warn"

@@ -56,6 +56,7 @@ impl Cli {
     }
 }
 
+/// Top-level CLI subcommands.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Bootstrap a new repository or clone an existing one
@@ -156,6 +157,7 @@ pub enum Commands {
     },
 }
 
+/// Subcommands for the `config` command.
 #[derive(Subcommand, Debug)]
 pub enum ConfigCommands {
     /// Set the current machine name

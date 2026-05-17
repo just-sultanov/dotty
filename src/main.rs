@@ -1,3 +1,8 @@
+//! Dotty — a minimal dotfiles manager for multiple machines.
+//!
+//! Config files are organized by priority tiers (`base/`, `<platform>/`, `<machine>/`)
+//! and linked to their real locations via file-level symlinks.
+
 mod backups;
 mod cli;
 mod commands;

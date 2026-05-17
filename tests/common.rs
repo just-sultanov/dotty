@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Shared helpers for integration tests.
 //!
 //! Each test gets its own isolated temp directory for both the repo
