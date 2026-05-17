@@ -523,6 +523,10 @@ pub(crate) fn save_pending_plan(plan: &Plan, state_path: &Path) -> Result<(), Do
 /// Load a pending plan from disk, if one exists.
 ///
 /// Returns `Ok(None)` if no pending plan file exists.
+///
+/// **Integrity validation:** After deserializing the plan, checks that the
+/// repository path still exists and is a valid git repository. This prevents
+/// confusing errors during recovery when the repo has been moved or deleted.
 pub(crate) fn load_pending_plan(state_path: &Path) -> Result<Option<Plan>, DottyError> {
     let path = pending_plan_path(state_path);
     if !path.exists() {
@@ -530,6 +534,24 @@ pub(crate) fn load_pending_plan(state_path: &Path) -> Result<Option<Plan>, Dotty
     }
     let content = fs::read_to_string(&path)?;
     let pending: PendingPlan = serde_json::from_str(&content)?;
+
+    // Validate that the repository still exists and is a valid git repo.
+    // This catches stale plans from moved/deleted repositories early,
+    // so the user gets a clear error instead of a cryptic IO failure during recovery.
+    let repo_path = PathBuf::from(&pending.repo_path);
+    if !repo_path.is_dir() {
+        return Err(DottyError::PendingPlanInvalid {
+            reason: format!("repository no longer exists at {}", repo_path.display()),
+            source: None,
+        });
+    }
+    if !repo_path.join(".git").exists() {
+        return Err(DottyError::PendingPlanInvalid {
+            reason: format!("path is not a git repository: {}", repo_path.display()),
+            source: None,
+        });
+    }
+
     debug!("loaded pending plan from {}", path.display());
     Ok(Some(pending.to_plan()))
 }
@@ -614,6 +636,9 @@ mod tests {
         let dir = test_dir();
         let path = dir.path().to_path_buf();
         fs::create_dir_all(&path).unwrap();
+        // Create .git so the temp dir is treated as a valid git repository
+        // by pending plan integrity validation.
+        fs::create_dir_all(path.join(".git")).unwrap();
         (dir, path)
     }
 
@@ -1195,5 +1220,94 @@ mod tests {
         for i in 0..20 {
             assert!(base.join(format!("dir_{i}")).is_dir());
         }
+    }
+
+    // -- pending plan integrity validation tests --
+
+    #[test]
+    fn test_load_pending_plan_validates_repo_exists() {
+        let (_dir, base) = setup();
+        let state = base.join("state");
+        fs::create_dir_all(&state).unwrap();
+
+        // Create a separate repo directory (not under base which has .git)
+        let outer = tempfile::tempdir().unwrap();
+        let repo_dir = outer.path().join("repo");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::create_dir_all(repo_dir.join(".git")).unwrap();
+
+        let mut plan = Plan::new(&repo_dir);
+        plan.add(Action::CreateDir {
+            path: repo_dir.join("dir"),
+        });
+        save_pending_plan(&plan, &state).unwrap();
+
+        // Should load successfully (repo + .git exist)
+        let loaded = load_pending_plan(&state).unwrap();
+        assert!(loaded.is_some());
+
+        // Now remove the repo directory
+        fs::remove_dir_all(&repo_dir).unwrap();
+
+        // Should return PendingPlanInvalid
+        let result = load_pending_plan(&state);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::PendingPlanInvalid { reason, .. } => {
+                assert!(reason.contains("no longer exists"));
+            }
+            other => panic!("expected PendingPlanInvalid, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn test_load_pending_plan_validates_git_directory() {
+        let (_dir, base) = setup();
+        let state = base.join("state");
+        fs::create_dir_all(&state).unwrap();
+
+        // Create a directory that exists but is NOT a git repo
+        let fake_repo = base.join("fake_repo");
+        fs::create_dir_all(&fake_repo).unwrap();
+        // No .git directory
+
+        let mut plan = Plan::new(&fake_repo);
+        plan.add(Action::CreateDir {
+            path: fake_repo.join("dir"),
+        });
+        save_pending_plan(&plan, &state).unwrap();
+
+        // Should return PendingPlanInvalid because .git is missing
+        let result = load_pending_plan(&state);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::PendingPlanInvalid { reason, .. } => {
+                assert!(reason.contains("not a git repository"));
+            }
+            other => panic!("expected PendingPlanInvalid, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn test_load_pending_plan_valid_with_git_dir() {
+        let (_dir, base) = setup();
+        let state = base.join("state");
+        fs::create_dir_all(&state).unwrap();
+
+        // Create a valid git repo
+        let repo = base.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(repo.join(".git")).unwrap();
+
+        let mut plan = Plan::new(&repo);
+        plan.add(Action::CreateDir {
+            path: repo.join("dir"),
+        });
+        save_pending_plan(&plan, &state).unwrap();
+
+        // Should load successfully
+        let loaded = load_pending_plan(&state).unwrap();
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap().repo_path, repo);
     }
 }

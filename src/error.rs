@@ -67,6 +67,12 @@ pub(crate) enum DottyError {
 
     #[error("user cancelled operation")]
     Cancelled,
+
+    #[error("pending plan is invalid: {reason}")]
+    PendingPlanInvalid {
+        reason: String,
+        source: Option<std::io::Error>,
+    },
 }
 
 #[cfg(test)]
@@ -203,5 +209,16 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("/tmp/test"));
         assert!(msg.contains("outside home directory"));
+    }
+
+    #[test]
+    fn test_pending_plan_invalid_message() {
+        let err = DottyError::PendingPlanInvalid {
+            reason: "repository no longer exists at /path/to/repo".into(),
+            source: None,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("pending plan is invalid"));
+        assert!(msg.contains("repository no longer exists at /path/to/repo"));
     }
 }

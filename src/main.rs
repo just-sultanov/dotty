@@ -67,9 +67,34 @@ fn main() -> Result<()> {
 /// Check for a pending plan from a previously interrupted operation.
 ///
 /// If found, offers the user to rollback, discard, or abort the current command.
+/// If the pending plan is invalid (stale repo), offers to discard it.
 fn check_pending_plan() -> Result<()> {
     let state_path = paths::resolve_state_path()?;
-    let pending = plan::load_pending_plan(&state_path)?;
+    let pending = match plan::load_pending_plan(&state_path) {
+        Ok(p) => p,
+        Err(error::DottyError::PendingPlanInvalid { reason, .. }) => {
+            // Stale plan: offer to discard it
+            eprintln!("Pending plan is invalid: {reason}");
+            let options = ["Discard", "Ignore"];
+            let choice = prompt::prompt_select("What would you like to do?", &options)?;
+            match choice {
+                0 => {
+                    // Discard the stale plan file
+                    if let Err(e) = plan::clear_pending_plan(&state_path) {
+                        eprintln!("Warning: could not discard stale plan: {e}");
+                    } else {
+                        println!("Stale pending plan discarded.");
+                    }
+                }
+                1 => {
+                    // Ignore: leave the file as-is
+                }
+                _ => unreachable!(),
+            }
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     let Some(plan) = pending else {
         return Ok(()); // No pending plan
