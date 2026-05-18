@@ -109,12 +109,16 @@ pub(crate) fn git_commit(dir: &Path, message: &str) -> Result<(), DottyError> {
     Ok(())
 }
 
-/// List all tracked files in the repository (one per line).
+/// List all tracked files in the repository.
+///
+/// Uses `-z` for null-delimited output so that filenames containing spaces,
+/// newlines, or non-ASCII characters are parsed correctly without git's quoted
+/// output mode interfering.
 pub(crate) fn git_ls_files(dir: &Path) -> Result<Vec<String>, DottyError> {
-    let output = git_run(dir, &["ls-files"])?;
+    let output = git_run(dir, &["ls-files", "-z"])?;
     Ok(output
-        .lines()
-        .filter(|l| !l.is_empty())
+        .split('\0')
+        .filter(|s| !s.is_empty())
         .map(String::from)
         .collect())
 }
@@ -209,6 +213,50 @@ mod tests {
             .output()
             .unwrap();
         assert!(git_check_identity(repo.path()).is_ok());
+    }
+
+    #[test]
+    fn git_ls_files_handles_special_characters() {
+        let repo = tempdir().unwrap();
+        // Initialize repo
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["init"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .unwrap();
+
+        // Create files with special characters: spaces, non-ASCII
+        fs::write(repo.path().join("my file.txt"), "spaces").unwrap();
+        fs::write(repo.path().join("café.txt"), "non-ascii").unwrap();
+        fs::write(repo.path().join("normal.txt"), "normal").unwrap();
+
+        // Stage and commit
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["commit", "-m", "init"])
+            .output()
+            .unwrap();
+
+        let files = git_ls_files(repo.path()).unwrap();
+        assert!(files.contains(&"my file.txt".to_string()));
+        assert!(files.contains(&"café.txt".to_string()));
+        assert!(files.contains(&"normal.txt".to_string()));
+        assert_eq!(files.len(), 3);
     }
 
     #[test]
