@@ -84,8 +84,27 @@ pub(crate) fn git_add(dir: &Path, paths: &[PathBuf]) -> Result<(), DottyError> {
     Ok(())
 }
 
+/// Pre-flight check: verify git identity (user.name / user.email) is configured.
+///
+/// Returns a descriptive error with actionable guidance if either setting is missing.
+/// This prevents `git commit` from failing with exit code 127 on fresh machines.
+fn git_check_identity(dir: &Path) -> Result<(), DottyError> {
+    let name = git_run(dir, &["config", "user.name"]);
+    let email = git_run(dir, &["config", "user.email"]);
+
+    match (name, email) {
+        (Ok(n), Ok(e)) if !n.trim().is_empty() && !e.trim().is_empty() => Ok(()),
+        _ => Err(DottyError::Git {
+            exit_code: 127,
+            stderr: "Git identity is not configured. Run `git config user.name 'Your Name'` and `git config user.email 'you@example.com'`".into(),
+        }),
+    }
+}
+
 /// Commit staged changes with the given message.
 pub(crate) fn git_commit(dir: &Path, message: &str) -> Result<(), DottyError> {
+    // Pre-flight: fail fast if git identity is missing, before attempting the commit.
+    git_check_identity(dir)?;
     git_run(dir, &["commit", "-m", message])?;
     Ok(())
 }
@@ -122,4 +141,95 @@ pub(crate) fn git_reset(dir: &Path, paths: &[&str]) -> Result<(), DottyError> {
 pub(crate) fn git_reset_soft_head(dir: &Path) -> Result<(), DottyError> {
     git_run(dir, &["reset", "--soft", "HEAD~1"])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::process::Command;
+
+    use tempfile::tempdir;
+
+    use super::*;
+
+    /// Helper: create a git repo with empty local identity to shadow global config.
+    ///
+    /// Local config takes precedence over global, so setting empty values ensures
+    /// `git config user.name` returns empty regardless of global settings.
+    fn create_repo_without_identity() -> tempfile::TempDir {
+        let dir = tempdir().unwrap();
+        Command::new("git")
+            .current_dir(dir.path())
+            .args(["init"])
+            .output()
+            .unwrap();
+        // Set empty local values to shadow any global config
+        Command::new("git")
+            .current_dir(dir.path())
+            .args(["config", "--local", "user.name", ""])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(dir.path())
+            .args(["config", "--local", "user.email", ""])
+            .output()
+            .unwrap();
+        dir
+    }
+
+    #[test]
+    fn git_check_identity_rejects_missing_identity() {
+        let repo = create_repo_without_identity();
+        let result = git_check_identity(repo.path());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            DottyError::Git { exit_code, stderr } => {
+                assert_eq!(exit_code, 127);
+                assert!(stderr.contains("Git identity is not configured"));
+                assert!(stderr.contains("git config user.name"));
+                assert!(stderr.contains("git config user.email"));
+            }
+            _ => panic!("expected DottyError::Git, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn git_check_identity_accepts_valid_identity() {
+        let repo = create_repo_without_identity();
+        // Override with valid local identity
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["config", "--local", "user.name", "Test User"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["config", "--local", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+        assert!(git_check_identity(repo.path()).is_ok());
+    }
+
+    #[test]
+    fn git_commit_fails_before_commit_when_identity_missing() {
+        let repo = create_repo_without_identity();
+        // Create a file so there's something to commit
+        fs::write(repo.path().join("test.txt"), "hello").unwrap();
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["add", "test.txt"])
+            .output()
+            .unwrap();
+        let result = git_commit(repo.path(), "test commit");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            DottyError::Git { exit_code, stderr } => {
+                assert_eq!(exit_code, 127);
+                assert!(stderr.contains("Git identity is not configured"));
+            }
+            _ => panic!("expected DottyError::Git, got {err:?}"),
+        }
+    }
 }
