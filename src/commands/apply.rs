@@ -134,6 +134,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 plan.add(Action::CreateSymlink {
                     target: repo_file.clone(),
                     link: target.clone(),
+                    backup_path: None,
                 });
                 TargetState::CircularSymlink
             }
@@ -146,6 +147,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 plan.add(Action::CreateSymlink {
                     target: repo_file.clone(),
                     link: target.clone(),
+                    backup_path: None,
                 });
                 TargetState::NeedsSymlink
             }
@@ -166,11 +168,12 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 };
                 plan.add(Action::Backup {
                     source: target.clone(),
-                    dest: backup_dest,
+                    dest: backup_dest.clone(),
                 });
                 plan.add(Action::CreateSymlink {
                     target: repo_file.clone(),
                     link: target.clone(),
+                    backup_path: Some(backup_dest),
                 });
                 TargetState::NeedsBackup
             }

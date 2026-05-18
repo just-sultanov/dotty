@@ -20,14 +20,38 @@ use crate::symlink::{self, is_symlink};
 /// Each action can be executed and, if needed, rolled back.
 #[derive(Debug, Clone)]
 pub(crate) enum Action {
-    CreateDir { path: PathBuf },
-    Backup { source: PathBuf, dest: PathBuf },
-    CopyFile { source: PathBuf, dest: PathBuf },
-    CreateSymlink { target: PathBuf, link: PathBuf },
-    RemoveFile { path: PathBuf },
-    RemoveSymlink { path: PathBuf },
-    GitAdd { paths: Vec<PathBuf> },
-    GitCommit { message: String },
+    CreateDir {
+        path: PathBuf,
+    },
+    Backup {
+        source: PathBuf,
+        dest: PathBuf,
+    },
+    CopyFile {
+        source: PathBuf,
+        dest: PathBuf,
+    },
+    CreateSymlink {
+        target: PathBuf,
+        link: PathBuf,
+        backup_path: Option<PathBuf>,
+    },
+    RemoveFile {
+        path: PathBuf,
+    },
+    RemoveSymlink {
+        path: PathBuf,
+    },
+    RestoreBackup {
+        source: PathBuf,
+        dest: PathBuf,
+    },
+    GitAdd {
+        paths: Vec<PathBuf>,
+    },
+    GitCommit {
+        message: String,
+    },
 }
 
 impl fmt::Display for Action {
@@ -40,11 +64,19 @@ impl fmt::Display for Action {
             Action::CopyFile { source, dest } => {
                 write!(f, "copy file     {} → {}", source.display(), dest.display())
             }
-            Action::CreateSymlink { target, link } => {
+            Action::CreateSymlink { target, link, .. } => {
                 write!(f, "create link   {} → {}", link.display(), target.display())
             }
             Action::RemoveFile { path } => write!(f, "remove file   {}", path.display()),
             Action::RemoveSymlink { path } => write!(f, "remove link   {}", path.display()),
+            Action::RestoreBackup { source, dest } => {
+                write!(
+                    f,
+                    "restore backup {} → {}",
+                    source.display(),
+                    dest.display()
+                )
+            }
             Action::GitAdd { paths } => {
                 if paths.is_empty() {
                     return write!(f, "git add       (empty)");
@@ -91,7 +123,7 @@ impl Action {
                 // copy_file_dereference already returns DottyError
                 copy_file_dereference(source, dest)?;
             }
-            Action::CreateSymlink { target, link } => {
+            Action::CreateSymlink { target, link, .. } => {
                 let parent = link.parent();
                 if let Some(p) = parent {
                     fs::create_dir_all(p).map_err(|e| io_error_with_path(e, p))?;
@@ -127,6 +159,17 @@ impl Action {
                     fs::remove_file(path).map_err(|e| io_error_with_path(e, path))?;
                 }
             }
+            Action::RestoreBackup { source, dest } => {
+                // Remove the symlink at the destination (if present), then copy
+                // the backup file back to restore the original content.
+                if is_symlink(dest) {
+                    fs::remove_file(dest).map_err(|e| io_error_with_path(e, dest))?;
+                }
+                if let Some(parent) = dest.parent() {
+                    fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
+                }
+                copy_file_dereference(source, dest)?;
+            }
             Action::GitAdd { paths } => git::git_add(repo_path, paths)?,
             Action::GitCommit { message } => git::git_commit(repo_path, message)?,
         }
@@ -146,11 +189,35 @@ impl Action {
             Action::CreateDir { path } => Some(Action::RemoveFile { path: path.clone() }),
             Action::Backup { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
             Action::CopyFile { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
-            Action::CreateSymlink { link, .. } => {
-                Some(Action::RemoveSymlink { path: link.clone() })
+            Action::CreateSymlink {
+                link, backup_path, ..
+            } => {
+                // If a backup exists at the recorded path, restore it first,
+                // then remove the symlink. This ensures the original file is
+                // back at its expected location after a failed plan.
+                if let Some(backup) = backup_path {
+                    if backup.exists() {
+                        // Restore backup → original location, then remove symlink
+                        Some(Action::RestoreBackup {
+                            source: backup.clone(),
+                            dest: link.clone(),
+                        })
+                    } else {
+                        // Backup file missing — just remove the symlink
+                        Some(Action::RemoveSymlink { path: link.clone() })
+                    }
+                } else {
+                    // No backup was recorded — just remove the symlink
+                    Some(Action::RemoveSymlink { path: link.clone() })
+                }
             }
             Action::RemoveFile { path: _ } => None,
             Action::RemoveSymlink { path: _, .. } => None,
+            Action::RestoreBackup { dest, .. } => {
+                // Rolling back a restore means removing the restored file,
+                // returning the path to its pre-restore state (no file).
+                Some(Action::RemoveFile { path: dest.clone() })
+            }
             Action::GitAdd { .. } => None,
             Action::GitCommit { .. } => None,
         }
@@ -387,14 +454,38 @@ const PENDING_PLAN_FILE: &str = "pending_plan.json";
 /// Serializable action (uses `String` for paths).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum SerializableAction {
-    CreateDir { path: String },
-    Backup { source: String, dest: String },
-    CopyFile { source: String, dest: String },
-    CreateSymlink { target: String, link: String },
-    RemoveFile { path: String },
-    RemoveSymlink { path: String },
-    GitAdd { paths: Vec<String> },
-    GitCommit { message: String },
+    CreateDir {
+        path: String,
+    },
+    Backup {
+        source: String,
+        dest: String,
+    },
+    CopyFile {
+        source: String,
+        dest: String,
+    },
+    CreateSymlink {
+        target: String,
+        link: String,
+        backup_path: Option<String>,
+    },
+    RemoveFile {
+        path: String,
+    },
+    RemoveSymlink {
+        path: String,
+    },
+    RestoreBackup {
+        source: String,
+        dest: String,
+    },
+    GitAdd {
+        paths: Vec<String>,
+    },
+    GitCommit {
+        message: String,
+    },
 }
 
 impl From<&Action> for SerializableAction {
@@ -411,15 +502,26 @@ impl From<&Action> for SerializableAction {
                 source: source.to_string_lossy().to_string(),
                 dest: dest.to_string_lossy().to_string(),
             },
-            Action::CreateSymlink { target, link } => SerializableAction::CreateSymlink {
+            Action::CreateSymlink {
+                target,
+                link,
+                backup_path,
+            } => SerializableAction::CreateSymlink {
                 target: target.to_string_lossy().to_string(),
                 link: link.to_string_lossy().to_string(),
+                backup_path: backup_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
             },
             Action::RemoveFile { path } => SerializableAction::RemoveFile {
                 path: path.to_string_lossy().to_string(),
             },
             Action::RemoveSymlink { path } => SerializableAction::RemoveSymlink {
                 path: path.to_string_lossy().to_string(),
+            },
+            Action::RestoreBackup { source, dest } => SerializableAction::RestoreBackup {
+                source: source.to_string_lossy().to_string(),
+                dest: dest.to_string_lossy().to_string(),
             },
             Action::GitAdd { paths } => SerializableAction::GitAdd {
                 paths: paths
@@ -449,15 +551,24 @@ impl SerializableAction {
                 source: PathBuf::from(source),
                 dest: PathBuf::from(dest),
             },
-            SerializableAction::CreateSymlink { target, link } => Action::CreateSymlink {
+            SerializableAction::CreateSymlink {
+                target,
+                link,
+                backup_path,
+            } => Action::CreateSymlink {
                 target: PathBuf::from(target),
                 link: PathBuf::from(link),
+                backup_path: backup_path.map(PathBuf::from),
             },
             SerializableAction::RemoveFile { path } => Action::RemoveFile {
                 path: PathBuf::from(path),
             },
             SerializableAction::RemoveSymlink { path } => Action::RemoveSymlink {
                 path: PathBuf::from(path),
+            },
+            SerializableAction::RestoreBackup { source, dest } => Action::RestoreBackup {
+                source: PathBuf::from(source),
+                dest: PathBuf::from(dest),
             },
             SerializableAction::GitAdd { paths } => Action::GitAdd {
                 paths: paths.into_iter().map(PathBuf::from).collect(),
@@ -738,6 +849,7 @@ mod tests {
         let action = Action::CreateSymlink {
             target: target.clone(),
             link: link.clone(),
+            backup_path: None,
         };
         action.execute(&dummy_repo_path()).unwrap();
         assert!(is_symlink(&link));
@@ -757,6 +869,7 @@ mod tests {
         Action::CreateSymlink {
             target: target1.clone(),
             link: link.clone(),
+            backup_path: None,
         }
         .execute(&dummy_repo_path())
         .unwrap();
@@ -764,6 +877,7 @@ mod tests {
         Action::CreateSymlink {
             target: target2.clone(),
             link: link.clone(),
+            backup_path: None,
         }
         .execute(&dummy_repo_path())
         .unwrap();
@@ -795,6 +909,7 @@ mod tests {
         Action::CreateSymlink {
             target: target_dir.clone(),
             link: link.clone(),
+            backup_path: None,
         }
         .execute(&dummy_repo_path())
         .unwrap();
@@ -848,6 +963,7 @@ mod tests {
         let action = Action::CreateSymlink {
             target,
             link: link.clone(),
+            backup_path: None,
         };
         action.execute(&dummy_repo_path()).unwrap();
         assert!(is_symlink(&link));
@@ -1107,6 +1223,7 @@ mod tests {
         plan.add(Action::CreateSymlink {
             target: base.join("target"),
             link: base.join("link"),
+            backup_path: None,
         });
         plan.add(Action::RemoveFile {
             path: base.join("remove.txt"),
@@ -1309,5 +1426,189 @@ mod tests {
         let loaded = load_pending_plan(&state).unwrap();
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap().repo_path, repo);
+    }
+
+    // -- CreateSymlink rollback with backup restoration tests --
+
+    /// Test that rolling back CreateSymlink restores the original file
+    /// from backup when a backup path is provided and the backup exists.
+    #[test]
+    fn test_rollback_symlink_restores_backup_when_exists() {
+        let (_dir, base) = setup();
+        let target = base.join("repo_file.txt");
+        let link = base.join("link");
+        let backup = base.join("backups/original.txt");
+
+        // Create the repo file (symlink target)
+        fs::write(&target, "repo content").unwrap();
+        // Create the backup (original file content saved before symlink)
+        fs::create_dir_all(backup.parent().unwrap()).unwrap();
+        fs::write(&backup, "original content").unwrap();
+
+        let action = Action::CreateSymlink {
+            target: target.clone(),
+            link: link.clone(),
+            backup_path: Some(backup.clone()),
+        };
+
+        // Execute: creates symlink at link → target
+        action.execute(&dummy_repo_path()).unwrap();
+        assert!(is_symlink(&link));
+        assert_eq!(fs::read_link(&link).unwrap(), target);
+
+        // Rollback: should restore backup to link location
+        let rollback = action.rollback().unwrap();
+        rollback.execute(&dummy_repo_path()).unwrap();
+
+        // Symlink should be gone, original content restored
+        assert!(!is_symlink(&link));
+        assert!(link.exists());
+        assert_eq!(fs::read_to_string(&link).unwrap(), "original content");
+    }
+
+    /// Test that rolling back CreateSymlink without a backup simply removes
+    /// the symlink (no file restoration).
+    #[test]
+    fn test_rollback_symlink_no_backup_removes_symlink() {
+        let (_dir, base) = setup();
+        let target = base.join("repo_file.txt");
+        let link = base.join("link");
+
+        fs::write(&target, "repo content").unwrap();
+
+        let action = Action::CreateSymlink {
+            target: target.clone(),
+            link: link.clone(),
+            backup_path: None, // No backup recorded
+        };
+
+        // Execute: creates symlink
+        action.execute(&dummy_repo_path()).unwrap();
+        assert!(is_symlink(&link));
+
+        // Rollback: should just remove the symlink
+        let rollback = action.rollback().unwrap();
+        rollback.execute(&dummy_repo_path()).unwrap();
+
+        // Symlink removed, no file at link location
+        assert!(!is_symlink(&link));
+        assert!(!link.exists());
+    }
+
+    /// Test that rolling back CreateSymlink when backup path is provided
+    /// but the backup file is missing falls back to symlink removal only.
+    #[test]
+    fn test_rollback_symlink_backup_missing_falls_back_to_removal() {
+        let (_dir, base) = setup();
+        let target = base.join("repo_file.txt");
+        let link = base.join("link");
+        let backup = base.join("backups/missing.txt"); // doesn't exist
+
+        fs::write(&target, "repo content").unwrap();
+
+        let action = Action::CreateSymlink {
+            target: target.clone(),
+            link: link.clone(),
+            backup_path: Some(backup), // Backup path recorded but file missing
+        };
+
+        // Execute: creates symlink
+        action.execute(&dummy_repo_path()).unwrap();
+        assert!(is_symlink(&link));
+
+        // Rollback: backup doesn't exist, should fall back to RemoveSymlink
+        let rollback = action.rollback().unwrap();
+        rollback.execute(&dummy_repo_path()).unwrap();
+
+        // Symlink removed, no file at link location
+        assert!(!is_symlink(&link));
+        assert!(!link.exists());
+    }
+
+    /// Test RestoreBackup action: copies backup file to destination,
+    /// removing any existing symlink first.
+    #[test]
+    fn test_restore_backup_action() {
+        let (_dir, base) = setup();
+        let source = base.join("backups/original.txt");
+        let dest = base.join("restored.txt");
+
+        // Create the backup file
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, "original content").unwrap();
+
+        // Create a symlink at dest (simulating the state before rollback)
+        let dummy_target = base.join("dummy");
+        fs::write(&dummy_target, "dummy").unwrap();
+        crate::symlink::create_symlink(&dummy_target, &dest).unwrap();
+        assert!(is_symlink(&dest));
+
+        // Execute RestoreBackup
+        let action = Action::RestoreBackup {
+            source: source.clone(),
+            dest: dest.clone(),
+        };
+        action.execute(&dummy_repo_path()).unwrap();
+
+        // Symlink removed, backup content restored
+        assert!(!is_symlink(&dest));
+        assert!(dest.exists());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "original content");
+    }
+
+    /// Test RestoreBackup rollback: removes the restored file.
+    #[test]
+    fn test_rollback_restore_backup() {
+        let (_dir, base) = setup();
+        let source = base.join("backups/original.txt");
+        let dest = base.join("restored.txt");
+
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, "original content").unwrap();
+
+        let action = Action::RestoreBackup {
+            source,
+            dest: dest.clone(),
+        };
+        action.execute(&dummy_repo_path()).unwrap();
+        assert!(dest.exists());
+
+        // Rollback of RestoreBackup removes the restored file
+        let rollback = action.rollback().unwrap();
+        rollback.execute(&dummy_repo_path()).unwrap();
+        assert!(!dest.exists());
+    }
+
+    /// Test that CreateSymlink with backup_path roundtrips through
+    /// pending plan serialization correctly.
+    #[test]
+    fn test_pending_plan_roundtrip_symlink_with_backup() {
+        let (_dir, base) = setup();
+        let state = base.join("state");
+        fs::create_dir_all(&state).unwrap();
+
+        let mut plan = Plan::new(&base);
+        plan.add(Action::CreateSymlink {
+            target: base.join("repo_file"),
+            link: base.join("link"),
+            backup_path: Some(base.join("backups/original.txt")),
+        });
+
+        save_pending_plan(&plan, &state).unwrap();
+        let loaded = load_pending_plan(&state).unwrap().unwrap();
+
+        assert_eq!(loaded.actions.len(), 1);
+        match &loaded.actions[0] {
+            Action::CreateSymlink { backup_path, .. } => {
+                assert!(backup_path.is_some());
+                assert!(
+                    backup_path
+                        .as_ref()
+                        .unwrap()
+                        .ends_with("backups/original.txt")
+                );
+            }
+            other => panic!("expected CreateSymlink, got {:?}", other),
+        }
     }
 }

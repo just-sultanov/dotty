@@ -204,6 +204,7 @@ pub(crate) fn build_add_plan(input: &AddPlanInput, config: &Config) -> Result<Ad
         plan.add(Action::CreateSymlink {
             target: repo_file.clone(),
             link: target_file.clone(),
+            backup_path: None,
         });
 
         // Track path for git add
