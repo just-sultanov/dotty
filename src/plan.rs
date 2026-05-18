@@ -682,9 +682,12 @@ pub(crate) fn clear_pending_plan(state_path: &Path) -> Result<(), DottyError> {
 // ---------------------------------------------------------------------------
 
 /// Copy a file, dereferencing symlinks (equivalent to `cp -L`).
+///
+/// `fs::copy` streams data and dereferences symlinks on the source side by
+/// default, so this is a drop-in replacement for the previous `fs::read` +
+/// `fs::write` pattern without loading the entire file into memory.
 fn copy_file_dereference(source: &Path, dest: &Path) -> Result<(), DottyError> {
-    let content = fs::read(source)?;
-    fs::write(dest, content)?;
+    fs::copy(source, dest).map(|_| ())?;
     Ok(())
 }
 
