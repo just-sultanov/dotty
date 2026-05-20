@@ -12,6 +12,12 @@
 mod common;
 use common::TestEnv;
 
+/// Escape a path for safe inclusion in a JSON string literal.
+/// Handles backslashes (Windows paths) and double quotes.
+fn json_escape_path(path: &str) -> String {
+    path.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 // ---------------------------------------------------------------------------
 // Helper: write a pending plan file directly (simulates a crash mid-execution)
 // ---------------------------------------------------------------------------
@@ -26,7 +32,7 @@ fn write_pending_plan(state: &std::path::Path, repo_path: &std::path::Path, acti
             "repo_path": "{}",
             "actions": {}
         }}"#,
-        repo_path.display(),
+        json_escape_path(&repo_path.display().to_string()),
         actions
     );
     std::fs::create_dir_all(state).unwrap();
@@ -174,8 +180,8 @@ fn rollback_removes_created_directories() {
                 {{ "CreateDir": {{ "path": "{}" }} }}
             ]
             "#,
-            dir1.display(),
-            dir2.display()
+            json_escape_path(&dir1.display().to_string()),
+            json_escape_path(&dir2.display().to_string())
         ),
     );
 
@@ -224,7 +230,10 @@ fn discard_removes_pending_plan_without_rollback() {
     write_pending_plan(
         &env.state,
         &env.repo,
-        &format!(r#"[{{ "CreateDir": {{ "path": "{}" }} }}]"#, dir.display()),
+        &format!(
+            r#"[{{ "CreateDir": {{ "path": "{}" }} }}]"#,
+            json_escape_path(&dir.display().to_string())
+        ),
     );
 
     // Run dotty with --recovery-action discard to handle the pending plan
@@ -332,13 +341,13 @@ fn pending_plan_with_mixed_actions_parses_correctly() {
                 {{ "GitCommit": {{ "message": "test commit" }} }}
             ]
             "#,
-            home.join(".mixed_dir").display(),
-            home.join(".src").display(),
-            home.join(".dst").display(),
-            home.join(".target").display(),
-            home.join(".link").display(),
-            home.join(".remove").display(),
-            env.repo.join("base/home/.file").display(),
+            json_escape_path(&home.join(".mixed_dir").display().to_string()),
+            json_escape_path(&home.join(".src").display().to_string()),
+            json_escape_path(&home.join(".dst").display().to_string()),
+            json_escape_path(&home.join(".target").display().to_string()),
+            json_escape_path(&home.join(".link").display().to_string()),
+            json_escape_path(&home.join(".remove").display().to_string()),
+            json_escape_path(&env.repo.join("base/home/.file").display().to_string()),
         ),
     );
 
