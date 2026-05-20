@@ -1,5 +1,4 @@
 use indexmap::IndexMap;
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -82,8 +81,10 @@ pub(crate) struct ApplyPlanInput {
     pub repo_path: PathBuf,
     pub state_path: PathBuf,
     pub home: PathBuf,
-    pub merged: HashMap<PathBuf, (String, String)>,
-    pub override_map: HashMap<PathBuf, String>,
+    /// Merged tier map, ordered base → platform → machine.
+    /// IndexMap preserves insertion order for deterministic iteration.
+    pub merged: IndexMap<PathBuf, (String, String)>,
+    pub override_map: IndexMap<PathBuf, String>,
     pub config: Config,
 }
 
@@ -300,12 +301,14 @@ fn canonicalize_path(path: &Path) -> Option<PathBuf> {
 ///
 /// Returns a map from target path → (tier name, repo-relative path).
 /// Higher tiers override lower tiers for the same target path.
+/// Uses `IndexMap` to preserve insertion order (base → platform → machine)
+/// for deterministic iteration during plan building.
 fn merge_tiers(
     tracked_files: &[String],
     machine: &str,
     platform: &Option<String>,
-) -> HashMap<PathBuf, (String, String)> {
-    let mut merged: HashMap<PathBuf, (String, String)> = HashMap::new();
+) -> IndexMap<PathBuf, (String, String)> {
+    let mut merged: IndexMap<PathBuf, (String, String)> = IndexMap::new();
 
     // Process tiers in order: base (lowest) → platform → machine (highest)
     // Later tiers overwrite earlier tiers for the same target path.
@@ -354,8 +357,8 @@ fn build_override_map(
     tracked_files: &[String],
     machine: &Option<String>,
     platform: &Option<String>,
-) -> HashMap<PathBuf, String> {
-    let mut all_tiers: HashMap<PathBuf, Vec<(String, String)>> = HashMap::new();
+) -> IndexMap<PathBuf, String> {
+    let mut all_tiers: IndexMap<PathBuf, Vec<(String, String)>> = IndexMap::new();
 
     // Collect all tiers for each target
     for file in tracked_files {
@@ -372,7 +375,7 @@ fn build_override_map(
     }
 
     // Find overrides: if a target has entries from multiple tiers, the lower ones are overridden
-    let mut overrides: HashMap<PathBuf, String> = HashMap::new();
+    let mut overrides: IndexMap<PathBuf, String> = IndexMap::new();
 
     for (target, entries) in &all_tiers {
         if entries.len() <= 1 {
@@ -708,7 +711,7 @@ mod tests {
         std::fs::write(&repo_file, "content").unwrap();
         crate::symlink::create_symlink(&repo_file, &target).unwrap();
 
-        let mut merged = HashMap::new();
+        let mut merged = IndexMap::new();
         merged.insert(
             target.clone(),
             ("base".to_string(), "base/home/.vimrc".to_string()),
@@ -724,7 +727,7 @@ mod tests {
                 state_path: state.clone(),
                 home: home.clone(),
                 merged,
-                override_map: HashMap::new(),
+                override_map: IndexMap::new(),
                 config,
             };
             let output = build_apply_plan(&input).unwrap();
@@ -754,7 +757,7 @@ mod tests {
         std::fs::write(&repo_file, "content").unwrap();
         // target does not exist — needs symlink
 
-        let mut merged = HashMap::new();
+        let mut merged = IndexMap::new();
         merged.insert(
             target.clone(),
             ("base".to_string(), "base/home/.vimrc".to_string()),
@@ -767,7 +770,7 @@ mod tests {
                 state_path: state.clone(),
                 home: home.clone(),
                 merged,
-                override_map: HashMap::new(),
+                override_map: IndexMap::new(),
                 config,
             };
             let output = build_apply_plan(&input).unwrap();
@@ -797,7 +800,7 @@ mod tests {
         // Create a self-referencing circular symlink at target
         crate::symlink::create_symlink(&target, &target).unwrap();
 
-        let mut merged = HashMap::new();
+        let mut merged = IndexMap::new();
         merged.insert(
             target.clone(),
             ("base".to_string(), "base/home/.vimrc".to_string()),
@@ -810,7 +813,7 @@ mod tests {
                 state_path: state.clone(),
                 home: home.clone(),
                 merged,
-                override_map: HashMap::new(),
+                override_map: IndexMap::new(),
                 config,
             };
             let output = build_apply_plan(&input).unwrap();
@@ -839,7 +842,7 @@ mod tests {
         std::fs::write(&repo_file, "new content").unwrap();
         std::fs::write(&target, "old content").unwrap(); // regular file, not symlink
 
-        let mut merged = HashMap::new();
+        let mut merged = IndexMap::new();
         merged.insert(
             target.clone(),
             ("base".to_string(), "base/home/.vimrc".to_string()),
@@ -852,7 +855,7 @@ mod tests {
                 state_path: state.clone(),
                 home: home.clone(),
                 merged,
-                override_map: HashMap::new(),
+                override_map: IndexMap::new(),
                 config,
             };
             let output = build_apply_plan(&input).unwrap();
@@ -984,7 +987,7 @@ mod tests {
         std::fs::write(&repo_file, "content").unwrap();
         crate::symlink::create_symlink(&repo_file, &target).unwrap();
 
-        let mut merged = HashMap::new();
+        let mut merged = IndexMap::new();
         merged.insert(
             target.clone(),
             ("base".to_string(), "base/home/.vimrc".to_string()),
@@ -1004,7 +1007,7 @@ mod tests {
                 state_path: state.clone(),
                 home: home.clone(),
                 merged,
-                override_map: HashMap::new(),
+                override_map: IndexMap::new(),
                 config,
             };
             let output = build_apply_plan(&input).unwrap();
