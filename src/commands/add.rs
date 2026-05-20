@@ -5,13 +5,16 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tracing::warn;
 
+use crate::backups::backup_timestamp;
 use crate::config::Config;
-use crate::convention::{
-    self, KNOWN_PLATFORMS, backup_timestamp, expand_tilde, repo_to_target, target_to_repo,
-    walk_dir, write_config,
-};
+use crate::config::write_config;
+use crate::fs_utils::walk_dir;
 use crate::git;
+use crate::paths::{
+    expand_tilde, format_target_display, normalize_path, repo_to_target, target_to_repo,
+};
 use crate::plan::{self, Action, Plan};
+use crate::platform::KNOWN_PLATFORMS;
 use crate::prompt::{is_interactive, prompt_confirm, prompt_select};
 use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
@@ -101,7 +104,7 @@ pub fn run(
     // Resolve conflicts interactively
     let files_to_override = resolve_conflicts(&files_to_add, &conflict_map)?;
 
-    let home = convention::home_dir()?;
+    let home = crate::paths::home_dir()?;
     let has_git = repo.is_git_repo;
     let config = repo.config;
 
@@ -213,15 +216,14 @@ pub(crate) fn build_add_plan(input: &AddPlanInput, config: &Config) -> Result<Ad
         }
 
         // Update managed map (normalize separators to `/` for cross-platform keys)
-        let repo_rel =
-            convention::normalize_path(repo_file.strip_prefix(&input.repo_path).map_err(|_| {
-                anyhow::anyhow!(
-                    "Repo file {} is not inside the repository at {}",
-                    repo_file.display(),
-                    input.repo_path.display()
-                )
-            })?);
-        let target_rel = convention::format_target_display(target_file);
+        let repo_rel = normalize_path(repo_file.strip_prefix(&input.repo_path).map_err(|_| {
+            anyhow::anyhow!(
+                "Repo file {} is not inside the repository at {}",
+                repo_file.display(),
+                input.repo_path.display()
+            )
+        })?);
+        let target_rel = format_target_display(target_file);
         config.managed.insert(repo_rel, target_rel);
     }
 
@@ -273,7 +275,7 @@ fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> Result<
 fn warn_non_xdg(target_path: &Path) -> Result<()> {
     // Guard: skip interactive prompts in non-TTY contexts to avoid hangs.
     if !is_interactive() {
-        let home = convention::home_dir()?;
+        let home = crate::paths::home_dir()?;
         let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
         let rel_str = relative.to_string_lossy();
 
@@ -305,7 +307,7 @@ fn warn_non_xdg(target_path: &Path) -> Result<()> {
     }
 
     // Interactive mode: prompt the user.
-    let home = convention::home_dir()?;
+    let home = crate::paths::home_dir()?;
     let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
     let rel_str = relative.to_string_lossy();
 

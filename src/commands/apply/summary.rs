@@ -35,7 +35,7 @@ pub(crate) fn print_per_file_summary(
     let mut skipped_count = 0;
 
     for result in &sorted {
-        let target_str = crate::convention::format_target_display(&result.target);
+        let target_str = crate::paths::format_target_display(&result.target);
 
         if result.skipped {
             skipped_count += 1;

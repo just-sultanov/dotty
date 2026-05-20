@@ -2,11 +2,10 @@ use anyhow::Result;
 use std::fs;
 use std::path::Path;
 
-use crate::convention::{
-    read_config, resolve_repo_path, resolve_state_path, scan_machine_directories,
-    validate_machine_name, write_config,
-};
+use crate::config::{read_config, write_config};
+use crate::convention::{scan_machine_directories, validate_machine_name};
 use crate::git::{git_clone, git_init};
+use crate::paths::{resolve_repo_path, resolve_state_path};
 use crate::prompt::prompt_machine_selection;
 
 /// Bootstrap a new dotty repository or clone an existing one.

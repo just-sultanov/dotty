@@ -3,24 +3,8 @@ use std::path::Path;
 use tracing::warn;
 
 use crate::error::DottyError;
-
-// Re-export from platform module
-pub use crate::platform::{KNOWN_PLATFORMS, detect_platform};
-
-// Re-export from config module
-pub use crate::config::{read_config, write_config};
-
-// Re-export from paths module
-pub use crate::paths::{
-    expand_tilde, format_target_display, home_dir, normalize_path, repo_to_target,
-    resolve_repo_path, resolve_state_path, target_to_repo,
-};
-
-// Re-export from backups module
-pub use crate::backups::{backup_timestamp, date_to_backup_prefix, list_backups};
-
-// Re-export from fs_utils module
-pub use crate::fs_utils::{calculate_dir_size, walk_dir};
+use crate::paths::repo_to_target;
+use crate::platform::KNOWN_PLATFORMS;
 
 /// Scan the repo for machine directories.
 ///
@@ -179,7 +163,7 @@ pub fn find_managed_repo_files(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::config::{Config, read_config, write_config};
     use std::fs;
 
     /// Create a unique temporary directory that is automatically cleaned up on drop.

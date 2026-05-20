@@ -6,8 +6,8 @@ pub(crate) fn rebuild_managed_map(tracked_files: &[String]) -> IndexMap<String, 
 
     for file in tracked_files {
         let repo_path = std::path::PathBuf::from(file);
-        if let Ok(target) = crate::convention::repo_to_target(&repo_path) {
-            let target_str = crate::convention::format_target_display(&target);
+        if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
+            let target_str = crate::paths::format_target_display(&target);
             managed.insert(file.clone(), target_str);
         }
     }

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::config::Config;
-use crate::convention::expand_tilde;
+use crate::paths::expand_tilde;
 use crate::plan::{Action, Plan};
 
 use super::inspect::{TargetState, inspect_target};
@@ -102,7 +102,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                     });
                 }
                 let backup_base = input.state_path.join("backups");
-                let backup_ts = crate::convention::backup_timestamp();
+                let backup_ts = crate::backups::backup_timestamp();
                 let backup_dest = if let Ok(relative) = target.strip_prefix(&input.home) {
                     backup_base.join(&backup_ts).join(relative)
                 } else {

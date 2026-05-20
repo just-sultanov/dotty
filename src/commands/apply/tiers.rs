@@ -21,7 +21,7 @@ pub(crate) fn merge_tiers(
     for file in tracked_files {
         if let Some(_rest) = file.strip_prefix("base/") {
             let repo_path = PathBuf::from(file);
-            if let Ok(target) = crate::convention::repo_to_target(&repo_path) {
+            if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
                 merged.insert(target, ("base".to_string(), file.clone()));
             }
         }
@@ -33,7 +33,7 @@ pub(crate) fn merge_tiers(
         for file in tracked_files {
             if let Some(_rest) = file.strip_prefix(&platform_prefix) {
                 let repo_path = PathBuf::from(file);
-                if let Ok(target) = crate::convention::repo_to_target(&repo_path) {
+                if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
                     merged.insert(target, (plat.clone(), file.clone()));
                 }
             }
@@ -45,7 +45,7 @@ pub(crate) fn merge_tiers(
     for file in tracked_files {
         if let Some(_rest) = file.strip_prefix(&machine_prefix) {
             let repo_path = PathBuf::from(file);
-            if let Ok(target) = crate::convention::repo_to_target(&repo_path) {
+            if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
                 merged.insert(target, (machine.to_string(), file.clone()));
             }
         }
@@ -67,7 +67,7 @@ pub(crate) fn build_override_map(
     // Collect all tiers for each target
     for file in tracked_files {
         let repo_path = PathBuf::from(file);
-        if let Ok(target) = crate::convention::repo_to_target(&repo_path) {
+        if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
             let tier = crate::convention::classify_tier(file, machine, platform);
             if let Some(tier_name) = tier {
                 all_tiers

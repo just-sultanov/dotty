@@ -4,8 +4,11 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::config::Config;
-use crate::convention::{self, calculate_dir_size, expand_tilde, repo_to_target};
+use crate::convention::classify_tier;
+use crate::fs_utils::calculate_dir_size;
 use crate::git;
+use crate::paths::{expand_tilde, format_target_display, repo_to_target};
+use crate::platform::detect_platform;
 use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
 
@@ -21,7 +24,7 @@ pub fn run() -> Result<()> {
     let config = &repo.config;
 
     // Detect platform
-    let platform = convention::detect_platform();
+    let platform = detect_platform();
 
     // Display basic info
     println!(
@@ -229,7 +232,7 @@ fn find_tier_conflicts(
     for file in &tracked_files {
         let repo_path_buf = PathBuf::from(file);
         if let Ok(target) = repo_to_target(&repo_path_buf) {
-            let tier = convention::classify_tier(file, machine, platform);
+            let tier = classify_tier(file, machine, platform);
             if let Some(tier_name) = tier {
                 all_tiers
                     .entry(target)
@@ -264,7 +267,7 @@ fn find_tier_conflicts(
                     .map(|(t, _)| t.clone())
                     .unwrap_or_default();
 
-                let target_str = convention::format_target_display(target);
+                let target_str = format_target_display(target);
                 conflicts.push((target_str, overriding, tier.clone()));
             }
         }
@@ -275,7 +278,7 @@ fn find_tier_conflicts(
 
 /// Return a numeric priority for a tier name (higher = more priority).
 fn tier_priority(tier: &str) -> u32 {
-    convention::tier_priority(tier)
+    crate::convention::tier_priority(tier)
 }
 
 /// Find files in inactive tiers (platforms/machines not active on this system).
@@ -308,7 +311,7 @@ fn find_inactive_tiers(
         if !is_active {
             let repo_path_buf = PathBuf::from(file);
             if let Ok(target) = repo_to_target(&repo_path_buf) {
-                let target_str = convention::format_target_display(&target);
+                let target_str = format_target_display(&target);
                 inactive.push((target_str, tier, file.clone()));
             }
         }
@@ -325,23 +328,23 @@ mod tests {
 
     #[test]
     fn test_format_target_display_home() {
-        let home = convention::home_dir().unwrap();
+        let home = crate::paths::home_dir().unwrap();
         let path = home.join(".vimrc");
-        let formatted = convention::format_target_display(&path);
+        let formatted = format_target_display(&path);
         assert_eq!(formatted, "~/.vimrc");
     }
 
     #[test]
     fn test_format_target_display_absolute() {
         let path = PathBuf::from("/opt/nvim/appimage");
-        let formatted = convention::format_target_display(&path);
+        let formatted = format_target_display(&path);
         assert_eq!(formatted, "/opt/nvim/appimage");
     }
 
     #[test]
     fn test_format_target_display_tilde_only() {
         let path = PathBuf::from("~");
-        let formatted = convention::format_target_display(&path);
+        let formatted = format_target_display(&path);
         // ~ without home_dir match stays as-is
         assert_eq!(formatted, "~");
     }

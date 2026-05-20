@@ -2,7 +2,8 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::convention::{scan_machine_directories, write_config};
+use crate::config::write_config;
+use crate::convention::scan_machine_directories;
 use crate::prompt::prompt_machine_selection;
 
 /// Resolve the machine name. If missing from config, prompt user to select.

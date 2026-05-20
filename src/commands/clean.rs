@@ -3,7 +3,8 @@ use std::fs;
 use anyhow::Result;
 use tracing::warn;
 
-use crate::convention::{date_to_backup_prefix, list_backups, resolve_state_path};
+use crate::backups::{date_to_backup_prefix, list_backups};
+use crate::paths::resolve_state_path;
 use crate::prompt::prompt_confirm;
 
 /// Determine which backups to remove based on filtering criteria.

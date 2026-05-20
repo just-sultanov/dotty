@@ -1,6 +1,8 @@
 use anyhow::Result;
 
-use crate::convention::{read_config, resolve_state_path, validate_machine_name, write_config};
+use crate::config::{read_config, write_config};
+use crate::convention::validate_machine_name;
+use crate::paths::resolve_state_path;
 
 /// Set the current machine name.
 ///

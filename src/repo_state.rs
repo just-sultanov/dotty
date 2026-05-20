@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use crate::config::Config;
-use crate::convention::{read_config, resolve_repo_path, resolve_state_path};
+use crate::config::{Config, read_config};
 use crate::error::DottyError;
+use crate::paths::{resolve_repo_path, resolve_state_path};
 
 /// Encapsulates repository state and precondition validation.
 ///

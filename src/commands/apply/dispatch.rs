@@ -1,9 +1,11 @@
 use anyhow::Result;
 use tracing::warn;
 
-use crate::convention::write_config;
+use crate::config::write_config;
 use crate::git;
+use crate::paths::home_dir;
 use crate::plan;
+use crate::platform::detect_platform;
 use crate::repo_state::RepoState;
 
 use super::machine::resolve_machine;
@@ -34,7 +36,7 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
     let mut config = repo.config;
 
     // 1. Detect platform and resolve machine
-    let platform = platform_override.or_else(crate::convention::detect_platform);
+    let platform = platform_override.or_else(detect_platform);
     let machine_name = resolve_machine(repo_path, &mut config, state_path, dry_run, &platform)?;
 
     // 2. Collect all tracked files from git
@@ -50,7 +52,7 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
     let input = ApplyPlanInput {
         repo_path: repo_path.clone(),
         state_path: state_path.clone(),
-        home: crate::convention::home_dir()?,
+        home: home_dir()?,
         merged,
         override_map,
         config: config.clone(),

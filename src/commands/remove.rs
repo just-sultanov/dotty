@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::config::Config;
-use crate::convention::{
-    expand_tilde, find_managed_repo_files, repo_to_target, walk_dir, write_config,
-};
+use crate::config::write_config;
+use crate::convention::find_managed_repo_files;
+use crate::fs_utils::walk_dir;
 use crate::git;
+use crate::paths::{expand_tilde, repo_to_target};
 use crate::plan::{self, Action, Plan};
 use crate::prompt::prompt_confirm;
 use crate::repo_state::RepoState;
