@@ -468,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn test_copy_file_dereferences_symlink() {
+    fn test_copy_file_follows_symlinks() {
         let (_dir, base) = setup();
         let real = base.join("real.txt");
         let sym = base.join("sym.txt");
@@ -477,7 +477,7 @@ mod tests {
         std::fs::write(&real, "real content").unwrap();
         crate::symlink::create_symlink(&real, &sym).unwrap();
 
-        execution::copy_file_dereference(&sym, &dst).unwrap();
+        execution::copy_file(&sym, &dst).unwrap();
         assert!(!crate::symlink::is_symlink(&dst));
         assert_eq!(std::fs::read_to_string(&dst).unwrap(), "real content");
     }

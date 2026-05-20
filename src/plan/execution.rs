@@ -36,7 +36,7 @@ pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), Do
                 reason: format!("cannot determine parent of backup path: {}", dest.display()),
             })?;
             fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
-            copy_file_dereference(source, dest)?;
+            copy_file(source, dest)?;
             verify_backup_integrity(source, dest)?;
         }
         Action::CopyFile { source, dest } => {
@@ -44,7 +44,7 @@ pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), Do
             if let Some(p) = parent {
                 fs::create_dir_all(p).map_err(|e| io_error_with_path(e, p))?;
             }
-            copy_file_dereference(source, dest)?;
+            copy_file(source, dest)?;
         }
         Action::CreateSymlink { target, link, .. } => {
             let parent = link.parent();
@@ -86,7 +86,7 @@ pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), Do
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
             }
-            copy_file_dereference(source, dest)?;
+            copy_file(source, dest)?;
         }
         Action::GitAdd { paths } => git::git_add(repo_path, paths)?,
         Action::GitCommit { message } => git::git_commit(repo_path, message)?,
@@ -333,8 +333,12 @@ fn rollback_completed(plan: &super::Plan, completed_indices: &[usize]) -> Result
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Copy a file, dereferencing symlinks (equivalent to `cp -L`).
-pub(crate) fn copy_file_dereference(source: &Path, dest: &Path) -> Result<(), DottyError> {
+/// Copies a file, following symlinks (equivalent to `cp -L`).
+///
+/// `std::fs::copy` already follows symlinks on all supported platforms,
+/// so no explicit dereferencing is needed. This wrapper exists to make
+/// the intent clear at call sites.
+pub(crate) fn copy_file(source: &Path, dest: &Path) -> Result<(), DottyError> {
     fs::copy(source, dest).map(|_| ())?;
     Ok(())
 }
