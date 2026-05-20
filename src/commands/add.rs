@@ -12,7 +12,7 @@ use crate::convention::{
 };
 use crate::git;
 use crate::plan::{self, Action, Plan};
-use crate::prompt::{prompt_confirm, prompt_select};
+use crate::prompt::{is_interactive, prompt_confirm, prompt_select};
 use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
 
@@ -266,7 +266,45 @@ fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> Result<
 ///
 /// Also warns if the path is under a sensitive system directory
 /// (`/etc/`, `/usr/`, `/sys/`, `/proc/`).
+///
+/// In non-interactive mode (CI, pipes, scripts), this function logs a
+/// `tracing::warn!()` and returns early without prompting — preventing
+/// hangs in automated workflows.
 fn warn_non_xdg(target_path: &Path) -> Result<()> {
+    // Guard: skip interactive prompts in non-TTY contexts to avoid hangs.
+    if !is_interactive() {
+        let home = convention::home_dir()?;
+        let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
+        let rel_str = relative.to_string_lossy();
+
+        let is_standard = rel_str.starts_with(".config/")
+            || rel_str.starts_with(".local/")
+            || rel_str.starts_with(".ssh/")
+            || (rel_str.starts_with('.') && !rel_str.starts_with(".."));
+
+        if !is_standard {
+            warn!(
+                "'{}' doesn't look like a standard config location. Run interactively to specify a tier.",
+                target_path.display()
+            );
+        }
+
+        let sensitive_prefixes = ["/etc", "/usr", "/sys", "/proc"];
+        let path_str = target_path.to_string_lossy();
+        if sensitive_prefixes
+            .iter()
+            .any(|&prefix| path_str == prefix || path_str.starts_with(&format!("{}/", prefix)))
+        {
+            warn!(
+                "'{}' is under a sensitive system directory. Proceed with caution.",
+                target_path.display()
+            );
+        }
+
+        return Ok(());
+    }
+
+    // Interactive mode: prompt the user.
     let home = convention::home_dir()?;
     let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
     let rel_str = relative.to_string_lossy();
@@ -644,5 +682,43 @@ mod tests {
                 );
             }
         });
+    }
+
+    // -- warn_non_xdg tests --
+
+    #[test]
+    fn test_warn_non_xdg_non_interactive_no_hang() {
+        // In test environment (non-TTY), warn_non_xdg should return Ok
+        // without hanging or returning an error.
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            // Non-standard path should not panic or error in non-interactive mode
+            let result = warn_non_xdg(&home.join("some/weird/path"));
+            assert!(
+                result.is_ok(),
+                "warn_non_xdg should return Ok in non-interactive mode, got: {result:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn test_warn_non_xdg_standard_path_non_interactive() {
+        // Standard paths (dotfiles, .config/) should also not error
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let result = warn_non_xdg(&home.join(".config/nvim/init.lua"));
+            assert!(result.is_ok());
+
+            let result = warn_non_xdg(&home.join(".vimrc"));
+            assert!(result.is_ok());
+        });
+    }
+
+    #[test]
+    fn test_is_interactive_returns_false_in_tests() {
+        // Confirms the interactivity guard works: in test env, not interactive
+        assert!(!is_interactive());
     }
 }

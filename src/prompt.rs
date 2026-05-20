@@ -21,7 +21,11 @@ fn map_dialoguer_error(e: dialoguer::Error) -> DottyError {
 ///
 /// Returns `false` in CI, pipes, or any non-TTY environment where
 /// interactive prompts would hang or behave unpredictably.
-fn is_interactive() -> bool {
+///
+/// This function is `pub(crate)` so command modules (e.g., `add.rs`)
+/// can guard interactive prompts with an early-return for non-interactive
+/// contexts, avoiding hangs in CI or scripted workflows.
+pub(crate) fn is_interactive() -> bool {
     std::io::stdout().is_terminal() && std::io::stdin().is_terminal()
 }
 
