@@ -269,9 +269,13 @@ fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> Result<
 /// Also warns if the path is under a sensitive system directory
 /// (`/etc/`, `/usr/`, `/sys/`, `/proc/`).
 ///
-/// In non-interactive mode (CI, pipes, scripts), this function logs a
-/// `tracing::warn!()` and returns early without prompting — preventing
-/// hangs in automated workflows.
+/// In non-interactive mode (CI, pipes, scripts), this function rejects
+/// paths under sensitive system directories with an error (preventing
+/// silent acceptance of system paths in automated workflows). Non-standard
+/// paths outside sensitive directories still log a warning and return `Ok`.
+///
+/// In interactive mode, prompts the user for confirmation on both
+/// non-standard and sensitive paths.
 fn warn_non_xdg(target_path: &Path) -> Result<()> {
     // Guard: skip interactive prompts in non-TTY contexts to avoid hangs.
     if !is_interactive() {
@@ -297,8 +301,8 @@ fn warn_non_xdg(target_path: &Path) -> Result<()> {
             .iter()
             .any(|&prefix| path_str == prefix || path_str.starts_with(&format!("{}/", prefix)))
         {
-            warn!(
-                "'{}' is under a sensitive system directory. Proceed with caution.",
+            anyhow::bail!(
+                "'{}' is under a sensitive system directory. Adding system files is not supported in non-interactive mode.",
                 target_path.display()
             );
         }
@@ -714,6 +718,46 @@ mod tests {
             assert!(result.is_ok());
 
             let result = warn_non_xdg(&home.join(".vimrc"));
+            assert!(result.is_ok());
+        });
+    }
+
+    #[test]
+    fn test_warn_non_xdg_non_interactive_rejects_sensitive_etc() {
+        let result = warn_non_xdg(Path::new("/etc/foobar"));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("sensitive system directory"));
+        assert!(msg.contains("/etc/foobar"));
+    }
+
+    #[test]
+    fn test_warn_non_xdg_non_interactive_rejects_sensitive_usr() {
+        let result = warn_non_xdg(Path::new("/usr/local/bin/custom-tool"));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("sensitive system directory"));
+    }
+
+    #[test]
+    fn test_warn_non_xdg_non_interactive_rejects_sensitive_sys() {
+        let result = warn_non_xdg(Path::new("/sys/class/net"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_warn_non_xdg_non_interactive_rejects_sensitive_proc() {
+        let result = warn_non_xdg(Path::new("/proc/cpuinfo"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_warn_non_xdg_non_interactive_allows_non_sensitive_non_standard() {
+        // Non-standard but non-sensitive paths should still succeed
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let result = warn_non_xdg(&home.join("custom/.config"));
             assert!(result.is_ok());
         });
     }
