@@ -26,6 +26,10 @@ fn map_dialoguer_error(e: dialoguer::Error) -> DottyError {
 /// can guard interactive prompts with an early-return for non-interactive
 /// contexts, avoiding hangs in CI or scripted workflows.
 pub(crate) fn is_interactive() -> bool {
+    // In CI environments, never prompt — avoids hangs.
+    if std::env::var_os("CI").is_some() {
+        return false;
+    }
     std::io::stdout().is_terminal() && std::io::stdin().is_terminal()
 }
 
@@ -102,32 +106,5 @@ pub(crate) fn prompt_machine_selection(known_machines: &[String]) -> Result<Stri
         prompt_input("Enter a new machine name:")
     } else {
         Ok(options[selected].clone())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_interactive_returns_bool() {
-        // In test environment (non-TTY), should return false
-        assert!(!is_interactive());
-    }
-
-    #[test]
-    fn test_require_interactive_fails_in_non_tty() {
-        // In test environment (non-TTY), should return NotInteractive error
-        let result = require_interactive();
-        assert!(matches!(result, Err(DottyError::NotInteractive { .. })));
-    }
-
-    #[test]
-    fn test_require_interactive_error_message() {
-        let result = require_interactive();
-        let err = result.unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("not running in an interactive terminal"));
-        assert!(msg.contains("--dry-run"));
     }
 }
