@@ -2,7 +2,7 @@
 _.path = [{ path = "./bin", tools = true }]
 
 [tools]
-rust = { version = "1.94.1", components = "rustfmt,clippy" }
+rust = { version = "1.95.0", components = "rustfmt,clippy" }
 
 ##
 # General
