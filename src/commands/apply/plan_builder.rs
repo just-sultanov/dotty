@@ -216,19 +216,6 @@ mod tests {
     use super::*;
     use crate::symlink::create_symlink;
 
-    fn with_test_home<F: FnOnce(&PathBuf)>(test: F)
-    where
-        F: FnOnce(&PathBuf),
-    {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        std::fs::create_dir_all(&home).unwrap();
-
-        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
-            test(&home);
-        });
-    }
-
     #[test]
     fn test_inspect_target_missing() {
         let dir = tempfile::tempdir().unwrap();
@@ -271,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_inspect_target_regular_file() {
-        with_test_home(|home| {
+        crate::tests::with_test_home(|home| {
             let target = home.join("file.txt");
             std::fs::write(&target, "content").unwrap();
             let repo_file = PathBuf::from("/tmp/repo.txt");
@@ -285,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_inspect_target_directory() {
-        with_test_home(|home| {
+        crate::tests::with_test_home(|home| {
             let target = home.join("config_dir");
             std::fs::create_dir(&target).unwrap();
             let repo_file = PathBuf::from("/tmp/repo.txt");
@@ -366,7 +353,7 @@ mod tests {
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
-        with_test_home(|_| {
+        crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
                 state_path: state.clone(),
@@ -411,7 +398,7 @@ mod tests {
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
-        with_test_home(|_| {
+        crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
                 state_path: state.clone(),
@@ -456,7 +443,7 @@ mod tests {
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
-        with_test_home(|_| {
+        crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
                 state_path: state.clone(),
@@ -501,7 +488,7 @@ mod tests {
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
-        with_test_home(|_| {
+        crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
                 state_path: state.clone(),
@@ -548,7 +535,7 @@ mod tests {
             .managed
             .insert("base/home/.config_dir".into(), "~/.config_dir".into());
 
-        with_test_home(|_| {
+        crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
                 state_path: state.clone(),
@@ -597,7 +584,7 @@ mod tests {
             .managed
             .insert("base/home/.config_dir".into(), "~/.config_dir".into());
 
-        with_test_home(|_| {
+        crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
                 state_path: state.clone(),
@@ -669,7 +656,7 @@ mod tests {
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
-        with_test_home(|_| {
+        crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
                 state_path: state.clone(),
@@ -717,7 +704,7 @@ mod tests {
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
-        with_test_home(|_| {
+        crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
                 state_path: state.clone(),
@@ -781,7 +768,7 @@ mod tests {
         ];
 
         // Use temp HOME so repo_to_target resolves to the test home directory
-        with_test_home(|home| {
+        crate::tests::with_test_home(|home| {
             // Step 1: build_override_map
             let override_map = build_override_map(
                 &tracked_files,
@@ -914,7 +901,7 @@ mod tests {
         ];
 
         // Use temp HOME so repo_to_target resolves to the test home directory
-        with_test_home(|home| {
+        crate::tests::with_test_home(|home| {
             // Step 1: build_override_map should return empty
             let override_map = build_override_map(
                 &tracked_files,

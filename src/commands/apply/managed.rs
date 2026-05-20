@@ -17,26 +17,11 @@ pub(crate) fn rebuild_managed_map(tracked_files: &[String]) -> IndexMap<String, 
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-
-    fn with_test_home<F: FnOnce(&PathBuf)>(test: F)
-    where
-        F: FnOnce(&PathBuf),
-    {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        std::fs::create_dir_all(&home).unwrap();
-
-        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
-            test(&home);
-        });
-    }
 
     #[test]
     fn test_rebuild_managed_map() {
-        with_test_home(|home| {
+        crate::tests::with_test_home(|home| {
             let files = vec!["base/home/.vimrc".into(), "base/home/.gitconfig".into()];
             let managed = rebuild_managed_map(&files);
 

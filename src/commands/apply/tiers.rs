@@ -108,22 +108,9 @@ pub(crate) fn build_override_map(
 mod tests {
     use super::*;
 
-    fn with_test_home<F: FnOnce(&PathBuf)>(test: F)
-    where
-        F: FnOnce(&PathBuf),
-    {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        std::fs::create_dir_all(&home).unwrap();
-
-        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
-            test(&home);
-        });
-    }
-
     #[test]
     fn test_merge_tiers_basic() {
-        with_test_home(|home| {
+        crate::tests::with_test_home(|home| {
             let files = vec![
                 "base/home/.vimrc".into(),
                 "base/home/.gitconfig".into(),
@@ -141,7 +128,7 @@ mod tests {
 
     #[test]
     fn test_merge_tiers_override() {
-        with_test_home(|home| {
+        crate::tests::with_test_home(|home| {
             let files = vec![
                 "base/home/.config/nvim/plugins.lua".into(),
                 "macbook/home/.config/nvim/plugins.lua".into(),
@@ -157,7 +144,7 @@ mod tests {
 
     #[test]
     fn test_override_map_detection() {
-        with_test_home(|home| {
+        crate::tests::with_test_home(|home| {
             let files = vec![
                 "base/home/.config/nvim/plugins.lua".into(),
                 "macbook/home/.config/nvim/plugins.lua".into(),

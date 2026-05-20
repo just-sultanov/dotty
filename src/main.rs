@@ -20,6 +20,9 @@ mod repo_state;
 mod symbols;
 mod symlink;
 
+#[cfg(test)]
+pub mod tests;
+
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands, ConfigCommands};
