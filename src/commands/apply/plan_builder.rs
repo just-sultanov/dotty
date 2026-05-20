@@ -658,4 +658,236 @@ mod tests {
             assert!(!output.plan.is_empty());
         });
     }
+
+    /// Integration test for the full override pipeline across 3 tiers.
+    ///
+    /// Verifies that `build_override_map` → `build_apply_plan` correctly
+    /// propagates override information into `FileResult.overrides`, so that
+    /// `print_per_file_summary` can display the overriding tier name.
+    ///
+    /// Fixture: base + macos (platform) + macbook (machine) tiers with
+    /// one file overridden from base → macbook, and another from base → macos.
+    #[test]
+    fn test_build_apply_plan_override_pipeline() {
+        use crate::commands::apply::tiers::{build_override_map, merge_tiers};
+
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        // Create repo files across 3 tiers
+        let nvim_plugins_base = repo.join("base/home/.config/nvim/plugins.lua");
+        std::fs::create_dir_all(nvim_plugins_base.parent().unwrap()).unwrap();
+        std::fs::write(&nvim_plugins_base, "base plugins").unwrap();
+
+        let nvim_plugins_machine = repo.join("macbook/home/.config/nvim/plugins.lua");
+        std::fs::create_dir_all(nvim_plugins_machine.parent().unwrap()).unwrap();
+        std::fs::write(&nvim_plugins_machine, "macbook plugins").unwrap();
+
+        let skhdrc = repo.join("macos/home/.config/skhd/skhdrc");
+        std::fs::create_dir_all(skhdrc.parent().unwrap()).unwrap();
+        std::fs::write(&skhdrc, "skhd config").unwrap();
+
+        let vimrc = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(vimrc.parent().unwrap()).unwrap();
+        std::fs::write(&vimrc, "vimrc content").unwrap();
+
+        // Set up tracked files list
+        let tracked_files = vec![
+            "base/home/.config/nvim/plugins.lua".into(),
+            "macbook/home/.config/nvim/plugins.lua".into(),
+            "macos/home/.config/skhd/skhdrc".into(),
+            "base/home/.vimrc".into(),
+        ];
+
+        // Use temp HOME so repo_to_target resolves to the test home directory
+        with_test_home(|home| {
+            // Step 1: build_override_map
+            let override_map = build_override_map(
+                &tracked_files,
+                &Some("macbook".into()),
+                &Some("macos".into()),
+            );
+
+            // Verify override_map has exactly 1 entry (nvim plugins overridden from base → macbook)
+            assert_eq!(override_map.len(), 1);
+            let nvim_target = home.join(".config/nvim/plugins.lua");
+            assert!(override_map.contains_key(&nvim_target));
+            assert_eq!(override_map.get(&nvim_target).unwrap(), "base");
+
+            // Step 2: merge_tiers
+            let merged = merge_tiers(&tracked_files, "macbook", &Some("macos".into()));
+            assert_eq!(merged.len(), 3);
+
+            // Step 3: build_apply_plan with override_map
+            let mut config = Config::new();
+            for (target, (tier, repo_rel)) in merged.iter() {
+                config
+                    .managed
+                    .insert(repo_rel.clone(), target.to_string_lossy().to_string());
+                let _ = tier; // used for orphan detection alignment
+            }
+
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged: merged.clone(),
+                override_map: override_map.clone(),
+                config,
+                force: false,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            // Should have 3 file results
+            assert_eq!(output.file_results.len(), 3);
+
+            // Find the nvim plugins result (the overridden one)
+            let nvim_result = output
+                .file_results
+                .iter()
+                .find(|r| r.target == nvim_target)
+                .expect("nvim plugins result should exist");
+
+            // Verify override is correctly recorded
+            assert!(
+                nvim_result.overrides.is_some(),
+                "nvim plugins should have an override recorded"
+            );
+            assert_eq!(
+                nvim_result.overrides.as_ref().unwrap(),
+                "base",
+                "overridden tier should be 'base'"
+            );
+            assert_eq!(
+                nvim_result.tier, "macbook",
+                "active tier should be 'macbook'"
+            );
+
+            // Find the skhd result (platform tier, no override)
+            let skhd_target = home.join(".config/skhd/skhdrc");
+            let skhd_result = output
+                .file_results
+                .iter()
+                .find(|r| r.target == skhd_target)
+                .expect("skhd result should exist");
+
+            assert!(
+                skhd_result.overrides.is_none(),
+                "skhdrc should have no override"
+            );
+            assert_eq!(skhd_result.tier, "macos");
+
+            // Find the vimrc result (base tier, no override)
+            let vimrc_target = home.join(".vimrc");
+            let vimrc_result = output
+                .file_results
+                .iter()
+                .find(|r| r.target == vimrc_target)
+                .expect("vimrc result should exist");
+
+            assert!(
+                vimrc_result.overrides.is_none(),
+                "vimrc should have no override"
+            );
+            assert_eq!(vimrc_result.tier, "base");
+
+            // No orphans
+            assert!(output.orphans.is_empty());
+        });
+    }
+
+    /// Integration test for the full pipeline with no overrides (happy path).
+    ///
+    /// Verifies that when files exist in only one tier each, `build_override_map`
+    /// returns an empty map and `build_apply_plan` correctly reports no overrides.
+    #[test]
+    fn test_build_apply_plan_no_overrides() {
+        use crate::commands::apply::tiers::{build_override_map, merge_tiers};
+
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        // Create repo files across 3 tiers, each targeting a different path
+        let vimrc = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(vimrc.parent().unwrap()).unwrap();
+        std::fs::write(&vimrc, "vimrc content").unwrap();
+
+        let skhdrc = repo.join("macos/home/.config/skhd/skhdrc");
+        std::fs::create_dir_all(skhdrc.parent().unwrap()).unwrap();
+        std::fs::write(&skhdrc, "skhd config").unwrap();
+
+        let nvim = repo.join("macbook/home/.config/nvim/init.lua");
+        std::fs::create_dir_all(nvim.parent().unwrap()).unwrap();
+        std::fs::write(&nvim, "nvim init").unwrap();
+
+        let tracked_files = vec![
+            "base/home/.vimrc".into(),
+            "macos/home/.config/skhd/skhdrc".into(),
+            "macbook/home/.config/nvim/init.lua".into(),
+        ];
+
+        // Use temp HOME so repo_to_target resolves to the test home directory
+        with_test_home(|home| {
+            // Step 1: build_override_map should return empty
+            let override_map = build_override_map(
+                &tracked_files,
+                &Some("macbook".into()),
+                &Some("macos".into()),
+            );
+            assert!(
+                override_map.is_empty(),
+                "override_map should be empty when no files span multiple tiers"
+            );
+
+            // Step 2: merge_tiers
+            let merged = merge_tiers(&tracked_files, "macbook", &Some("macos".into()));
+            assert_eq!(merged.len(), 3);
+
+            // Step 3: build_apply_plan with empty override_map
+            let mut config = Config::new();
+            for (target, (tier, repo_rel)) in merged.iter() {
+                config
+                    .managed
+                    .insert(repo_rel.clone(), target.to_string_lossy().to_string());
+                let _ = tier; // used for orphan detection alignment
+            }
+
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged: merged.clone(),
+                override_map: override_map.clone(),
+                config,
+                force: false,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            assert_eq!(output.file_results.len(), 3);
+
+            // Verify no file has an override recorded
+            for result in &output.file_results {
+                assert!(
+                    result.overrides.is_none(),
+                    "file {} should have no override, got {:?}",
+                    result.target.display(),
+                    result.overrides
+                );
+            }
+
+            assert!(output.orphans.is_empty());
+        });
+    }
 }

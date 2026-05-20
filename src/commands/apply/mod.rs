@@ -4,6 +4,6 @@ mod machine;
 mod managed;
 mod plan_builder;
 mod summary;
-mod tiers;
+pub(crate) mod tiers;
 
 pub use dispatch::run;
