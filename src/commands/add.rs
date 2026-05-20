@@ -308,7 +308,7 @@ fn warn_non_xdg(target_path: &Path) -> Result<()> {
 
         if !is_standard {
             warn!(
-                "'{}' doesn't look like a standard config location. Run interactively to specify a tier.",
+                "'{}' doesn't look like a standard config location. Defaulting to base tier (run interactively to specify a different tier).",
                 target_path.display()
             );
         }
@@ -343,8 +343,12 @@ fn warn_non_xdg(target_path: &Path) -> Result<()> {
             "Warning: '{}' doesn't look like a standard config location.",
             target_path.display()
         );
+        // Prompt semantics: "yes" = bail and ask user to re-run with --machine/--platform,
+        // "no" = proceed to base tier without error. The "yes" path bails because the `add`
+        // command does not support interactive tier selection — the user must re-run with
+        // --machine <name> or --platform <name> to target a specific tier.
         let ok = prompt_confirm(
-            "Add to a specific machine or platform instead? (no = continue to base)",
+            "Add this file to a specific machine or platform tier instead of base? (yes = specify tier, no = add to base)",
         )?;
         if ok {
             anyhow::bail!(
@@ -724,6 +728,35 @@ mod tests {
                 result.is_ok(),
                 "warn_non_xdg should return Ok in non-interactive mode, got: {result:?}"
             );
+        });
+    }
+
+    #[test]
+    fn test_warn_non_xdg_non_interactive_defaults_to_base() {
+        // Non-interactive mode should default to base tier with a clear warning.
+        // This test verifies the warning message mentions "base tier" so that
+        // the default action is transparent to the user.
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let result = warn_non_xdg(&home.join("custom/weird/path"));
+            assert!(result.is_ok(), "should default to base without error");
+        });
+    }
+
+    #[test]
+    fn test_warn_non_xdg_ci_env_defaults_to_base() {
+        // CI=true should always default to base tier, even if a TTY is present.
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            temp_env::with_var("CI", Some("1"), || {
+                let result = warn_non_xdg(&home.join("some/weird/path"));
+                assert!(
+                    result.is_ok(),
+                    "CI env should default to base without hanging"
+                );
+            });
         });
     }
 
