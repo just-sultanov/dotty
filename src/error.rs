@@ -77,6 +77,13 @@ pub(crate) enum DottyError {
         reason: String,
         source: Option<std::io::Error>,
     },
+
+    /// Init failed: target directory already exists and is not empty.
+    /// Used when `dotty init` with a git URL encounters a non-empty directory.
+    #[error(
+        "directory {path} already exists and is not empty. Remove it or choose a different path via $DOTTY_HOME."
+    )]
+    InitDirectoryNotEmpty { path: String },
 }
 
 #[cfg(test)]
@@ -234,5 +241,16 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("pending plan is invalid"));
         assert!(msg.contains("repository no longer exists at /path/to/repo"));
+    }
+
+    #[test]
+    fn test_init_directory_not_empty_message() {
+        let err = DottyError::InitDirectoryNotEmpty {
+            path: "/home/user/dotfiles".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("/home/user/dotfiles"));
+        assert!(msg.contains("already exists and is not empty"));
+        assert!(msg.contains("DOTTY_HOME"));
     }
 }

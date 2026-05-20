@@ -1,12 +1,15 @@
-use anyhow::Result;
 use std::fs;
 use std::path::Path;
 
 use crate::config::{read_config, write_config};
 use crate::convention::{scan_machine_directories, validate_machine_name};
+use crate::error::DottyError;
 use crate::git::{git_clone, git_init};
 use crate::paths::{resolve_repo_path, resolve_state_path};
 use crate::prompt::prompt_machine_selection;
+
+/// Result type for init commands, using domain-specific `DottyError`.
+type Result<T> = std::result::Result<T, DottyError>;
 
 /// Bootstrap a new dotty repository or clone an existing one.
 ///
@@ -51,6 +54,10 @@ pub fn run(git_url: Option<String>, machine: Option<String>) -> Result<()> {
 }
 
 /// Create a fresh repository: `git init` + `base/home/`.
+///
+/// Returns early (Ok) if `.git` already exists at the target path.
+/// IO errors (create_dir_all) map to `DottyError::Io`.
+/// Git errors (git_init) map to `DottyError::Git`.
 fn create_fresh_repo(repo_path: &Path) -> Result<()> {
     // If repo already exists and is a git repo, inform user
     if repo_path.exists() && repo_path.join(".git").exists() {
@@ -58,28 +65,30 @@ fn create_fresh_repo(repo_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    fs::create_dir_all(repo_path)?;
+    fs::create_dir_all(repo_path).map_err(DottyError::Io)?;
     git_init(repo_path)?;
 
     // Create base/home/ directory
     let base_home = repo_path.join("base").join("home");
-    fs::create_dir_all(&base_home)?;
+    fs::create_dir_all(&base_home).map_err(DottyError::Io)?;
 
     println!("Created fresh repo at {}", repo_path.display());
     Ok(())
 }
 
 /// Clone a repository into the resolved path.
+///
+/// Fails with `DottyError::InitDirectoryNotEmpty` if the target directory
+/// exists and contains files. IO errors from `read_dir` map to `DottyError::Io`.
+/// Clone errors (git_clone) map to `DottyError::Git`.
 fn clone_repo(url: &str, repo_path: &Path) -> Result<()> {
     // Pre-check: if directory exists and is not empty, abort
     if repo_path.exists() {
-        let mut entries = fs::read_dir(repo_path)?;
+        let mut entries = fs::read_dir(repo_path).map_err(DottyError::Io)?;
         if entries.next().is_some() {
-            anyhow::bail!(
-                "Directory {} already exists and is not empty. \
-                 Remove it or choose a different path via $DOTTY_HOME.",
-                repo_path.display()
-            );
+            return Err(DottyError::InitDirectoryNotEmpty {
+                path: repo_path.display().to_string(),
+            });
         }
     }
 
@@ -89,12 +98,14 @@ fn clone_repo(url: &str, repo_path: &Path) -> Result<()> {
 }
 
 /// Ensure the state directory exists.
+/// IO errors map to `DottyError::Io`.
 fn ensure_state_dir(state_path: &Path) -> Result<()> {
-    fs::create_dir_all(state_path)?;
+    fs::create_dir_all(state_path).map_err(DottyError::Io)?;
     Ok(())
 }
 
 /// Prompt the user for a machine name (fresh repo mode).
+/// Prompt errors map to `DottyError::Prompt`; validation errors to `DottyError::InvalidMachineName`.
 fn prompt_machine_name() -> Result<String> {
     let name =
         crate::prompt::prompt_input("What is this machine called? (e.g. macbook, ubuntu-work)")?;
@@ -110,6 +121,7 @@ fn prompt_machine_name() -> Result<String> {
 /// - Is not a known platform (`macos/`, `linux/`, `freebsd/`)
 ///
 /// If no known machines are found, falls back to prompting for a new name.
+/// Validation errors map to `DottyError::InvalidMachineName`.
 fn prompt_machine_from_repo(repo_path: &Path) -> Result<String> {
     let known_machines = scan_machine_directories(repo_path);
     let name = prompt_machine_selection(&known_machines)?;
