@@ -2,7 +2,7 @@
 _.path = [{ path = "./bin", tools = true }]
 
 [tools]
-rust = { version = "1.95.0", components = "rustfmt,clippy" }
+rust = { version = "1.95.0", components = "rustfmt,clippy,llvm-tools-preview" }
 
 ##
 # General
@@ -42,9 +42,17 @@ file = "bin/lint"
 description = "Run all tests"
 file = "bin/test"
 
+##
+# Coverage
+##
+
+[tasks.coverage]
+description = "Run tests with code coverage (HTML report opened in browser)"
+file = "bin/coverage"
+
 [tasks.check]
-description = "Run lint and tests"
-run = ["mise run lint", "mise run test"]
+description = "Run lint, tests, and code coverage"
+run = ["mise run lint", "mise run coverage"]
 
 ##
 # Build
