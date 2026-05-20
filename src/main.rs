@@ -33,7 +33,7 @@ fn main() -> Result<()> {
 
     // Check for a pending plan from a previously interrupted operation
     if !cli.skip_recovery()
-        && let Err(e) = check_pending_plan()
+        && let Err(e) = check_pending_plan(cli.recovery_action())
     {
         eprintln!("Warning: pending plan check failed: {e}");
     }
@@ -68,15 +68,30 @@ fn main() -> Result<()> {
 ///
 /// If found, offers the user to rollback, discard, or abort the current command.
 /// If the pending plan is invalid (stale repo), offers to discard it.
-fn check_pending_plan() -> Result<()> {
+///
+/// When `recovery_action` is provided (via `--recovery-action`), the action is
+/// executed automatically without prompting, allowing non-interactive recovery.
+fn check_pending_plan(recovery_action: Option<&str>) -> Result<()> {
     let state_path = paths::resolve_state_path()?;
     let pending = match plan::load_pending_plan(&state_path) {
         Ok(p) => p,
         Err(error::DottyError::PendingPlanInvalid { reason, .. }) => {
             // Stale plan: offer to discard it
             eprintln!("Pending plan is invalid: {reason}");
-            let options = ["Discard", "Ignore"];
-            let choice = prompt::prompt_select("What would you like to do?", &options)?;
+            let choice = match recovery_action {
+                Some("discard") => 0,
+                Some("ignore") => 1,
+                Some(other) => {
+                    anyhow::bail!(
+                        "invalid recovery action '{}'. Must be one of: rollback, discard, ignore",
+                        other
+                    )
+                }
+                None => {
+                    let options = ["Discard", "Ignore"];
+                    prompt::prompt_select("What would you like to do?", &options)?
+                }
+            };
             match choice {
                 0 => {
                     // Discard the stale plan file
@@ -110,7 +125,18 @@ fn check_pending_plan() -> Result<()> {
     }
 
     let options = ["Rollback", "Discard", "Abort"];
-    let choice = prompt::prompt_select("What would you like to do?", &options)?;
+    let choice = match recovery_action {
+        Some("rollback") => 0,
+        Some("discard") => 1,
+        Some("ignore") => 2,
+        Some(other) => {
+            anyhow::bail!(
+                "invalid recovery action '{}'. Must be one of: rollback, discard, ignore",
+                other
+            )
+        }
+        None => prompt::prompt_select("What would you like to do?", &options)?,
+    };
 
     match choice {
         0 => {

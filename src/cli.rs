@@ -35,6 +35,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     recover: bool,
 
+    /// Non-interactive recovery action for pending plans (rollback, discard, or ignore)
+    ///
+    /// When set, dotty will automatically handle any pending plan without prompting.
+    /// Use "rollback" to undo completed actions, "discard" to remove the pending plan,
+    /// or "ignore" to leave the pending plan and skip recovery.
+    #[arg(long, global = true)]
+    recovery_action: Option<String>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -53,6 +61,11 @@ impl Cli {
     /// Return true if pending-plan recovery should be skipped.
     pub fn skip_recovery(&self) -> bool {
         self.recover
+    }
+
+    /// Return the non-interactive recovery action, if set.
+    pub fn recovery_action(&self) -> Option<&str> {
+        self.recovery_action.as_deref()
     }
 }
 
