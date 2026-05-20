@@ -54,7 +54,11 @@ fn main() -> Result<()> {
             commit,
             dry_run,
         } => commands::remove::run(path, machine, commit, dry_run)?,
-        Commands::Apply { dry_run, platform } => commands::apply::run(dry_run, platform)?,
+        Commands::Apply {
+            dry_run,
+            platform,
+            force,
+        } => commands::apply::run(dry_run, platform, force)?,
         Commands::Status => commands::status::run()?,
         Commands::Clean { keep, before, yes } => commands::clean::run(keep, before, yes)?,
     }

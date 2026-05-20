@@ -40,6 +40,12 @@ pub(crate) enum Action {
         source: PathBuf,
         dest: PathBuf,
     },
+    /// Recursively copy a directory to a backup destination.
+    /// Used when replacing an existing directory with a symlink.
+    BackupDir {
+        source: PathBuf,
+        dest: PathBuf,
+    },
     CopyFile {
         source: PathBuf,
         dest: PathBuf,
@@ -59,6 +65,12 @@ pub(crate) enum Action {
         source: PathBuf,
         dest: PathBuf,
     },
+    /// Recursively copy a backup directory back to its original location.
+    /// Used for rolling back a directory-to-symlink replacement.
+    RestoreDir {
+        source: PathBuf,
+        dest: PathBuf,
+    },
     GitAdd {
         paths: Vec<PathBuf>,
     },
@@ -74,6 +86,9 @@ impl fmt::Display for Action {
             Action::Backup { source, dest } => {
                 write!(f, "backup        {} → {}", source.display(), dest.display())
             }
+            Action::BackupDir { source, dest } => {
+                write!(f, "backup dir    {} → {}", source.display(), dest.display())
+            }
             Action::CopyFile { source, dest } => {
                 write!(f, "copy file     {} → {}", source.display(), dest.display())
             }
@@ -86,6 +101,14 @@ impl fmt::Display for Action {
                 write!(
                     f,
                     "restore backup {} → {}",
+                    source.display(),
+                    dest.display()
+                )
+            }
+            Action::RestoreDir { source, dest } => {
+                write!(
+                    f,
+                    "restore dir     {} → {}",
                     source.display(),
                     dest.display()
                 )
@@ -249,6 +272,127 @@ mod tests {
         action.execute(&dummy_repo_path()).unwrap();
         assert!(dst.exists());
         assert_eq!(std::fs::read_to_string(&dst).unwrap(), "original content");
+    }
+
+    #[test]
+    fn test_backup_dir_action() {
+        let (_dir, base) = setup();
+        let src = base.join("source_dir");
+        let backup_dir = base.join("backups/2024-01-01T00-00-00");
+
+        // Create a directory with nested files
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("file1.txt"), "content1").unwrap();
+        std::fs::write(src.join("sub").join("file2.txt"), "content2").unwrap();
+
+        let action = Action::BackupDir {
+            source: src.clone(),
+            dest: backup_dir.clone(),
+        };
+        action.execute(&dummy_repo_path()).unwrap();
+
+        // Verify the backup directory exists with all files
+        assert!(backup_dir.exists());
+        assert!(backup_dir.is_dir());
+        assert!(backup_dir.join("file1.txt").exists());
+        assert!(backup_dir.join("sub").is_dir());
+        assert!(backup_dir.join("sub").join("file2.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(backup_dir.join("file1.txt")).unwrap(),
+            "content1"
+        );
+        assert_eq!(
+            std::fs::read_to_string(backup_dir.join("sub").join("file2.txt")).unwrap(),
+            "content2"
+        );
+    }
+
+    #[test]
+    fn test_restore_dir_action() {
+        let (_dir, base) = setup();
+        let backup = base.join("backups/2024-01-01T00-00-00");
+        let dest = base.join("restored_dir");
+
+        // Create a backup directory
+        std::fs::create_dir_all(backup.join("sub")).unwrap();
+        std::fs::write(backup.join("file1.txt"), "content1").unwrap();
+        std::fs::write(backup.join("sub").join("file2.txt"), "content2").unwrap();
+
+        // Create a directory at the destination (simulating the state before restore)
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join("old.txt"), "old").unwrap();
+
+        let action = Action::RestoreDir {
+            source: backup.clone(),
+            dest: dest.clone(),
+        };
+        action.execute(&dummy_repo_path()).unwrap();
+
+        // Verify the backup was restored (old directory replaced)
+        assert!(dest.exists());
+        assert!(dest.is_dir());
+        assert!(dest.join("file1.txt").exists());
+        assert!(dest.join("sub").is_dir());
+        assert!(dest.join("sub").join("file2.txt").exists());
+        assert!(!dest.join("old.txt").exists()); // old file should be gone
+        assert_eq!(
+            std::fs::read_to_string(dest.join("file1.txt")).unwrap(),
+            "content1"
+        );
+    }
+
+    #[test]
+    fn test_rollback_backup_dir() {
+        let (_dir, base) = setup();
+        let backup_dir = base.join("backups/2024-01-01T00-00-00");
+        let src = base.join("source");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("file.txt"), "data").unwrap();
+
+        let action = Action::BackupDir {
+            source: src,
+            dest: backup_dir.clone(),
+        };
+        action.execute(&dummy_repo_path()).unwrap();
+        assert!(backup_dir.exists());
+
+        // Rollback of BackupDir is RemoveFile (removes the backup)
+        let rollback = action.rollback().unwrap();
+        match &rollback {
+            Action::RemoveFile { path } => {
+                assert_eq!(path, &backup_dir);
+            }
+            other => panic!("expected RemoveFile, got {:?}", other),
+        }
+        rollback.execute(&dummy_repo_path()).unwrap();
+        assert!(!backup_dir.exists());
+    }
+
+    #[test]
+    fn test_rollback_restore_dir() {
+        let (_dir, base) = setup();
+        let dest = base.join("restored_dir");
+        let backup = base.join("backups/2024-01-01T00-00-00");
+        std::fs::create_dir_all(&backup).unwrap();
+        std::fs::write(backup.join("file.txt"), "data").unwrap();
+
+        let action = Action::RestoreDir {
+            source: backup,
+            dest: dest.clone(),
+        };
+        action.execute(&dummy_repo_path()).unwrap();
+        assert!(dest.exists());
+
+        // Rollback of RestoreDir is RemoveFile (removes the restored dir)
+        let rollback = action.rollback().unwrap();
+        match &rollback {
+            Action::RemoveFile { path } => {
+                assert_eq!(path, &dest);
+            }
+            other => panic!("expected RemoveFile, got {:?}", other),
+        }
+        rollback.execute(&dummy_repo_path()).unwrap();
+        assert!(!dest.exists());
     }
 
     #[test]

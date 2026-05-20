@@ -12,11 +12,19 @@ pub(crate) enum TargetState {
     NeedsSymlink,
     /// Target is a regular file — needs backup before symlink replacement.
     NeedsBackup,
+    /// Target is an existing directory — needs backup before symlink replacement.
+    /// The `String` contains the absolute path of the directory to be replaced.
+    NeedsBackupDir(String),
     /// Existing symlink is circular (externally created) — must be removed first.
     CircularSymlink,
 }
 
 /// Inspect the target path and determine what action is needed.
+///
+/// Returns `NeedsBackupDir` when the target is an existing directory, because
+/// replacing a directory with a symlink requires `fs::remove_dir_all` which
+/// silently destroys all contained files. This is especially critical on Windows
+/// where directory-to-junction replacement is a common workflow.
 pub(crate) fn inspect_target(target: &Path, expected_repo_file: &Path) -> TargetState {
     if is_symlink(target) {
         match fs::read_link(target) {
@@ -53,6 +61,10 @@ pub(crate) fn inspect_target(target: &Path, expected_repo_file: &Path) -> Target
             }
         }
         TargetState::NeedsSymlink
+    } else if target.is_dir() {
+        // Check directory before generic `exists` to avoid silent destruction.
+        // Directories require explicit backup before replacement with a symlink.
+        TargetState::NeedsBackupDir(target.to_string_lossy().to_string())
     } else if target.exists() {
         TargetState::NeedsBackup
     } else {

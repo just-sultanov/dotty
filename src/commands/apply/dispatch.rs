@@ -25,7 +25,7 @@ use super::tiers::{build_override_map, merge_tiers};
 /// 6. Execute plan
 /// 7. Print summary
 /// 8. Rebuild managed map in config
-pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
+pub fn run(dry_run: bool, platform_override: Option<String>, force: bool) -> Result<()> {
     let repo = RepoState::new().map_err(|e| anyhow::anyhow!("{e}"))?;
     repo.require_git().map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -56,6 +56,7 @@ pub fn run(dry_run: bool, platform_override: Option<String>) -> Result<()> {
         merged,
         override_map,
         config: config.clone(),
+        force,
     };
     let output = build_apply_plan(&input)?;
 

@@ -39,6 +39,17 @@ pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), Do
             copy_file(source, dest)?;
             verify_backup_integrity(source, dest)?;
         }
+        Action::BackupDir { source, dest } => {
+            let parent = dest.parent().ok_or_else(|| DottyError::PathResolution {
+                path: dest.to_path_buf(),
+                reason: format!(
+                    "cannot determine parent of backup dir path: {}",
+                    dest.display()
+                ),
+            })?;
+            fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
+            copy_dir(source, dest)?;
+        }
         Action::CopyFile { source, dest } => {
             let parent = dest.parent();
             if let Some(p) = parent {
@@ -88,6 +99,17 @@ pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), Do
             }
             copy_file(source, dest)?;
         }
+        Action::RestoreDir { source, dest } => {
+            // Remove existing directory (if any) before restoring backup
+            if dest.exists() {
+                if dest.is_dir() && !is_symlink(dest) {
+                    fs::remove_dir_all(dest).map_err(|e| io_error_with_path(e, dest))?;
+                } else if is_symlink(dest) {
+                    fs::remove_file(dest).map_err(|e| io_error_with_path(e, dest))?;
+                }
+            }
+            copy_dir(source, dest)?;
+        }
         Action::GitAdd { paths } => git::git_add(repo_path, paths)?,
         Action::GitCommit { message } => git::git_commit(repo_path, message)?,
     }
@@ -106,6 +128,7 @@ pub(crate) fn action_rollback(action: &Action) -> Option<Action> {
     match action {
         Action::CreateDir { path } => Some(Action::RemoveFile { path: path.clone() }),
         Action::Backup { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
+        Action::BackupDir { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
         Action::CopyFile { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
         Action::CreateSymlink {
             link, backup_path, ..
@@ -126,6 +149,7 @@ pub(crate) fn action_rollback(action: &Action) -> Option<Action> {
         Action::RemoveFile { path: _ } => None,
         Action::RemoveSymlink { path: _, .. } => None,
         Action::RestoreBackup { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
+        Action::RestoreDir { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
         Action::GitAdd { .. } => None,
         Action::GitCommit { .. } => None,
     }
@@ -340,6 +364,38 @@ fn rollback_completed(plan: &super::Plan, completed_indices: &[usize]) -> Result
 /// the intent clear at call sites.
 pub(crate) fn copy_file(source: &Path, dest: &Path) -> Result<(), DottyError> {
     fs::copy(source, dest).map(|_| ())?;
+    Ok(())
+}
+
+/// Recursively copy a directory from `source` to `dest`.
+///
+/// Creates the destination directory and copies all files and subdirectories
+/// recursively. Symlinked directories are skipped to avoid following symlinks.
+pub(crate) fn copy_dir(source: &Path, dest: &Path) -> Result<(), DottyError> {
+    // Create the destination directory
+    fs::create_dir_all(dest).map_err(|e| io_error_with_path(e, dest))?;
+
+    // Walk the source directory and copy each file
+    let mut files = Vec::new();
+    crate::fs_utils::walk_dir(source, &mut files, 0)?;
+
+    for file_path in &files {
+        // Compute the relative path from source
+        let relative = file_path
+            .strip_prefix(source)
+            .map_err(|e| DottyError::PathResolution {
+                path: file_path.clone(),
+                reason: format!("cannot strip source prefix: {e}"),
+            })?;
+
+        let dest_file = dest.join(relative);
+        // Ensure parent directory exists
+        if let Some(parent) = dest_file.parent() {
+            fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
+        }
+        copy_file(file_path, &dest_file)?;
+    }
+
     Ok(())
 }
 
