@@ -18,7 +18,7 @@ use crate::symlink::{self, is_symlink};
 /// A single atomic operation within a plan.
 ///
 /// Each action can be executed and, if needed, rolled back.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum Action {
     CreateDir {
         path: PathBuf,
@@ -451,140 +451,18 @@ fn rollback_completed(plan: &Plan, completed_indices: &[usize]) -> Result<(), Do
 /// Filename for the pending plan file inside the state directory.
 const PENDING_PLAN_FILE: &str = "pending_plan.json";
 
-/// Serializable action (uses `String` for paths).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-enum SerializableAction {
-    CreateDir {
-        path: String,
-    },
-    Backup {
-        source: String,
-        dest: String,
-    },
-    CopyFile {
-        source: String,
-        dest: String,
-    },
-    CreateSymlink {
-        target: String,
-        link: String,
-        backup_path: Option<String>,
-    },
-    RemoveFile {
-        path: String,
-    },
-    RemoveSymlink {
-        path: String,
-    },
-    RestoreBackup {
-        source: String,
-        dest: String,
-    },
-    GitAdd {
-        paths: Vec<String>,
-    },
-    GitCommit {
-        message: String,
-    },
-}
-
-impl From<&Action> for SerializableAction {
-    fn from(action: &Action) -> Self {
-        match action {
-            Action::CreateDir { path } => SerializableAction::CreateDir {
-                path: path.to_string_lossy().to_string(),
-            },
-            Action::Backup { source, dest } => SerializableAction::Backup {
-                source: source.to_string_lossy().to_string(),
-                dest: dest.to_string_lossy().to_string(),
-            },
-            Action::CopyFile { source, dest } => SerializableAction::CopyFile {
-                source: source.to_string_lossy().to_string(),
-                dest: dest.to_string_lossy().to_string(),
-            },
-            Action::CreateSymlink {
-                target,
-                link,
-                backup_path,
-            } => SerializableAction::CreateSymlink {
-                target: target.to_string_lossy().to_string(),
-                link: link.to_string_lossy().to_string(),
-                backup_path: backup_path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string()),
-            },
-            Action::RemoveFile { path } => SerializableAction::RemoveFile {
-                path: path.to_string_lossy().to_string(),
-            },
-            Action::RemoveSymlink { path } => SerializableAction::RemoveSymlink {
-                path: path.to_string_lossy().to_string(),
-            },
-            Action::RestoreBackup { source, dest } => SerializableAction::RestoreBackup {
-                source: source.to_string_lossy().to_string(),
-                dest: dest.to_string_lossy().to_string(),
-            },
-            Action::GitAdd { paths } => SerializableAction::GitAdd {
-                paths: paths
-                    .iter()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .collect(),
-            },
-            Action::GitCommit { message } => SerializableAction::GitCommit {
-                message: message.clone(),
-            },
-        }
-    }
-}
-
-impl SerializableAction {
-    /// Convert back to an `Action` with `PathBuf` fields.
-    fn into_action(self) -> Action {
-        match self {
-            SerializableAction::CreateDir { path } => Action::CreateDir {
-                path: PathBuf::from(path),
-            },
-            SerializableAction::Backup { source, dest } => Action::Backup {
-                source: PathBuf::from(source),
-                dest: PathBuf::from(dest),
-            },
-            SerializableAction::CopyFile { source, dest } => Action::CopyFile {
-                source: PathBuf::from(source),
-                dest: PathBuf::from(dest),
-            },
-            SerializableAction::CreateSymlink {
-                target,
-                link,
-                backup_path,
-            } => Action::CreateSymlink {
-                target: PathBuf::from(target),
-                link: PathBuf::from(link),
-                backup_path: backup_path.map(PathBuf::from),
-            },
-            SerializableAction::RemoveFile { path } => Action::RemoveFile {
-                path: PathBuf::from(path),
-            },
-            SerializableAction::RemoveSymlink { path } => Action::RemoveSymlink {
-                path: PathBuf::from(path),
-            },
-            SerializableAction::RestoreBackup { source, dest } => Action::RestoreBackup {
-                source: PathBuf::from(source),
-                dest: PathBuf::from(dest),
-            },
-            SerializableAction::GitAdd { paths } => Action::GitAdd {
-                paths: paths.into_iter().map(PathBuf::from).collect(),
-            },
-            SerializableAction::GitCommit { message } => Action::GitCommit { message },
-        }
-    }
-}
-
 /// A pending plan saved to disk for recovery after interrupted operations.
+///
+/// Serialized as JSON with the same schema as an `Action` enum (externally tagged)
+/// because `Action` derives `Serialize + Deserialize`. PathBuf fields are serialized
+/// as strings, so the format is identical to the previous `SerializableAction`-based
+/// approach — existing plan files on disk remain compatible.
 #[derive(Debug, Serialize, Deserialize)]
 struct PendingPlan {
     /// Path to the dotty repository.
     repo_path: String,
     /// Actions that were planned but may not have completed.
-    actions: Vec<SerializableAction>,
+    actions: Vec<Action>,
 }
 
 impl PendingPlan {
@@ -592,7 +470,7 @@ impl PendingPlan {
     fn from_plan(plan: &Plan) -> Self {
         Self {
             repo_path: plan.repo_path.to_string_lossy().to_string(),
-            actions: plan.actions.iter().map(SerializableAction::from).collect(),
+            actions: plan.actions.clone(),
         }
     }
 
@@ -600,12 +478,7 @@ impl PendingPlan {
     fn to_plan(&self) -> Plan {
         Plan {
             repo_path: PathBuf::from(&self.repo_path),
-            actions: self
-                .actions
-                .iter()
-                .cloned()
-                .map(|a| a.into_action())
-                .collect(),
+            actions: self.actions.clone(),
         }
     }
 }
