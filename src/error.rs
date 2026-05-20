@@ -6,6 +6,7 @@ use thiserror::Error;
 /// Use `thiserror` for domain-specific errors and `anyhow` for the error chain
 /// in `main()` and command dispatch.
 #[derive(Error, Debug)]
+#[must_use]
 pub(crate) enum DottyError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
