@@ -23,7 +23,7 @@ const PENDING_PLAN_FILE: &str = "pending_plan.json";
 /// as strings, so the format is identical to the previous `SerializableAction`-based
 /// approach — existing plan files on disk remain compatible.
 #[derive(Debug, Serialize, Deserialize)]
-struct PendingPlan {
+pub(crate) struct PendingPlan {
     /// Path to the dotty repository.
     repo_path: String,
     /// Actions that were planned but may not have completed.
@@ -32,7 +32,7 @@ struct PendingPlan {
 
 impl PendingPlan {
     /// Convert a `Plan` into a `PendingPlan` for serialization.
-    fn from_plan(plan: &Plan) -> Self {
+    pub(crate) fn from_plan(plan: &Plan) -> Self {
         Self {
             repo_path: plan.repo_path.to_string_lossy().to_string(),
             actions: plan.actions.clone(),

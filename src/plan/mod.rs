@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 pub(crate) use execution::execute_plan;
 pub(crate) use persistence::{clear_pending_plan, load_pending_plan, save_pending_plan};
 
+#[cfg(test)]
+pub(crate) use persistence::PendingPlan;
+
 /// Maximum number of paths to show in `GitAdd` action display.
 const GIT_ADD_MAX_SHOWN: usize = 3;
 
