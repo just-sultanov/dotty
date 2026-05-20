@@ -474,6 +474,7 @@ fn resolve_conflicts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::symlink::create_symlink;
 
     /// Create a unique temporary directory that is automatically cleaned up on drop.
     fn test_dir() -> tempfile::TempDir {
@@ -827,7 +828,7 @@ mod tests {
         let real_repo = base.join("real_repo");
         let symlink_repo = base.join("link_repo");
         fs::create_dir_all(&real_repo).unwrap();
-        std::os::unix::fs::symlink(&real_repo, &symlink_repo).unwrap();
+        create_symlink(&real_repo, &symlink_repo).unwrap();
 
         let state = base.join("state");
         let home = base.join("home");
