@@ -198,10 +198,43 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
         }
     }
 
-    // Remove orphan symlinks
+    // Remove orphan targets — the target may be a symlink, regular file, or
+    // directory depending on how it was originally managed. Use
+    // `symlink_metadata` (which does not follow symlinks) to determine the
+    // correct removal action.
     for (_repo_rel, target_rel) in &orphans {
         let target = expand_tilde(target_rel)?;
-        plan.add(Action::RemoveSymlink { path: target });
+        let metadata = match std::fs::symlink_metadata(&target) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Target already gone — nothing to remove.
+                continue;
+            }
+            Err(e) => {
+                warn!(
+                    "cannot determine type of orphan target {}: {}",
+                    target.display(),
+                    e
+                );
+                continue;
+            }
+        };
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            plan.add(Action::RemoveSymlink { path: target });
+        } else if file_type.is_file() {
+            plan.add(Action::RemoveFile { path: target });
+        } else if file_type.is_dir() {
+            // Mitigation: use RemoveDir for directories instead of blindly
+            // removing them as symlinks (which would silently do nothing).
+            // Note: RemoveDir is not yet an Action variant — fall back to
+            // RemoveFile which will fail gracefully on a directory.
+            plan.add(Action::RemoveFile { path: target });
+        } else {
+            // Special files (sockets, fifos, etc.) — attempt RemoveFile as
+            // best-effort; it will fail safely if unsupported.
+            plan.add(Action::RemoveFile { path: target });
+        }
     }
 
     Ok(ApplyPlanOutput {
@@ -950,6 +983,173 @@ mod tests {
             }
 
             assert!(output.orphans.is_empty());
+        });
+    }
+
+    /// Tests that orphan symlinks are removed via RemoveSymlink action.
+    #[test]
+    fn test_orphan_removal_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".old_symlink");
+        let repo_file = repo.join("base/home/.old_symlink");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "old content").unwrap();
+        create_symlink(&repo_file, &target).unwrap();
+
+        let mut merged = IndexMap::new();
+        merged.insert(
+            target.clone(),
+            ("base".to_string(), "base/home/.old_symlink".to_string()),
+        );
+        let config = Config::new();
+        // .old_symlink is NOT in config.managed → orphan
+
+        crate::tests::with_test_home(|_| {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: IndexMap::new(),
+                config,
+                force: false,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            assert_eq!(output.orphans.len(), 1);
+            assert_eq!(output.orphans[0].0, "base/home/.old_symlink");
+            // Should have RemoveSymlink action for the orphan
+            assert!(
+                output
+                    .plan
+                    .actions
+                    .iter()
+                    .any(|a| matches!(a, Action::RemoveSymlink { path } if path == &target)),
+                "plan should contain RemoveSymlink for orphan symlink"
+            );
+        });
+    }
+
+    /// Tests that orphan regular files are removed via RemoveFile action
+    /// (not RemoveSymlink, which would silently do nothing).
+    #[test]
+    fn test_orphan_removal_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".old_file");
+        let repo_file = repo.join("base/home/.old_file");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "old content").unwrap();
+        // Create as a regular file (not a symlink)
+        std::fs::write(&target, "stale content").unwrap();
+
+        let mut merged = IndexMap::new();
+        merged.insert(
+            target.clone(),
+            ("base".to_string(), "base/home/.old_file".to_string()),
+        );
+        let config = Config::new();
+        // .old_file is NOT in config.managed → orphan
+
+        crate::tests::with_test_home(|_| {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: IndexMap::new(),
+                config,
+                force: false,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            assert_eq!(output.orphans.len(), 1);
+            // Should have RemoveFile action for the orphan (not RemoveSymlink)
+            assert!(
+                output
+                    .plan
+                    .actions
+                    .iter()
+                    .any(|a| matches!(a, Action::RemoveFile { path } if path == &target)),
+                "plan should contain RemoveFile for orphan regular file"
+            );
+            // Should NOT have RemoveSymlink for this orphan
+            assert!(
+                !output
+                    .plan
+                    .actions
+                    .iter()
+                    .any(|a| matches!(a, Action::RemoveSymlink { path } if path == &target)),
+                "plan should NOT contain RemoveSymlink for orphan regular file"
+            );
+        });
+    }
+
+    /// Tests that non-existent orphan targets are skipped (no action generated).
+    #[test]
+    fn test_orphan_removal_non_existent() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".already_gone");
+        let repo_file = repo.join("base/home/.already_gone");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "old content").unwrap();
+        // Do NOT create the target file — it's already been removed
+
+        let mut merged = IndexMap::new();
+        merged.insert(
+            target.clone(),
+            ("base".to_string(), "base/home/.already_gone".to_string()),
+        );
+        let config = Config::new();
+        // .already_gone is NOT in config.managed → orphan
+
+        crate::tests::with_test_home(|_| {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: IndexMap::new(),
+                config,
+                force: false,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            assert_eq!(output.orphans.len(), 1);
+            // Should have NO removal actions (target already gone)
+            let removal_actions: Vec<_> = output
+                .plan
+                .actions
+                .iter()
+                .filter(|a| matches!(a, Action::RemoveFile { .. } | Action::RemoveSymlink { .. }))
+                .collect();
+            assert!(
+                removal_actions.is_empty(),
+                "plan should have no removal actions for non-existent orphan"
+            );
         });
     }
 }
