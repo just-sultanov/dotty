@@ -4,7 +4,9 @@
 
 ## Project
 
-**dotty** — a minimal dotfiles manager for multiple machines. Config files live in a git repository organized by priority tiers (`base/`, `<platform>/`, `<machine>/`) and are linked to their real locations via file-level symlinks.
+**dotty** — a minimal dotfiles manager for multiple machines.
+Config files live in a git repository organized by priority tiers (`base/`, `<platform>/`, `<machine>/`)
+and are linked to their real locations via file-level symlinks.
 
 - **Language:** Rust (edition 2024)
 - **Package manager:** mise (manages Rust toolchain, tasks, scripts)
@@ -14,7 +16,7 @@
 
 1. **Always run commands via `mise run <task>`** — never call `cargo`, `rustup`, or other tools directly.
 2. **Never skip lint or tests.** After any code change, run `mise run check` to verify everything passes.
-4. **Read `readme.md`** for the full spec before implementing features.
+3. **Read `readme.md`** for the full spec before implementing features.
 
 ## Mise Tasks
 
