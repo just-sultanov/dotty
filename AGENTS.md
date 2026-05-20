@@ -35,7 +35,13 @@ and are linked to their real locations via file-level symlinks.
 | `mise run format`        | Format code with `cargo fmt`                                                       |
 | `mise run lint`          | Run formatters and linters (`cargo fmt -- --check`, `cargo clippy -- -D warnings`) |
 | `mise run test`          | Run all tests (`cargo test -- --nocapture`)                                        |
-| `mise run check`         | Run lint **and** tests (combined)                                                  |
+| `mise run check`         | Run lint, tests, and code coverage (combined)                                      |
+
+### Coverage
+
+| Command                | Description                                                      |
+| ---------------------- | ---------------------------------------------------------------- |
+| `mise run coverage`    | Run tests with code coverage (HTML report opened in browser)     |
 
 ### Build
 
@@ -76,6 +82,9 @@ mise run lint
 
 # Run only tests
 mise run test
+
+# Run tests with coverage (HTML report)
+mise run coverage
 
 # Build for current platform
 mise run build-macos-arm   # or build-macos-x86, build-linux
