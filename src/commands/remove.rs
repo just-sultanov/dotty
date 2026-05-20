@@ -138,7 +138,7 @@ fn collect_target_files(target_path: &Path) -> Result<Vec<PathBuf>> {
     if target_path.is_file() || is_symlink(target_path) {
         files.push(target_path.to_path_buf());
     } else if target_path.is_dir() {
-        walk_dir(target_path, &mut files)?;
+        walk_dir(target_path, &mut files, 0)?;
     } else {
         // Path doesn't exist yet — treat it as a single target for lookup
         files.push(target_path.to_path_buf());
