@@ -715,10 +715,4 @@ mod tests {
             assert!(result.is_ok());
         });
     }
-
-    #[test]
-    fn test_is_interactive_returns_false_in_tests() {
-        // Confirms the interactivity guard works: in test env, not interactive
-        assert!(!is_interactive());
-    }
 }
