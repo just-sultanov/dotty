@@ -32,10 +32,8 @@ fn main() -> Result<()> {
     log::init(verbosity);
 
     // Check for a pending plan from a previously interrupted operation
-    if !cli.skip_recovery()
-        && let Err(e) = check_pending_plan(cli.recovery_action())
-    {
-        eprintln!("Warning: pending plan check failed: {e}");
+    if !cli.skip_recovery() {
+        check_pending_plan(cli.recovery_action())?;
     }
 
     match cli.command {
