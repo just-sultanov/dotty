@@ -186,13 +186,15 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
         });
     }
 
-    // Orphan detection: managed entries not in tracked files
-    let tracked_set: std::collections::HashSet<&String> =
-        input.merged.values().map(|(_, r)| r as &String).collect();
+    // Orphan detection: find merged entries whose repo_rel is not in
+    // config.managed. Build tracked_set from config.managed keys to
+    // ensure consistent key format (repo_rel strings) across both sources,
+    // avoiding mismatches from tuple extraction in merged.values().
+    let tracked_set: std::collections::HashSet<&String> = input.config.managed.keys().collect();
     let mut orphans: Vec<(String, String)> = Vec::new();
-    for (repo_rel, target_rel) in &input.config.managed {
+    for (_target_path, (_tier, repo_rel)) in &input.merged {
         if !tracked_set.contains(repo_rel) {
-            orphans.push((repo_rel.clone(), target_rel.clone()));
+            orphans.push((repo_rel.clone(), _target_path.to_string_lossy().to_string()));
         }
     }
 
@@ -404,7 +406,10 @@ mod tests {
             target.clone(),
             ("base".to_string(), "base/home/.vimrc".to_string()),
         );
-        let config = Config::new();
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
         with_test_home(|_| {
             let input = ApplyPlanInput {
@@ -446,7 +451,10 @@ mod tests {
             target.clone(),
             ("base".to_string(), "base/home/.vimrc".to_string()),
         );
-        let config = Config::new();
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
         with_test_home(|_| {
             let input = ApplyPlanInput {
@@ -488,7 +496,10 @@ mod tests {
             target.clone(),
             ("base".to_string(), "base/home/.vimrc".to_string()),
         );
-        let config = Config::new();
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
         with_test_home(|_| {
             let input = ApplyPlanInput {
@@ -532,7 +543,10 @@ mod tests {
             target.clone(),
             ("base".to_string(), "base/home/.config_dir".to_string()),
         );
-        let config = Config::new();
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.config_dir".into(), "~/.config_dir".into());
 
         with_test_home(|_| {
             let input = ApplyPlanInput {
@@ -578,7 +592,10 @@ mod tests {
             target.clone(),
             ("base".to_string(), "base/home/.config_dir".to_string()),
         );
-        let config = Config::new();
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.config_dir".into(), "~/.config_dir".into());
 
         with_test_home(|_| {
             let input = ApplyPlanInput {
@@ -611,6 +628,9 @@ mod tests {
         });
     }
 
+    /// Tests orphan detection: files in merged not in config.managed.
+    /// tracked_set is built from config.managed keys to ensure consistent
+    /// key format (repo_rel strings) across both sources.
     #[test]
     fn test_build_apply_plan_orphan_detection() {
         let dir = tempfile::tempdir().unwrap();
@@ -628,18 +648,26 @@ mod tests {
         std::fs::write(&repo_file, "content").unwrap();
         create_symlink(&repo_file, &target).unwrap();
 
+        let target_old = home.join(".old");
+        let repo_file_old = repo.join("base/home/.old");
+        std::fs::create_dir_all(repo_file_old.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file_old, "old content").unwrap();
+        create_symlink(&repo_file_old, &target_old).unwrap();
+
         let mut merged = IndexMap::new();
         merged.insert(
             target.clone(),
             ("base".to_string(), "base/home/.vimrc".to_string()),
         );
+        merged.insert(
+            target_old.clone(),
+            ("base".to_string(), "base/home/.old".to_string()),
+        );
         let mut config = Config::new();
+        // Only .vimrc is in config.managed; .old was removed from config
         config
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
-        config
-            .managed
-            .insert("base/home/.old".into(), "~/.old".into());
 
         with_test_home(|_| {
             let input = ApplyPlanInput {
@@ -653,9 +681,56 @@ mod tests {
             };
             let output = build_apply_plan(&input).unwrap();
 
+            // .old is in merged but not in config.managed → orphan
             assert_eq!(output.orphans.len(), 1);
             assert_eq!(output.orphans[0].0, "base/home/.old");
             assert!(!output.plan.is_empty());
+        });
+    }
+
+    /// Tests that overridden lower-priority tier files are NOT flagged
+    /// as orphans when tracked_set is built from config.managed keys.
+    #[test]
+    fn test_build_apply_plan_orphan_detection_no_false_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "base content").unwrap();
+        create_symlink(&repo_file, &target).unwrap();
+
+        let mut merged = IndexMap::new();
+        merged.insert(
+            target.clone(),
+            ("base".to_string(), "base/home/.vimrc".to_string()),
+        );
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        with_test_home(|_| {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: IndexMap::new(),
+                config,
+                force: false,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            // No orphans when merged and config.managed are aligned
+            assert!(output.orphans.is_empty());
         });
     }
 

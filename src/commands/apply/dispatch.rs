@@ -48,6 +48,12 @@ pub fn run(dry_run: bool, platform_override: Option<String>, force: bool) -> Res
     // 4. Build override map: target_path → lower tier that was overridden
     let override_map = build_override_map(&tracked_files, &Some(machine_name.clone()), &platform);
 
+    // 4b. Rebuild managed map from tracked files so orphan detection has
+    //     a complete view of currently tracked files (prevents false
+    //     orphans on first apply when config.managed is empty/stale).
+    let new_managed = rebuild_managed_map(&tracked_files);
+    config.managed = new_managed;
+
     // 5. Build the plan (pure function — no git/config I/O)
     let input = ApplyPlanInput {
         repo_path: repo_path.clone(),
@@ -66,13 +72,9 @@ pub fn run(dry_run: bool, platform_override: Option<String>, force: bool) -> Res
     // 7. Print per-file summary
     print_per_file_summary(&output.file_results, &output.orphans, dry_run);
 
-    // 8. Rebuild managed map from tracked files
-    if !dry_run {
-        let new_managed = rebuild_managed_map(&tracked_files);
-        config.managed = new_managed;
-        if let Err(e) = write_config(state_path, &config) {
-            warn!("failed to write config: {e}");
-        }
+    // 8. Write updated config (managed map was rebuilt in step 4b)
+    if !dry_run && let Err(e) = write_config(state_path, &config) {
+        warn!("failed to write config: {e}");
     }
 
     Ok(())
