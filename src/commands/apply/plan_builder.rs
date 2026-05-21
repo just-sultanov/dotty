@@ -1,3 +1,10 @@
+//! Build an apply plan for the `apply` command.
+//!
+//! This module constructs a `Plan` by inspecting the filesystem state of each
+//! target path and determining the necessary actions (CreateDir, Backup,
+//! CreateSymlink, RemoveSymlink). It also collects per-file results for
+//! console output. Orphan detection is delegated to `orphan_detection`.
+
 use indexmap::IndexMap;
 use std::path::PathBuf;
 
@@ -5,10 +12,10 @@ use anyhow::Result;
 use tracing::warn;
 
 use crate::config::Config;
-use crate::paths::expand_tilde;
 use crate::plan::{Action, Plan};
 
 use super::inspect::{TargetState, inspect_target};
+use super::orphan_detection::{OrphanDetectionInput, detect_orphans_and_build_removals};
 
 /// Input data for building an `apply` plan.
 pub(crate) struct ApplyPlanInput {
@@ -192,61 +199,23 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
         });
     }
 
-    // Orphan detection: find merged entries whose repo_rel is not in
-    // config.managed. Build tracked_set from config.managed keys to
-    // ensure consistent key format (repo_rel strings) across both sources,
-    // avoiding mismatches from tuple extraction in merged.values().
-    let tracked_set: std::collections::HashSet<&String> = input.config.managed.keys().collect();
-    let mut orphans: Vec<(String, String)> = Vec::new();
-    for (_target_path, (_tier, repo_rel)) in &input.merged {
-        if !tracked_set.contains(repo_rel) {
-            orphans.push((repo_rel.clone(), _target_path.to_string_lossy().to_string()));
-        }
-    }
+    // Orphan detection delegated to dedicated module.
+    let orphan_input = OrphanDetectionInput {
+        merged: &input.merged,
+        config: &input.config,
+    };
+    let orphan_output =
+        detect_orphans_and_build_removals(&orphan_input, &input.state_path, &input.home);
 
-    // Remove orphan targets — the target may be a symlink, regular file, or
-    // directory depending on how it was originally managed. Use
-    // `symlink_metadata` (which does not follow symlinks) to determine the
-    // correct removal action.
-    for (_repo_rel, target_rel) in &orphans {
-        let target = expand_tilde(target_rel)?;
-        let metadata = match std::fs::symlink_metadata(&target) {
-            Ok(m) => m,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // Target already gone — nothing to remove.
-                continue;
-            }
-            Err(e) => {
-                warn!(
-                    "cannot determine type of orphan target {}: {}",
-                    target.display(),
-                    e
-                );
-                continue;
-            }
-        };
-        let file_type = metadata.file_type();
-        if file_type.is_symlink() {
-            plan.add(Action::RemoveSymlink { path: target });
-        } else if file_type.is_file() {
-            plan.add(Action::RemoveFile { path: target });
-        } else if file_type.is_dir() {
-            // Mitigation: use RemoveDir for directories instead of blindly
-            // removing them as symlinks (which would silently do nothing).
-            // Note: RemoveDir is not yet an Action variant — fall back to
-            // RemoveFile which will fail gracefully on a directory.
-            plan.add(Action::RemoveFile { path: target });
-        } else {
-            // Special files (sockets, fifos, etc.) — attempt RemoveFile as
-            // best-effort; it will fail safely if unsupported.
-            plan.add(Action::RemoveFile { path: target });
-        }
+    // Add orphan removal actions to the plan.
+    for action in orphan_output.removal_actions {
+        plan.add(action);
     }
 
     Ok(ApplyPlanOutput {
         plan,
         file_results,
-        orphans,
+        orphans: orphan_output.orphans,
     })
 }
 
