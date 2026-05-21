@@ -7,30 +7,47 @@ use crate::error::DottyError;
 /// Prevents stack overflow and excessive I/O on deeply nested or symlink-heavy trees.
 const MAX_WALK_DEPTH: u32 = 50;
 
-/// Recursively walk a directory and collect all file paths.
+/// Walk a directory and collect all file paths using an iterative approach.
 ///
-/// Traversal stops at [MAX_WALK_DEPTH] levels. Symlinked directories are skipped
-/// to avoid following symlinks into arbitrary locations (symlinked *files* are still collected).
+/// Uses an explicit `Vec<PathBuf>` work queue instead of recursion to prevent
+/// stack overflow on deeply nested directory trees (e.g., misconfigured backup
+/// directories). Traversal stops at [MAX_WALK_DEPTH] levels. Symlinked
+/// directories are skipped to avoid following symlinks into arbitrary locations
+/// (symlinked *files* are still collected).
+///
+/// The iterative approach trades heap memory for stack safety: the work queue
+/// grows on the heap, which can handle far wider directory trees than the
+/// call stack can handle deep ones.
 pub fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>, depth: u32) -> Result<(), DottyError> {
     if depth > MAX_WALK_DEPTH {
         return Ok(());
     }
 
-    for dir_entry in fs::read_dir(dir)? {
-        let dir_entry = dir_entry?;
-        let path = dir_entry.path();
+    // Iterative DFS using an explicit work queue (stack).
+    let mut queue: Vec<(PathBuf, u32)> = vec![(dir.to_path_buf(), depth)];
 
-        // is_file() follows symlinks; symlink_metadata checks the link itself.
-        // A symlink to a directory is NOT a file, so exclude it here.
-        let is_symlink = path
-            .symlink_metadata()
-            .is_ok_and(|m| m.file_type().is_symlink());
-        let is_file_or_symlink = path.is_file() || (is_symlink && !path.is_dir());
+    while let Some((current, current_depth)) = queue.pop() {
+        let dir_entries = fs::read_dir(&current)?;
 
-        if is_file_or_symlink {
-            files.push(path);
-        } else if path.is_dir() && !is_symlink {
-            walk_dir(&path, files, depth + 1)?;
+        for dir_entry in dir_entries {
+            let dir_entry = dir_entry?;
+            let path = dir_entry.path();
+
+            // is_file() follows symlinks; symlink_metadata checks the link itself.
+            // A symlink to a directory is NOT a file, so exclude it here.
+            let is_symlink = path
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink());
+            let is_file_or_symlink = path.is_file() || (is_symlink && !path.is_dir());
+
+            if is_file_or_symlink {
+                files.push(path);
+            } else if path.is_dir() && !is_symlink {
+                let next_depth = current_depth + 1;
+                if next_depth <= MAX_WALK_DEPTH {
+                    queue.push((path, next_depth));
+                }
+            }
         }
     }
     Ok(())
@@ -173,6 +190,45 @@ mod tests {
             !files.iter().any(|f| f.file_name().unwrap() == "inside.txt"),
             "walk_dir should skip symlinked directories"
         );
+    }
+
+    /// Integration test: verify no stack overflow on deeply nested directories.
+    /// Creates a directory tree >50 levels deep and confirms walk_dir completes
+    /// without panicking (the depth limit stops collection but traversal must
+    /// iterate through the queue without blowing the stack).
+    #[test]
+    fn test_walk_dir_deep_nesting_no_overflow() {
+        let dir = tempfile::tempdir().unwrap();
+        let scan_dir = dir.path().join("scan");
+        fs::create_dir_all(&scan_dir).unwrap();
+
+        // Add a file at the root level so we can verify traversal works.
+        fs::write(scan_dir.join("root.txt"), "root").unwrap();
+
+        // Create a directory tree 100 levels deep (well beyond MAX_WALK_DEPTH of 50)
+        let mut current = scan_dir.clone();
+        for i in 0..100 {
+            current = current.join(format!("level_{i}"));
+        }
+        fs::create_dir_all(&current).unwrap();
+        fs::write(current.join("deep.txt"), "deep").unwrap();
+
+        // This must not panic or overflow the stack.
+        let mut files = Vec::new();
+        walk_dir(&scan_dir, &mut files, 0).unwrap();
+
+        // The deep file should NOT be collected (beyond depth 50)
+        assert!(
+            !files.iter().any(|f| f.file_name().unwrap() == "deep.txt"),
+            "walk_dir should stop at depth limit"
+        );
+
+        // The root-level file SHOULD be collected.
+        assert!(
+            files.iter().any(|f| f.file_name().unwrap() == "root.txt"),
+            "walk_dir should collect files at valid depths"
+        );
+        assert_eq!(files.len(), 1);
     }
 
     #[test]
