@@ -85,6 +85,13 @@ pub(crate) enum DottyError {
     )]
     InitDirectoryNotEmpty { path: String },
 
+    /// Init failed: target directory is already a git repository.
+    /// Used when `dotty init` with a git URL encounters an existing .git directory.
+    #[error(
+        "repository already initialized at {path}. Use `dotty init` without a URL to use an existing repo."
+    )]
+    GitAlreadyInitialized { path: String },
+
     /// Generic command error for cases where a domain-specific variant
     /// does not cleanly apply. Used when converting from anyhow::Error.
     #[error("command error: {0}")]
@@ -257,5 +264,17 @@ mod tests {
         assert!(msg.contains("/home/user/dotfiles"));
         assert!(msg.contains("already exists and is not empty"));
         assert!(msg.contains("DOTTY_HOME"));
+    }
+
+    #[test]
+    fn test_git_already_initialized_message() {
+        let err = DottyError::GitAlreadyInitialized {
+            path: "/home/user/dotfiles".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("/home/user/dotfiles"));
+        assert!(msg.contains("repository already initialized"));
+        assert!(msg.contains("dotty init"));
+        assert!(msg.contains("without a URL"));
     }
 }

@@ -78,10 +78,20 @@ fn create_fresh_repo(repo_path: &Path) -> Result<()> {
 
 /// Clone a repository into the resolved path.
 ///
-/// Fails with `DottyError::InitDirectoryNotEmpty` if the target directory
-/// exists and contains files. IO errors from `read_dir` map to `DottyError::Io`.
+/// Fails with `DottyError::GitAlreadyInitialized` if the target path
+/// already contains a `.git` directory. Fails with
+/// `DottyError::InitDirectoryNotEmpty` if the target directory exists
+/// and contains files. IO errors from `read_dir` map to `DottyError::Io`.
 /// Clone errors (git_clone) map to `DottyError::Git`.
 fn clone_repo(url: &str, repo_path: &Path) -> Result<()> {
+    // Pre-check: if the path already has a .git directory, abort with a
+    // specific error so the user knows to use `dotty init` without a URL.
+    if repo_path.join(".git").exists() {
+        return Err(DottyError::GitAlreadyInitialized {
+            path: repo_path.display().to_string(),
+        });
+    }
+
     // Pre-check: if directory exists and is not empty, abort
     if repo_path.exists() {
         let mut entries = fs::read_dir(repo_path).map_err(DottyError::Io)?;

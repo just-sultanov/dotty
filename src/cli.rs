@@ -74,7 +74,7 @@ impl Cli {
 pub enum Commands {
     /// Bootstrap a new repository or clone an existing one
     #[command(
-        after_help = "Examples:\n  # Create a fresh repository in the current directory\n  dotty init\n\n  # Clone an existing dotty repository\n  dotty init git@github.com:user/dotty.git\n\n  # Clone and set machine name in one step\n  dotty init git@github.com:user/dotty.git --machine macbook"
+        after_help = "Examples:\n  # Create a fresh repository in the current directory\n  dotty init\n\n  # Clone an existing dotty repository\n  dotty init git@github.com:user/dotty.git\n\n  # Clone and set machine name in one step\n  dotty init git@github.com:user/dotty.git --machine macbook\n\nNotes:\n  If the target directory already contains a .git directory, dotty init\n  with a URL will fail. Use `dotty init` without a URL to use an existing\n  repository."
     )]
     Init {
         /// Git URL to clone (optional — omit for fresh repo)
