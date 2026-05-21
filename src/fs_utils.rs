@@ -177,10 +177,7 @@ mod tests {
         // Create the scan directory with a symlink pointing to real_dir
         fs::create_dir_all(&scan_dir).unwrap();
         let link_dir = scan_dir.join("link_dir");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&real_dir, &link_dir).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&real_dir, &link_dir).unwrap();
+        crate::symlink::create_symlink(&real_dir, &link_dir).unwrap();
 
         let mut files = Vec::new();
         walk_dir(&scan_dir, &mut files, 0).unwrap();
@@ -241,10 +238,7 @@ mod tests {
 
         // Create a symlink to that file
         let link_file = path.join("link.txt");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(path.join("real.txt"), &link_file).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_file(path.join("real.txt"), &link_file).unwrap();
+        crate::symlink::create_symlink(&path.join("real.txt"), &link_file).unwrap();
 
         let mut files = Vec::new();
         walk_dir(&path, &mut files, 0).unwrap();

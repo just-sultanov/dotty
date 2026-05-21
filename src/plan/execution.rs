@@ -534,6 +534,8 @@ mod tests {
     use super::*;
     use std::fs;
 
+    use crate::symlink::create_symlink;
+
     /// Test that copy_dir skips symlinked files by default (follow_symlinks=false).
     ///
     /// Creates a directory with a real file and a symlink to an external file.
@@ -551,10 +553,7 @@ mod tests {
         // Create a symlink pointing to a file outside the source directory
         let external_file = dir.path().join("external.txt");
         fs::write(&external_file, "external content").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&external_file, source.join("link.txt")).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&external_file, source.join("link.txt")).unwrap();
+        create_symlink(&external_file, &source.join("link.txt")).unwrap();
 
         // Copy with follow_symlinks=false (default)
         copy_dir(&source, &dest, false).unwrap();
@@ -587,10 +586,7 @@ mod tests {
         // Create a symlink pointing to a file outside the source directory
         let external_file = dir.path().join("external.txt");
         fs::write(&external_file, "external content").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&external_file, source.join("link.txt")).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&external_file, source.join("link.txt")).unwrap();
+        create_symlink(&external_file, &source.join("link.txt")).unwrap();
 
         // Copy with follow_symlinks=true
         copy_dir(&source, &dest, true).unwrap();
@@ -640,10 +636,7 @@ mod tests {
         let external_dir = dir.path().join("external_dir");
         fs::create_dir_all(&external_dir).unwrap();
         fs::write(external_dir.join("sensitive.txt"), "secret").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&external_dir, source.join("link_dir")).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&external_dir, source.join("link_dir")).unwrap();
+        create_symlink(&external_dir, &source.join("link_dir")).unwrap();
 
         // Copy with follow_symlinks=false
         copy_dir(&source, &dest, false).unwrap();
@@ -669,10 +662,7 @@ mod tests {
         let external_dir = dir.path().join("external_dir");
         fs::create_dir_all(&external_dir).unwrap();
         fs::write(external_dir.join("sensitive.txt"), "secret").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&external_dir, source.join("link_dir")).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&external_dir, source.join("link_dir")).unwrap();
+        create_symlink(&external_dir, &source.join("link_dir")).unwrap();
 
         // Copy with follow_symlinks=true
         copy_dir(&source, &dest, true).unwrap();
@@ -696,10 +686,7 @@ mod tests {
         // Create a symlink to an external file
         let external = dir.path().join("external.txt");
         fs::write(&external, "external").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&external, source.join("link.txt")).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&external, source.join("link.txt")).unwrap();
+        create_symlink(&external, &source.join("link.txt")).unwrap();
 
         let action = Action::BackupDir {
             source: source.clone(),
@@ -730,10 +717,7 @@ mod tests {
         // Create a symlink to an external file
         let external = dir.path().join("external.txt");
         fs::write(&external, "external content").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&external, source.join("link.txt")).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&external, source.join("link.txt")).unwrap();
+        create_symlink(&external, &source.join("link.txt")).unwrap();
 
         let action = Action::BackupDir {
             source: source.clone(),

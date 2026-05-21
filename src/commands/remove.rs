@@ -1167,10 +1167,7 @@ mod tests {
 
         // Create a symlink pointing to the directory
         let symlink = home.join("link_to_dir");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&target_dir, &symlink).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&target_dir, &symlink).unwrap();
+        crate::symlink::create_symlink(&target_dir, &symlink).unwrap();
 
         // Create a repo file
         let repo_file = repo.join("base/home/link_to_dir/file.txt");
@@ -1218,10 +1215,7 @@ mod tests {
 
         // Create a symlink pointing to the directory
         let symlink = home.join("link_to_dir");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&target_dir, &symlink).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&target_dir, &symlink).unwrap();
+        crate::symlink::create_symlink(&target_dir, &symlink).unwrap();
 
         // Create a repo file
         let repo_file = repo.join("base/home/link_to_dir/file.txt");
