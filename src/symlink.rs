@@ -48,18 +48,26 @@ pub fn create_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
 /// A circular symlink occurs when following the chain of symlinks from `target`
 /// eventually leads back to `link` itself. This is detected by walking the
 /// symlink chain up to `MAX_SYMLINK_HOPS` steps.
+///
+/// `..` resolution logic: when the link path exists, we canonicalize it to get
+/// its true absolute path. The target path is then resolved relative to the
+/// link's parent directory so that `..` components are resolved against the
+/// correct location. This prevents false negatives where `../foo` in the target
+/// would otherwise resolve against the current working directory instead of the
+/// link's parent.
 pub fn would_be_circular(target: &Path, link: &Path) -> bool {
     // Resolve the absolute path where the symlink will reside.
     let link_abs = resolve_path(link);
 
     // If target directly resolves to the link path, it's circular (self-reference).
-    let target_resolved = resolve_path(target);
+    let link_parent = link_abs.parent().unwrap_or(&link_abs);
+    let target_resolved = resolve_target_with_parent(target, link_parent);
     if target_resolved == link_abs {
         return true;
     }
 
     // Walk the symlink chain starting from `target`.
-    let mut current = target.to_path_buf();
+    let mut current = target_resolved;
     for _ in 0..MAX_SYMLINK_HOPS {
         // If current is a symlink, follow it
         if is_symlink(&current) {
@@ -93,6 +101,36 @@ pub fn would_be_circular(target: &Path, link: &Path) -> bool {
 
     // Exceeded max hops — likely a cycle
     true
+}
+
+/// Resolve a target path against a known link parent for circular detection.
+///
+/// Relative target paths with `..` components are resolved against the link's
+/// parent directory. This ensures that `../foo` in a target resolves to the
+/// correct location rather than the current working directory.
+pub fn resolve_target_with_parent(target: &Path, link_parent: &Path) -> PathBuf {
+    if target.is_absolute() {
+        // Absolute targets are resolved independently
+        resolve_path(target)
+    } else {
+        // Relative targets are resolved against the link's parent directory
+        let resolved = link_parent.join(target);
+        // Try canonicalize first (works when the resolved path exists)
+        if let Ok(canonical) = fs::canonicalize(&resolved) {
+            canonical
+        } else {
+            // Best effort: normalize using path components to resolve `..`
+            let mut stack: Vec<std::path::Component<'_>> = Vec::new();
+            for comp in resolved.components() {
+                if comp == std::path::Component::ParentDir {
+                    stack.pop();
+                } else {
+                    stack.push(comp);
+                }
+            }
+            stack.iter().collect::<PathBuf>()
+        }
+    }
 }
 
 /// Resolve a path to its absolute form.
@@ -218,5 +256,75 @@ mod tests {
 
         assert!(is_symlink(&link));
         assert_eq!(fs::read_link(&link).unwrap(), target_dir);
+    }
+
+    /// Verify that a symlink with `..` resolving to itself is detected as circular.
+    ///
+    /// Scenario: link at `/dir/subdir/link` with target `../subdir/link`.
+    /// The `..` resolves back to the same location, forming a self-reference.
+    #[test]
+    fn test_would_be_circular_with_dotdot_self_ref() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+
+        let link = subdir.join("link");
+        // Target is relative: ../subdir/link which resolves to the same path
+        let target = PathBuf::from("../subdir/link");
+
+        assert!(would_be_circular(&target, &link));
+    }
+
+    /// Verify that a symlink with `..` resolving to a different path is allowed.
+    ///
+    /// Scenario: link at `/dir/subdir/link` with target `../other`. Since `other`
+    /// is a different location, this should not be detected as circular.
+    #[test]
+    fn test_would_not_be_circular_with_dotdot_different() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("subdir");
+        let other = dir.path().join("other");
+        fs::create_dir(&subdir).unwrap();
+        fs::write(&other, "content").unwrap();
+
+        let link = subdir.join("link");
+        let target = PathBuf::from("../other");
+
+        assert!(!would_be_circular(&target, &link));
+    }
+
+    /// Verify that a symlink with `..` resolving to a valid non-circular path is allowed.
+    #[test]
+    fn test_would_not_be_circular_with_dotdot_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        let c = dir.path().join("c");
+        fs::write(&b, "content").unwrap();
+        fs::write(&c, "content").unwrap();
+
+        let link = a.join("link");
+        // Target: ../b resolves to dir/b, which is not the link itself
+        let target = PathBuf::from("../b");
+
+        assert!(!would_be_circular(&target, &link));
+    }
+
+    /// Verify circular detection when link exists as a real directory before symlink.
+    ///
+    /// This tests the pre-create check scenario where the link path doesn't
+    /// exist yet but its parent does.
+    #[test]
+    fn test_would_be_circular_pre_create_with_dotdot() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+
+        let link = subdir.join("link");
+        // Link doesn't exist yet, but parent does
+        // Target: ../subdir/link would resolve to the same path
+        let target = PathBuf::from("../subdir/link");
+
+        assert!(would_be_circular(&target, &link));
     }
 }
