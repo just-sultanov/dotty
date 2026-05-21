@@ -3,6 +3,7 @@ use std::io::IsTerminal;
 use dialoguer::Confirm;
 
 use crate::error::DottyError;
+use tracing::warn;
 
 /// Map a `dialoguer::Error` to `DottyError`, converting cancellation
 /// into a domain-specific `Cancelled` variant.
@@ -106,5 +107,87 @@ pub(crate) fn prompt_machine_selection(known_machines: &[String]) -> Result<Stri
         prompt_input("Enter a new machine name:")
     } else {
         Ok(options[selected].clone())
+    }
+}
+
+/// Prompt the user to confirm orphan removal.
+///
+/// Lists each orphan's repo_rel and target path, then asks for confirmation.
+///
+/// Returns:
+/// - `true` if the user confirms (proceed with removal)
+/// - `false` if the user declines (skip removal)
+/// - `Ok(false)` if not in an interactive context (graceful skip, no error)
+/// - `Err(DottyError::Cancelled)` if the prompt is cancelled
+///
+/// In non-interactive environments (CI, pipes), this returns `Ok(false)`
+/// instead of erroring, silently skipping orphan removal to avoid hangs.
+pub(crate) fn prompt_orphan_removal(orphans: &[(String, String)]) -> Result<bool, DottyError> {
+    if !is_interactive() {
+        warn!(
+            "non-interactive context: skipping orphan removal for {} orphan(s)",
+            orphans.len()
+        );
+        for (repo_rel, target) in orphans {
+            warn!("orphan: {} → {}", repo_rel, target);
+        }
+        return Ok(false);
+    }
+
+    // Build a human-readable list of orphans
+    let mut list =
+        String::from("The following files have no tracked source and will be removed:\n");
+    for (repo_rel, target) in orphans {
+        list.push_str(&format!("  - {} → {}\n", repo_rel, target));
+    }
+
+    let prompt = format!("{}\nRemove these {} orphan(s)?", list, orphans.len());
+
+    let confirmed = prompt_confirm(&prompt)?;
+    Ok(confirmed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that prompt_orphan_removal returns Ok(false) in non-interactive mode.
+    #[test]
+    fn test_prompt_orphan_removal_non_interactive() {
+        temp_env::with_var("CI", Some("1"), || {
+            let orphans = vec![
+                ("base/home/.old".to_string(), "/home/user/.old".to_string()),
+                (
+                    "base/home/.backup".to_string(),
+                    "/home/user/.backup".to_string(),
+                ),
+            ];
+            let result = prompt_orphan_removal(&orphans);
+            assert!(result.is_ok(), "should not error in non-interactive mode");
+            assert_eq!(
+                result.unwrap(),
+                false,
+                "should return false (skip) in non-interactive mode"
+            );
+        });
+    }
+
+    /// Test that prompt_orphan_removal returns Ok(false) with empty orphans list.
+    #[test]
+    fn test_prompt_orphan_removal_empty() {
+        temp_env::with_var("CI", Some("1"), || {
+            let orphans: Vec<(String, String)> = vec![];
+            let result = prompt_orphan_removal(&orphans);
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), false);
+        });
+    }
+
+    /// Test that is_interactive returns false when CI is set.
+    #[test]
+    fn test_is_interactive_ci() {
+        temp_env::with_var("CI", Some("1"), || {
+            assert!(!is_interactive(), "should not be interactive when CI=1");
+        });
     }
 }

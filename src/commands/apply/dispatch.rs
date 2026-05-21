@@ -1,4 +1,5 @@
 use crate::error::DottyError;
+use crate::prompt;
 
 use tracing::warn;
 
@@ -74,8 +75,31 @@ pub fn run(
     };
     let output = build_apply_plan(&input)?;
 
+    // 5b. Orphan confirmation: prompt user before removing orphans.
+    //     If --force is set, skip prompting and proceed with removal.
+    //     If not interactive (CI, pipes), skip orphan removal silently.
+    let mut plan = output.plan;
+    if !output.orphans.is_empty() && !force {
+        let confirmed = prompt::prompt_orphan_removal(&output.orphans)?;
+        if confirmed {
+            for action in output.orphan_removal_actions {
+                plan.add(action);
+            }
+        } else {
+            warn!(
+                "orphan removal skipped by user ({} orphan(s) not removed)",
+                output.orphans.len()
+            );
+        }
+    } else if !output.orphans.is_empty() && force {
+        // --force: remove orphans without prompting
+        for action in output.orphan_removal_actions {
+            plan.add(action);
+        }
+    }
+
     // 6. Execute plan
-    plan::execute_plan(&output.plan, dry_run, state_path)?;
+    plan::execute_plan(&plan, dry_run, state_path)?;
 
     // 7. Print per-file summary
     print_per_file_summary(&output.file_results, &output.orphans, dry_run);

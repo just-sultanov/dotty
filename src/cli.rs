@@ -139,7 +139,7 @@ pub enum Commands {
 
     /// Create symlinks for all tracked files
     #[command(
-        after_help = "Examples:\n  # Apply all tracked files (create/update symlinks)\n  dotty apply\n\n  # Preview changes without applying\n  dotty apply --dry-run\n\n  # Override platform detection\n  dotty apply --platform linux\n\n  # Allow replacing directories with symlinks\n  dotty apply --force\n\n  # Follow symlinks during backup\n  dotty apply --follow-symlinks"
+        after_help = "Examples:\n  # Apply all tracked files (create/update symlinks)\n  dotty apply\n\n  # Preview changes without applying\n  dotty apply --dry-run\n\n  # Override platform detection\n  dotty apply --platform linux\n\n  # Allow replacing directories with symlinks and remove orphans\n  dotty apply --force\n\n  # Follow symlinks during backup\n  dotty apply --follow-symlinks"
     )]
     Apply {
         /// Show what would be done without making changes
@@ -150,7 +150,7 @@ pub enum Commands {
         #[arg(long)]
         platform: Option<String>,
 
-        /// Allow replacing existing directories with symlinks (requires backup)
+        /// Allow replacing existing directories with symlinks and remove orphans without prompting
         #[arg(long)]
         force: bool,
 

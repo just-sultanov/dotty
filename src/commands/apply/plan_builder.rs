@@ -43,7 +43,12 @@ pub(crate) struct ApplyPlanInput {
 pub(crate) struct ApplyPlanOutput {
     pub plan: Plan,
     pub file_results: Vec<FileResult>,
+    /// Orphan entries: (repo_rel, target_path_string).
     pub orphans: Vec<(String, String)>,
+    /// Removal actions for detected orphans. These are NOT added to `plan`
+    /// by default — the caller (dispatch) decides whether to include them
+    /// based on user confirmation or the `--force` flag.
+    pub orphan_removal_actions: Vec<Action>,
 }
 
 /// Per-file result for console output.
@@ -216,21 +221,19 @@ pub(crate) fn build_apply_plan(
     }
 
     // Orphan detection delegated to dedicated module.
+    // Removal actions are returned separately so the caller can decide
+    // whether to include them based on user confirmation or --force.
     let orphan_input = OrphanDetectionInput {
         merged: &input.merged,
         config: &input.config,
     };
     let orphan_output = detect_orphans_and_build_removals(&orphan_input);
 
-    // Add orphan removal actions to the plan.
-    for action in orphan_output.removal_actions {
-        plan.add(action);
-    }
-
     Ok(ApplyPlanOutput {
         plan,
         file_results,
         orphans: orphan_output.orphans,
+        orphan_removal_actions: orphan_output.removal_actions,
     })
 }
 
@@ -714,7 +717,15 @@ mod tests {
             // .old is in merged but not in config.managed → orphan
             assert_eq!(output.orphans.len(), 1);
             assert_eq!(output.orphans[0].0, "base/home/.old");
-            assert!(!output.plan.is_empty());
+            // Orphan removal actions are returned separately, not in plan
+            assert!(!output.orphan_removal_actions.is_empty());
+            assert!(
+                output
+                    .orphan_removal_actions
+                    .iter()
+                    .any(|a| matches!(a, Action::RemoveSymlink { .. })),
+                "should have RemoveSymlink for orphan symlink"
+            );
         });
     }
 
@@ -1040,14 +1051,13 @@ mod tests {
 
             assert_eq!(output.orphans.len(), 1);
             assert_eq!(output.orphans[0].0, "base/home/.old_symlink");
-            // Should have RemoveSymlink action for the orphan
+            // Orphan removal actions are returned separately
             assert!(
                 output
-                    .plan
-                    .actions
+                    .orphan_removal_actions
                     .iter()
                     .any(|a| matches!(a, Action::RemoveSymlink { path } if path == &target)),
-                "plan should contain RemoveSymlink for orphan symlink"
+                "orphan_removal_actions should contain RemoveSymlink for orphan symlink"
             );
         });
     }
@@ -1094,23 +1104,22 @@ mod tests {
             let output = build_apply_plan(&input).unwrap();
 
             assert_eq!(output.orphans.len(), 1);
+            // Orphan removal actions are returned separately
             // Should have RemoveFile action for the orphan (not RemoveSymlink)
             assert!(
                 output
-                    .plan
-                    .actions
+                    .orphan_removal_actions
                     .iter()
                     .any(|a| matches!(a, Action::RemoveFile { path } if path == &target)),
-                "plan should contain RemoveFile for orphan regular file"
+                "orphan_removal_actions should contain RemoveFile for orphan regular file"
             );
             // Should NOT have RemoveSymlink for this orphan
             assert!(
                 !output
-                    .plan
-                    .actions
+                    .orphan_removal_actions
                     .iter()
                     .any(|a| matches!(a, Action::RemoveSymlink { path } if path == &target)),
-                "plan should NOT contain RemoveSymlink for orphan regular file"
+                "orphan_removal_actions should NOT contain RemoveSymlink for orphan regular file"
             );
         });
     }
