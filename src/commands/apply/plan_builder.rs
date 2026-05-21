@@ -23,6 +23,11 @@ pub(crate) struct ApplyPlanInput {
     /// When true, allow replacing directories with symlinks (requires backup).
     /// When false, directory replacements are skipped with a warning.
     pub force: bool,
+
+    /// When true, follow symlinks during backup (copies target content).
+    /// When false (default), skip symlinked files to prevent exposing
+    /// sensitive data outside the intended home directory.
+    pub follow_symlinks: bool,
 }
 
 /// Output of `build_apply_plan`.
@@ -162,6 +167,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 plan.add(Action::BackupDir {
                     source: target.clone(),
                     dest: backup_dest.clone(),
+                    follow_symlinks: input.follow_symlinks,
                 });
                 plan.add(Action::CreateSymlink {
                     target: repo_file.clone(),
@@ -395,6 +401,7 @@ mod tests {
                 override_map: IndexMap::new(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -440,6 +447,7 @@ mod tests {
                 override_map: IndexMap::new(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -485,6 +493,7 @@ mod tests {
                 override_map: IndexMap::new(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -530,6 +539,7 @@ mod tests {
                 override_map: IndexMap::new(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -577,6 +587,7 @@ mod tests {
                 override_map: IndexMap::new(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -626,6 +637,7 @@ mod tests {
                 override_map: IndexMap::new(),
                 config,
                 force: true,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -698,6 +710,7 @@ mod tests {
                 override_map: IndexMap::new(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -746,6 +759,7 @@ mod tests {
                 override_map: IndexMap::new(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -836,6 +850,7 @@ mod tests {
                 override_map: override_map.clone(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -967,6 +982,7 @@ mod tests {
                 override_map: override_map.clone(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -1021,6 +1037,7 @@ mod tests {
                 override_map: IndexMap::new(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -1075,6 +1092,7 @@ mod tests {
                 override_map: IndexMap::new(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 
@@ -1135,6 +1153,7 @@ mod tests {
                 override_map: IndexMap::new(),
                 config,
                 force: false,
+                follow_symlinks: false,
             };
             let output = build_apply_plan(&input).unwrap();
 

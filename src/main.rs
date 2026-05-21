@@ -61,7 +61,8 @@ fn main() -> Result<()> {
             dry_run,
             platform,
             force,
-        } => commands::apply::run(dry_run, platform, force)?,
+            follow_symlinks,
+        } => commands::apply::run(dry_run, platform, force, follow_symlinks)?,
         Commands::Status => commands::status::run()?,
         Commands::Clean { keep, before, yes } => commands::clean::run(keep, before, yes)?,
     }

@@ -39,7 +39,11 @@ pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), Do
             copy_file(source, dest)?;
             verify_backup_integrity(source, dest)?;
         }
-        Action::BackupDir { source, dest } => {
+        Action::BackupDir {
+            source,
+            dest,
+            follow_symlinks,
+        } => {
             let parent = dest.parent().ok_or_else(|| DottyError::PathResolution {
                 path: dest.to_path_buf(),
                 reason: format!(
@@ -48,7 +52,7 @@ pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), Do
                 ),
             })?;
             fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
-            copy_dir(source, dest)?;
+            copy_dir(source, dest, *follow_symlinks)?;
         }
         Action::CopyFile { source, dest } => {
             let parent = dest.parent();
@@ -108,7 +112,9 @@ pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), Do
                     fs::remove_file(dest).map_err(|e| io_error_with_path(e, dest))?;
                 }
             }
-            copy_dir(source, dest)?;
+            // RestoreDir always follows symlinks: the backup was created
+            // with the actual content, so we restore it faithfully.
+            copy_dir(source, dest, true)?;
         }
         Action::GitAdd { paths } => git::git_add(repo_path, paths)?,
         Action::GitCommit { message } => git::git_commit(repo_path, message)?,
@@ -370,8 +376,14 @@ pub(crate) fn copy_file(source: &Path, dest: &Path) -> Result<(), DottyError> {
 /// Recursively copy a directory from `source` to `dest`.
 ///
 /// Creates the destination directory and copies all files and subdirectories
-/// recursively. Symlinked directories are skipped to avoid following symlinks.
-pub(crate) fn copy_dir(source: &Path, dest: &Path) -> Result<(), DottyError> {
+/// recursively. When `follow_symlinks` is false (default), symlinked files
+/// are skipped to prevent exposing sensitive data outside the intended home
+/// directory. Symlinked directories are always skipped regardless of this flag.
+pub(crate) fn copy_dir(
+    source: &Path,
+    dest: &Path,
+    follow_symlinks: bool,
+) -> Result<(), DottyError> {
     // Create the destination directory
     fs::create_dir_all(dest).map_err(|e| io_error_with_path(e, dest))?;
 
@@ -380,6 +392,21 @@ pub(crate) fn copy_dir(source: &Path, dest: &Path) -> Result<(), DottyError> {
     crate::fs_utils::walk_dir(source, &mut files, 0)?;
 
     for file_path in &files {
+        // Skip symlinked files when follow_symlinks is false.
+        // This prevents copying sensitive data from outside the intended
+        // home directory into the backup (e.g., /etc/shadow, SSH keys).
+        if !follow_symlinks
+            && file_path
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink())
+        {
+            warn!(
+                "Skipping symlinked file during backup: {}",
+                file_path.display()
+            );
+            continue;
+        }
+
         // Compute the relative path from source
         let relative = file_path
             .strip_prefix(source)
@@ -438,5 +465,242 @@ fn io_error_with_path(err: io::Error, path: &Path) -> DottyError {
         }
     } else {
         DottyError::Io(err)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Test that copy_dir skips symlinked files by default (follow_symlinks=false).
+    ///
+    /// Creates a directory with a real file and a symlink to an external file.
+    /// Verifies that only the real file is copied into the backup.
+    #[test]
+    fn test_copy_dir_skips_symlinks_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let dest = dir.path().join("dest");
+        fs::create_dir_all(&source).unwrap();
+
+        // Create a real file inside the source directory
+        fs::write(source.join("real.txt"), "real content").unwrap();
+
+        // Create a symlink pointing to a file outside the source directory
+        let external_file = dir.path().join("external.txt");
+        fs::write(&external_file, "external content").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&external_file, source.join("link.txt")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&external_file, source.join("link.txt")).unwrap();
+
+        // Copy with follow_symlinks=false (default)
+        copy_dir(&source, &dest, false).unwrap();
+
+        // Real file should be copied
+        assert!(dest.join("real.txt").exists());
+        assert_eq!(
+            fs::read_to_string(dest.join("real.txt")).unwrap(),
+            "real content"
+        );
+
+        // Symlink should NOT be copied
+        assert!(!dest.join("link.txt").exists());
+    }
+
+    /// Test that copy_dir follows symlinks when follow_symlinks=true.
+    ///
+    /// Creates a directory with a real file and a symlink. Verifies that
+    /// both are copied (symlink dereferenced to its target content).
+    #[test]
+    fn test_copy_dir_follows_symlinks_when_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let dest = dir.path().join("dest");
+        fs::create_dir_all(&source).unwrap();
+
+        // Create a real file inside the source directory
+        fs::write(source.join("real.txt"), "real content").unwrap();
+
+        // Create a symlink pointing to a file outside the source directory
+        let external_file = dir.path().join("external.txt");
+        fs::write(&external_file, "external content").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&external_file, source.join("link.txt")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&external_file, source.join("link.txt")).unwrap();
+
+        // Copy with follow_symlinks=true
+        copy_dir(&source, &dest, true).unwrap();
+
+        // Real file should be copied
+        assert!(dest.join("real.txt").exists());
+        assert_eq!(
+            fs::read_to_string(dest.join("real.txt")).unwrap(),
+            "real content"
+        );
+
+        // Symlink should be dereferenced and its content copied
+        assert!(dest.join("link.txt").exists());
+        assert_eq!(
+            fs::read_to_string(dest.join("link.txt")).unwrap(),
+            "external content"
+        );
+        // The copied file should NOT be a symlink itself
+        assert!(
+            !dest
+                .join("link.txt")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    /// Test that copy_dir skips symlinked directories by default.
+    ///
+    /// Creates a directory with a real subdirectory and a symlink to an
+    /// external directory. Verifies that the symlinked directory is not
+    /// traversed.
+    #[test]
+    fn test_copy_dir_skips_symlinked_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let dest = dir.path().join("dest");
+        fs::create_dir_all(&source).unwrap();
+
+        // Create a real subdirectory with a file
+        let real_sub = source.join("real_sub");
+        fs::create_dir_all(&real_sub).unwrap();
+        fs::write(real_sub.join("inner.txt"), "inner content").unwrap();
+
+        // Create a symlink to a directory outside the source
+        let external_dir = dir.path().join("external_dir");
+        fs::create_dir_all(&external_dir).unwrap();
+        fs::write(external_dir.join("sensitive.txt"), "secret").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&external_dir, source.join("link_dir")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&external_dir, source.join("link_dir")).unwrap();
+
+        // Copy with follow_symlinks=false
+        copy_dir(&source, &dest, false).unwrap();
+
+        // Real subdirectory should be copied
+        assert!(dest.join("real_sub").is_dir());
+        assert!(dest.join("real_sub").join("inner.txt").exists());
+
+        // Symlinked directory should NOT be traversed
+        assert!(!dest.join("link_dir").exists());
+    }
+
+    /// Test that copy_dir with follow_symlinks=true still skips symlinked
+    /// directories (to prevent infinite loops and unintended traversal).
+    #[test]
+    fn test_copy_dir_skips_symlinked_directories_even_with_follow() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let dest = dir.path().join("dest");
+        fs::create_dir_all(&source).unwrap();
+
+        // Create a symlink to a directory outside the source
+        let external_dir = dir.path().join("external_dir");
+        fs::create_dir_all(&external_dir).unwrap();
+        fs::write(external_dir.join("sensitive.txt"), "secret").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&external_dir, source.join("link_dir")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&external_dir, source.join("link_dir")).unwrap();
+
+        // Copy with follow_symlinks=true
+        copy_dir(&source, &dest, true).unwrap();
+
+        // Symlinked directory should still NOT be traversed
+        assert!(!dest.join("link_dir").exists());
+    }
+
+    /// Test that Action::BackupDir with follow_symlinks=false skips symlinks
+    /// during execution.
+    #[test]
+    fn test_backup_dir_action_skips_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source_dir");
+        let backup = dir.path().join("backups/2024-01-01T00-00-00");
+        fs::create_dir_all(&source).unwrap();
+
+        // Create a real file
+        fs::write(source.join("real.txt"), "real").unwrap();
+
+        // Create a symlink to an external file
+        let external = dir.path().join("external.txt");
+        fs::write(&external, "external").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&external, source.join("link.txt")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&external, source.join("link.txt")).unwrap();
+
+        let action = Action::BackupDir {
+            source: source.clone(),
+            dest: backup.clone(),
+            follow_symlinks: false,
+        };
+        action.execute(&std::path::PathBuf::from(".")).unwrap();
+
+        // Real file should be backed up
+        assert!(backup.join("real.txt").exists());
+        assert_eq!(fs::read_to_string(backup.join("real.txt")).unwrap(), "real");
+
+        // Symlink should NOT be backed up
+        assert!(!backup.join("link.txt").exists());
+    }
+
+    /// Test that Action::BackupDir with follow_symlinks=true copies symlink content.
+    #[test]
+    fn test_backup_dir_action_follows_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source_dir");
+        let backup = dir.path().join("backups/2024-01-01T00-00-00");
+        fs::create_dir_all(&source).unwrap();
+
+        // Create a real file
+        fs::write(source.join("real.txt"), "real").unwrap();
+
+        // Create a symlink to an external file
+        let external = dir.path().join("external.txt");
+        fs::write(&external, "external content").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&external, source.join("link.txt")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&external, source.join("link.txt")).unwrap();
+
+        let action = Action::BackupDir {
+            source: source.clone(),
+            dest: backup.clone(),
+            follow_symlinks: true,
+        };
+        action.execute(&std::path::PathBuf::from(".")).unwrap();
+
+        // Real file should be backed up
+        assert!(backup.join("real.txt").exists());
+
+        // Symlink should be dereferenced and content copied
+        assert!(backup.join("link.txt").exists());
+        assert_eq!(
+            fs::read_to_string(backup.join("link.txt")).unwrap(),
+            "external content"
+        );
+        assert!(
+            !backup
+                .join("link.txt")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 }

@@ -45,9 +45,15 @@ pub(crate) enum Action {
     },
     /// Recursively copy a directory to a backup destination.
     /// Used when replacing an existing directory with a symlink.
+    ///
+    /// When `follow_symlinks` is false (default), symlinked files are skipped
+    /// during the backup to prevent exposing sensitive data outside the
+    /// intended home directory. When true, symlinks are dereferenced and their
+    /// target content is copied instead.
     BackupDir {
         source: PathBuf,
         dest: PathBuf,
+        follow_symlinks: bool,
     },
     CopyFile {
         source: PathBuf,
@@ -89,7 +95,7 @@ impl fmt::Display for Action {
             Action::Backup { source, dest } => {
                 write!(f, "backup        {} → {}", source.display(), dest.display())
             }
-            Action::BackupDir { source, dest } => {
+            Action::BackupDir { source, dest, .. } => {
                 write!(f, "backup dir    {} → {}", source.display(), dest.display())
             }
             Action::CopyFile { source, dest } => {
@@ -291,6 +297,7 @@ mod tests {
         let action = Action::BackupDir {
             source: src.clone(),
             dest: backup_dir.clone(),
+            follow_symlinks: false,
         };
         action.execute(&dummy_repo_path()).unwrap();
 
@@ -355,6 +362,7 @@ mod tests {
         let action = Action::BackupDir {
             source: src,
             dest: backup_dir.clone(),
+            follow_symlinks: false,
         };
         action.execute(&dummy_repo_path()).unwrap();
         assert!(backup_dir.exists());
