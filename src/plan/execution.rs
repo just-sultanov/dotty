@@ -97,6 +97,18 @@ pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), Do
         }
         Action::RemoveSymlink { path } => {
             if is_symlink(path) {
+                // Warn if the symlink points to a directory — the target
+                // directory content will be orphaned (not touched, but no
+                // longer managed by dotty).
+                if let Ok(target) = fs::read_link(path)
+                    && target.is_dir()
+                {
+                    warn!(
+                        "Removing symlink to directory: {} → {} (directory content preserved)",
+                        path.display(),
+                        target.display()
+                    );
+                }
                 fs::remove_file(path).map_err(|e| io_error_with_path(e, path))?;
             }
         }

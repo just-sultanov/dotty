@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::DottyError;
@@ -208,6 +209,16 @@ pub(crate) fn build_restore_file_phase(input: &RemovePlanInput) -> Vec<Action> {
                     source: target_file.clone(),
                     dest: backup_dest,
                 });
+            }
+            // Skip CopyFile for symlinks pointing to directories. CopyFile
+            // would remove the symlink and replace the directory with a
+            // single file, orphaning the directory content. The symlink is
+            // handled in Phase 2 (build_remove_symlink_phase).
+            if is_symlink(target_file)
+                && let Ok(target) = fs::read_link(target_file)
+                && target.is_dir()
+            {
+                continue;
             }
             actions.push(Action::CopyFile {
                 source: repo_file,
@@ -1130,6 +1141,131 @@ mod tests {
             }
             other => panic!("expected CopyFile, got: {:?}", other),
         }
+    }
+
+    /// Test that CopyFile is skipped when the target is a symlink to a
+    /// directory. CopyFile would remove the symlink and replace the directory
+    /// with a single file, orphaning the directory content.
+    #[test]
+    fn test_build_restore_file_phase_skips_symlink_to_directory() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        // Create a directory in the target location (simulating the symlink target)
+        let target_dir = home.join("managed_dir");
+        std::fs::create_dir_all(&target_dir).unwrap();
+        std::fs::write(target_dir.join("file.txt"), "content").unwrap();
+
+        // Create a symlink pointing to the directory
+        let symlink = home.join("link_to_dir");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target_dir, &symlink).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&target_dir, &symlink).unwrap();
+
+        // Create a repo file
+        let repo_file = repo.join("base/home/link_to_dir/file.txt");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "repo content").unwrap();
+
+        let state = base.join("state");
+        std::fs::create_dir_all(&state).unwrap();
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            state_path: state.clone(),
+            managed_pairs: vec![(
+                symlink.clone(),
+                "base/home/link_to_dir/file.txt".to_string(),
+            )],
+            skipped: HashSet::new(),
+            commit: None,
+        };
+        let actions = build_restore_file_phase(&input);
+
+        // No CopyFile (target is symlink to dir), no Backup
+        assert!(actions.is_empty());
+    }
+
+    /// Test the full remove plan when target is a symlink to a directory.
+    ///
+    /// Verifies that Phase 1 skips CopyFile (preventing directory replacement)
+    /// and Phase 2 still emits RemoveSymlink.
+    #[test]
+    fn test_build_remove_plan_with_symlink_to_directory() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        // Create a directory in the target location
+        let target_dir = home.join("managed_dir");
+        std::fs::create_dir_all(&target_dir).unwrap();
+        std::fs::write(target_dir.join("file.txt"), "content").unwrap();
+
+        // Create a symlink pointing to the directory
+        let symlink = home.join("link_to_dir");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target_dir, &symlink).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&target_dir, &symlink).unwrap();
+
+        // Create a repo file
+        let repo_file = repo.join("base/home/link_to_dir/file.txt");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "repo content").unwrap();
+
+        let mut config = Config::new();
+        config.managed.insert(
+            "base/home/link_to_dir/file.txt".into(),
+            "~/.link_to_dir".into(),
+        );
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            state_path: state.clone(),
+            managed_pairs: vec![(
+                symlink.clone(),
+                "base/home/link_to_dir/file.txt".to_string(),
+            )],
+            skipped: HashSet::new(),
+            commit: None,
+        };
+        let output = build_remove_plan(&input, &config).unwrap();
+
+        // No CopyFile (target is symlink to dir), but RemoveSymlink + RemoveFile + GitAdd
+        assert!(
+            !output
+                .plan
+                .actions
+                .iter()
+                .any(|a| matches!(a, Action::CopyFile { .. })),
+            "CopyFile should not be generated for symlink-to-directory"
+        );
+        assert!(
+            output
+                .plan
+                .actions
+                .iter()
+                .any(|a| matches!(a, Action::RemoveSymlink { .. })),
+            "RemoveSymlink should be generated for symlink-to-directory"
+        );
+        assert!(
+            output
+                .plan
+                .actions
+                .iter()
+                .any(|a| matches!(a, Action::RemoveFile { .. })),
+            "RemoveFile should be generated for repo file"
+        );
     }
 
     /// Test that skipped files produce no actions in build_restore_file_phase.
