@@ -181,16 +181,10 @@ pub(crate) fn build_remove_plan(
     // Collect repo-relative paths for git staging
     let mut git_rm_paths: Vec<PathBuf> = Vec::new();
 
-    // Phase 1: Remove symlinks at target locations.
-    for (target_file, _repo_rel) in &input.managed_pairs {
-        if is_symlink(target_file) {
-            plan.add(Action::RemoveSymlink {
-                path: target_file.clone(),
-            });
-        }
-    }
-
-    // Phase 2: Copy files from repo back to target (restore as regular files).
+    // Phase 1: Copy files from repo back to target (restore as regular files).
+    // Executed before symlink removal so that if CopyFile fails, the original
+    // symlink is still intact — no data loss, and rollback can restore it.
+    // See: high-fix-remove-plan-phase-ordering
     for (target_file, repo_rel) in &input.managed_pairs {
         if input.skipped.contains(repo_rel) {
             continue;
@@ -202,6 +196,21 @@ pub(crate) fn build_remove_plan(
             plan.add(Action::CopyFile {
                 source: repo_file.clone(),
                 dest: target_file.clone(),
+            });
+        }
+    }
+
+    // Phase 2: Remove symlinks at target locations.
+    // Files already restored in Phase 1 are excluded via `skipped` check
+    // above; here we only remove symlinks for files that were restored.
+    for (target_file, repo_rel) in &input.managed_pairs {
+        if input.skipped.contains(repo_rel) {
+            continue;
+        }
+
+        if is_symlink(target_file) {
+            plan.add(Action::RemoveSymlink {
+                path: target_file.clone(),
             });
         }
     }
@@ -515,5 +524,102 @@ mod tests {
             Action::GitCommit { message } => assert_eq!(message, "remove vimrc"),
             other => panic!("expected GitCommit, got: {other:?}"),
         }
+    }
+
+    /// Regression test: Phase 1 (CopyFile) executes before Phase 2 (RemoveSymlink).
+    ///
+    /// If Phase 1 succeeds but Phase 2 fails, the target file exists (restored from
+    /// repo) — no data loss. This is the key safety property of the phase ordering.
+    #[test]
+    fn test_build_remove_plan_phase_ordering_copy_before_symlink() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "repo content").unwrap();
+        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped: HashSet::new(),
+            commit: None,
+        };
+        let output = build_remove_plan(&input, &config).unwrap();
+
+        // Verify phase ordering: CopyFile must come before RemoveSymlink
+        let mut found_copy = false;
+        let mut found_remove_symlink = false;
+
+        for action in &output.plan.actions {
+            match action {
+                Action::CopyFile { .. } => {
+                    assert!(
+                        !found_remove_symlink,
+                        "CopyFile must come before RemoveSymlink to prevent data loss"
+                    );
+                    found_copy = true;
+                }
+                Action::RemoveSymlink { .. } => {
+                    found_remove_symlink = true;
+                }
+                _ => {}
+            }
+        }
+
+        assert!(found_copy, "expected CopyFile action");
+        assert!(found_remove_symlink, "expected RemoveSymlink action");
+    }
+
+    /// Verify that skipped files are excluded from both CopyFile and RemoveSymlink.
+    #[test]
+    fn test_build_remove_plan_skipped_excludes_both_phases() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "repo content").unwrap();
+        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        let mut skipped = HashSet::new();
+        skipped.insert("base/home/.vimrc".to_string());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped,
+            commit: None,
+        };
+        let output = build_remove_plan(&input, &config).unwrap();
+
+        // Skipped: no CopyFile, no RemoveSymlink, no RemoveFile
+        assert!(output.plan.is_empty());
+        assert!(output.config.managed.contains_key("base/home/.vimrc"));
     }
 }

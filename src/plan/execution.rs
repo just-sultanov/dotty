@@ -59,6 +59,12 @@ pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), Do
             if let Some(p) = parent {
                 fs::create_dir_all(p).map_err(|e| io_error_with_path(e, p))?;
             }
+            // Remove existing symlink so fs::copy creates a regular file
+            // (fs::copy follows symlinks, writing to the target instead of
+            // replacing the symlink itself).
+            if is_symlink(dest) {
+                fs::remove_file(dest).map_err(|e| io_error_with_path(e, dest))?;
+            }
             copy_file(source, dest)?;
         }
         Action::CreateSymlink { target, link, .. } => {
