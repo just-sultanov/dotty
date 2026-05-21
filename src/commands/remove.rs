@@ -22,11 +22,11 @@ pub fn run(
     commit: Option<String>,
     dry_run: bool,
 ) -> Result<(), DottyError> {
-    let repo = RepoState::new()?;
+    let mut repo = RepoState::new()?;
     repo.require_git()?;
 
-    let repo_path = &repo.repo_path;
-    let state_path = &repo.state_path;
+    let repo_path = repo.repo_path.clone();
+    let state_path = repo.state_path.clone();
 
     // Expand ~ in the input path
     let target_path = expand_tilde(&path)?;
@@ -41,7 +41,7 @@ pub fn run(
     }
 
     // Get tracked files from repo
-    let tracked_files = git::git_ls_files(repo_path)?;
+    let tracked_files = git::git_ls_files(&repo_path)?;
 
     // For each target file, find corresponding repo files
     let mut managed_pairs: Vec<(PathBuf, String)> = Vec::new();
@@ -97,10 +97,10 @@ pub fn run(
     managed_pairs.retain(|(_, repo_rel)| seen.insert(repo_rel.clone()));
 
     // Read current config (to update managed map)
-    let config = repo.config;
+    let config = repo.config.clone();
 
     // Resolve user prompts for files that need override confirmation
-    let skipped = resolve_remove_skipped(&managed_pairs, repo_path)?;
+    let skipped = resolve_remove_skipped(&managed_pairs, &repo_path)?;
 
     // Build the plan (pure function — no side effects)
     let input = RemovePlanInput {
@@ -118,11 +118,11 @@ pub fn run(
     } else {
         plan::ExecuteMode::Normal
     };
-    plan::execute_plan(&output.plan, mode, state_path)?;
+    plan::execute_plan(&output.plan, mode, &mut repo)?;
 
     // Write updated config only after successful plan execution
     if !dry_run && !output.plan.is_empty() {
-        write_config(state_path, &output.config)?;
+        write_config(&state_path, &output.config)?;
     }
 
     // Print summary

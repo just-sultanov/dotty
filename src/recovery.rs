@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use crate::error::DottyError;
 use crate::plan;
 use crate::prompt;
+use crate::repo_state::RepoState;
 
 /// Context for recovery operations.
 ///
@@ -84,7 +85,9 @@ pub(crate) fn handle_valid_plan(ctx: &RecoveryContext) -> Result<(), DottyError>
             if !rollback_plan.is_empty() {
                 // Execute rollback without saving a pending plan to avoid
                 // nested pending plan confusion if rollback fails partway.
-                plan::execute_plan(&rollback_plan, plan::ExecuteMode::Rollback, &ctx.state_path)?;
+                let mut repo_state =
+                    RepoState::new_for_git(ctx.plan.repo_path.clone(), ctx.state_path.clone());
+                plan::execute_plan(&rollback_plan, plan::ExecuteMode::Rollback, &mut repo_state)?;
                 println!("Rollback complete.");
             } else {
                 println!("No reversible actions to rollback. Clearing pending plan.");

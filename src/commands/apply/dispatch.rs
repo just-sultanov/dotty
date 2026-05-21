@@ -33,22 +33,22 @@ pub fn run(
     force: bool,
     follow_symlinks: bool,
 ) -> Result<(), DottyError> {
-    let repo = RepoState::new()?;
+    let mut repo = RepoState::new()?;
     repo.require_git()?;
 
-    let repo_path = &repo.repo_path;
-    let state_path = &repo.state_path;
+    let repo_path = repo.repo_path.clone();
+    let state_path = repo.state_path.clone();
 
     // Read config (machine + managed map)
-    let mut config = repo.config;
+    let mut config = repo.config.clone();
 
     // 1. Detect platform and resolve machine
     let platform = platform_override.or_else(detect_platform);
-    let machine_name = resolve_machine(repo_path, &mut config, state_path, dry_run, &platform)
+    let machine_name = resolve_machine(&repo_path, &mut config, &state_path, dry_run, &platform)
         .map_err(|e| DottyError::CommandError(e.to_string()))?;
 
     // 2. Collect all tracked files from git
-    let tracked_files = git::git_ls_files(repo_path)?;
+    let tracked_files = git::git_ls_files(&repo_path)?;
 
     // 3. Classify files by tier and merge by priority
     let merged = merge_tiers(&tracked_files, &machine_name, &platform);
@@ -104,7 +104,7 @@ pub fn run(
     } else {
         plan::ExecuteMode::Normal
     };
-    plan::execute_plan(&plan, mode, state_path)?;
+    plan::execute_plan(&plan, mode, &mut repo)?;
 
     // 7. Print per-file summary
     print_per_file_summary(&output.file_results, &output.orphans, dry_run);
@@ -115,7 +115,7 @@ pub fn run(
     // We print to stderr with details and a recommendation so the user
     // knows the managed map may be stale (orphan detection will be
     // incorrect on the next apply until the config is fixed).
-    if !dry_run && let Err(e) = write_config(state_path, &config) {
+    if !dry_run && let Err(e) = write_config(&state_path, &config) {
         warn!("failed to write config: {e}. Your managed map may be out of sync.");
     }
 

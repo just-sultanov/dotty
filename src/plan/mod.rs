@@ -19,6 +19,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub(crate) use execution::{ExecuteMode, execute_plan};
+
+#[cfg(test)]
+pub(crate) use execution::action_execute;
 pub(crate) use persistence::{clear_pending_plan, load_pending_plan, save_pending_plan};
 
 #[cfg(test)]
@@ -151,13 +154,6 @@ impl fmt::Display for Action {
 }
 
 impl Action {
-    /// Perform the filesystem or git mutation described by this action.
-    ///
-    /// `repo_path` is used as the working directory for git operations.
-    pub fn execute(&self, repo_path: &Path) -> Result<(), crate::error::DottyError> {
-        execution::action_execute(self, repo_path)
-    }
-
     /// Return the inverse filesystem action, or `None` if not reversible.
     ///
     /// Filesystem actions (CreateDir, Backup, CopyFile, CreateSymlink) are
@@ -213,6 +209,7 @@ impl Plan {
 mod tests {
     use super::ExecuteMode;
     use super::*;
+    use crate::repo_state::RepoState;
 
     /// Create a unique temporary directory that is automatically cleaned up on drop.
     fn test_dir() -> tempfile::TempDir {
@@ -246,7 +243,11 @@ mod tests {
         let path = base.join("new_dir/nested");
 
         let action = Action::CreateDir { path: path.clone() };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(path.is_dir());
     }
 
@@ -262,7 +263,11 @@ mod tests {
             source: src.clone(),
             dest: dst.clone(),
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(dst.exists());
         assert_eq!(std::fs::read_to_string(&dst).unwrap(), "hello world");
     }
@@ -279,7 +284,11 @@ mod tests {
             source: src,
             dest: dst.clone(),
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(dst.exists());
     }
 
@@ -296,7 +305,11 @@ mod tests {
             source: src,
             dest: dst.clone(),
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(dst.exists());
         assert_eq!(std::fs::read_to_string(&dst).unwrap(), "original content");
     }
@@ -317,7 +330,11 @@ mod tests {
             dest: backup_dir.clone(),
             follow_symlinks: false,
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
 
         // Verify the backup directory exists with all files
         assert!(backup_dir.exists());
@@ -354,7 +371,11 @@ mod tests {
             source: backup.clone(),
             dest: dest.clone(),
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
 
         // Verify the backup was restored (old directory replaced)
         assert!(dest.exists());
@@ -382,7 +403,11 @@ mod tests {
             dest: backup_dir.clone(),
             follow_symlinks: false,
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(backup_dir.exists());
 
         // Rollback of BackupDir is RemoveFile (removes the backup)
@@ -393,7 +418,11 @@ mod tests {
             }
             other => panic!("expected RemoveFile, got {:?}", other),
         }
-        rollback.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &rollback,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(!backup_dir.exists());
     }
 
@@ -409,7 +438,11 @@ mod tests {
             source: backup,
             dest: dest.clone(),
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(dest.exists());
 
         // Rollback of RestoreDir is RemoveFile (removes the restored dir)
@@ -420,7 +453,11 @@ mod tests {
             }
             other => panic!("expected RemoveFile, got {:?}", other),
         }
-        rollback.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &rollback,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(!dest.exists());
     }
 
@@ -431,7 +468,11 @@ mod tests {
         std::fs::write(&path, "delete me").unwrap();
 
         let action = Action::RemoveFile { path: path.clone() };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(!path.exists());
     }
 
@@ -441,7 +482,11 @@ mod tests {
         let path = base.join("does_not_exist.txt");
 
         let action = Action::RemoveFile { path };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -458,7 +503,11 @@ mod tests {
             backup_path: None,
             backup_exists: false,
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(crate::symlink::is_symlink(&link));
         assert_eq!(std::fs::read_link(&link).unwrap(), target);
     }
@@ -473,22 +522,26 @@ mod tests {
         std::fs::write(&target1, "one").unwrap();
         std::fs::write(&target2, "two").unwrap();
 
-        Action::CreateSymlink {
-            target: target1.clone(),
-            link: link.clone(),
-            backup_path: None,
-            backup_exists: false,
-        }
-        .execute(&dummy_repo_path())
+        action_execute(
+            &Action::CreateSymlink {
+                target: target1.clone(),
+                link: link.clone(),
+                backup_path: None,
+                backup_exists: false,
+            },
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
         .unwrap();
 
-        Action::CreateSymlink {
-            target: target2.clone(),
-            link: link.clone(),
-            backup_path: None,
-            backup_exists: false,
-        }
-        .execute(&dummy_repo_path())
+        action_execute(
+            &Action::CreateSymlink {
+                target: target2.clone(),
+                link: link.clone(),
+                backup_path: None,
+                backup_exists: false,
+            },
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
         .unwrap();
 
         assert!(crate::symlink::is_symlink(&link));
@@ -515,13 +568,15 @@ mod tests {
         std::fs::create_dir(&target_dir).unwrap();
 
         // CreateSymlink should remove the existing directory and create a symlink
-        Action::CreateSymlink {
-            target: target_dir.clone(),
-            link: link.clone(),
-            backup_path: None,
-            backup_exists: false,
-        }
-        .execute(&dummy_repo_path())
+        action_execute(
+            &Action::CreateSymlink {
+                target: target_dir.clone(),
+                link: link.clone(),
+                backup_path: None,
+                backup_exists: false,
+            },
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
         .unwrap();
 
         assert!(crate::symlink::is_symlink(&link));
@@ -534,11 +589,19 @@ mod tests {
         let path = base.join("rollback_dir");
 
         let action = Action::CreateDir { path: path.clone() };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(path.is_dir());
 
         let rollback = action.rollback().unwrap();
-        rollback.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &rollback,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(!path.exists());
     }
 
@@ -554,11 +617,19 @@ mod tests {
             source: src,
             dest: dst.clone(),
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(dst.exists());
 
         let rollback = action.rollback().unwrap();
-        rollback.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &rollback,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(!dst.exists());
     }
 
@@ -576,11 +647,19 @@ mod tests {
             backup_path: None,
             backup_exists: false,
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(crate::symlink::is_symlink(&link));
 
         let rollback = action.rollback().unwrap();
-        rollback.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &rollback,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(!crate::symlink::is_symlink(&link));
         assert!(!link.exists());
     }
@@ -615,7 +694,12 @@ mod tests {
             path: base.join("should_not_exist"),
         });
 
-        execute_plan(&plan, ExecuteMode::DryRun, &state).unwrap();
+        execute_plan(
+            &plan,
+            ExecuteMode::DryRun,
+            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+        )
+        .unwrap();
         assert!(!base.join("should_not_exist").exists());
     }
 
@@ -625,7 +709,12 @@ mod tests {
         let state = base.join("state");
         std::fs::create_dir_all(&state).unwrap();
         let plan = Plan::new(&base);
-        execute_plan(&plan, ExecuteMode::Normal, &state).unwrap();
+        execute_plan(
+            &plan,
+            ExecuteMode::Normal,
+            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -739,7 +828,11 @@ mod tests {
             dest: dst.clone(),
         };
         // Should succeed: copy + verify
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(dst.exists());
         assert_eq!(std::fs::read_to_string(&dst).unwrap(), "original content");
     }
@@ -881,7 +974,12 @@ mod tests {
         assert!(!state.join("pending_plan.json").exists());
 
         // Execute plan
-        execute_plan(&plan, ExecuteMode::Normal, &state).unwrap();
+        execute_plan(
+            &plan,
+            ExecuteMode::Normal,
+            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+        )
+        .unwrap();
 
         // After successful execution, pending plan is cleared
         assert!(!state.join("pending_plan.json").exists());
@@ -899,7 +997,12 @@ mod tests {
             path: base.join("should_not_exist"),
         });
 
-        execute_plan(&plan, ExecuteMode::DryRun, &state).unwrap();
+        execute_plan(
+            &plan,
+            ExecuteMode::DryRun,
+            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+        )
+        .unwrap();
 
         // Dry run should not create pending plan file
         assert!(!state.join("pending_plan.json").exists());
@@ -920,7 +1023,12 @@ mod tests {
             });
         }
 
-        execute_plan(&plan, ExecuteMode::Normal, &state).unwrap();
+        execute_plan(
+            &plan,
+            ExecuteMode::Normal,
+            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+        )
+        .unwrap();
 
         // All directories should be created
         for i in 0..25 {
@@ -944,7 +1052,12 @@ mod tests {
             });
         }
 
-        execute_plan(&plan, ExecuteMode::Normal, &state).unwrap();
+        execute_plan(
+            &plan,
+            ExecuteMode::Normal,
+            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+        )
+        .unwrap();
 
         for i in 0..20 {
             assert!(base.join(format!("dir_{i}")).is_dir());
@@ -1098,13 +1211,21 @@ mod tests {
         };
 
         // Execute: creates symlink at link → target
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(crate::symlink::is_symlink(&link));
         assert_eq!(std::fs::read_link(&link).unwrap(), target);
 
         // Rollback: should restore backup to link location
         let rollback = action.rollback().unwrap();
-        rollback.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &rollback,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
 
         // Symlink should be gone, original content restored
         assert!(!crate::symlink::is_symlink(&link));
@@ -1130,12 +1251,20 @@ mod tests {
         };
 
         // Execute: creates symlink
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(crate::symlink::is_symlink(&link));
 
         // Rollback: should just remove the symlink
         let rollback = action.rollback().unwrap();
-        rollback.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &rollback,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
 
         // Symlink removed, no file at link location
         assert!(!crate::symlink::is_symlink(&link));
@@ -1161,12 +1290,20 @@ mod tests {
         };
 
         // Execute: creates symlink
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(crate::symlink::is_symlink(&link));
 
         // Rollback: backup doesn't exist, should fall back to RemoveSymlink
         let rollback = action.rollback().unwrap();
-        rollback.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &rollback,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
 
         // Symlink removed, no file at link location
         assert!(!crate::symlink::is_symlink(&link));
@@ -1202,7 +1339,11 @@ mod tests {
         };
 
         // Execute: creates symlink at link → target
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(crate::symlink::is_symlink(&link));
 
         // Simulate TOCTOU: delete the backup between execution and rollback
@@ -1227,7 +1368,10 @@ mod tests {
 
         // Rollback will fail because backup was deleted, but the action type
         // is correct — it attempted to restore rather than silently removing.
-        let result = rollback.execute(&dummy_repo_path());
+        let result = action_execute(
+            &rollback,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        );
         assert!(result.is_err());
 
         // RestoreBackup removes the symlink first, then tries to copy the backup.
@@ -1261,7 +1405,11 @@ mod tests {
             source: source.clone(),
             dest: dest.clone(),
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
 
         // Symlink removed, backup content restored
         assert!(!crate::symlink::is_symlink(&dest));
@@ -1283,12 +1431,20 @@ mod tests {
             source,
             dest: dest.clone(),
         };
-        action.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(dest.exists());
 
         // Rollback of RestoreBackup removes the restored file
         let rollback = action.rollback().unwrap();
-        rollback.execute(&dummy_repo_path()).unwrap();
+        action_execute(
+            &rollback,
+            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+        )
+        .unwrap();
         assert!(!dest.exists());
     }
 

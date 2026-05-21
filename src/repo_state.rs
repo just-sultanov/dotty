@@ -18,6 +18,14 @@ pub(crate) struct RepoState {
     pub config: Config,
     /// Whether the repository has been initialized with `git init`.
     pub is_git_repo: bool,
+    /// Whether the git identity (user.name / user.email) has been validated.
+    ///
+    /// Cached to avoid spawning two `git config` subprocesses on every
+    /// commit operation. Set to `true` after the first successful
+    /// `git config user.name` and `git config user.email` check.
+    /// Reset via [`reset_git_identity`](Self::reset_git_identity) if
+    /// the user manually changes git config during a session.
+    pub git_identity_valid: bool,
 }
 
 impl RepoState {
@@ -42,6 +50,7 @@ impl RepoState {
             state_path,
             config,
             is_git_repo,
+            git_identity_valid: false,
         })
     }
 
@@ -78,5 +87,63 @@ impl RepoState {
             .machine
             .as_deref()
             .ok_or(DottyError::MissingMachineName)
+    }
+
+    /// Validate git identity (user.name and user.email) and cache the result.
+    ///
+    /// On the first call, spawns two `git config` subprocesses to check
+    /// that both `user.name` and `user.email` are set and non-empty.
+    /// The result is cached in `git_identity_valid` so subsequent calls
+    /// skip the subprocess overhead (~10-20ms per commit).
+    ///
+    /// If `git_identity_valid` is already `true`, this returns `Ok(())`
+    /// immediately without spawning any subprocesses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DottyError::Git`] with exit code 127 if the identity
+    /// is not configured, including actionable guidance.
+    pub fn validate_git_identity(&mut self) -> Result<(), DottyError> {
+        if self.git_identity_valid {
+            return Ok(());
+        }
+
+        let name = crate::git::git_run(&self.repo_path, &["config", "user.name"]);
+        let email = crate::git::git_run(&self.repo_path, &["config", "user.email"]);
+
+        match (name, email) {
+            (Ok(n), Ok(e)) if !n.trim().is_empty() && !e.trim().is_empty() => {
+                self.git_identity_valid = true;
+                Ok(())
+            }
+            _ => Err(DottyError::Git {
+                exit_code: 127,
+                stderr: "Git identity is not configured. Run `git config user.name 'Your Name'` and `git config user.email 'you@example.com'`".into(),
+            }),
+        }
+    }
+
+    /// Reset the cached git identity validation.
+    ///
+    /// Call this if the user has manually changed git config during a
+    /// session and you want the next [`validate_git_identity`](Self::validate_git_identity)
+    /// call to re-check.
+    #[cfg(test)]
+    pub fn reset_git_identity(&mut self) {
+        self.git_identity_valid = false;
+    }
+
+    /// Create a minimal `RepoState` for git operations that don't need config.
+    ///
+    /// Uses an empty config and assumes the repo is a valid git repository.
+    /// Useful for crash recovery where config is not needed.
+    pub fn new_for_git(repo_path: PathBuf, state_path: PathBuf) -> Self {
+        Self {
+            repo_path,
+            state_path,
+            config: Config::new(),
+            is_git_repo: true,
+            git_identity_valid: false,
+        }
     }
 }

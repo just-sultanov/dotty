@@ -26,10 +26,10 @@ pub fn run(
     commit: Option<String>,
     dry_run: bool,
 ) -> Result<(), DottyError> {
-    let repo = RepoState::new()?;
+    let mut repo = RepoState::new()?;
 
-    let repo_path = &repo.repo_path;
-    let state_path = &repo.state_path;
+    let repo_path = repo.repo_path.clone();
+    let state_path = repo.state_path.clone();
 
     // Expand ~ in the input path
     let target_path = expand_tilde(&path)?;
@@ -41,11 +41,11 @@ pub fn run(
     // Two-layer defense: (1) canonicalize both paths and compare, (2) string-prefix fallback
     // if canonicalization fails (e.g., broken symlink). The canonical check is primary;
     // the string check is secondary — it handles cases where the OS cannot resolve the path.
-    let canonical_repo = match fs::canonicalize(repo_path) {
+    let canonical_repo = match fs::canonicalize(&repo_path) {
         Ok(p) => p,
         Err(e) => {
             warn!("Failed to canonicalize repo path: {e}, using original path");
-            repo_path.to_path_buf()
+            repo_path.clone()
         }
     };
 
@@ -116,7 +116,7 @@ pub fn run(
 
     // Build conflict map from existing tracked files
     let existing_files = if repo.is_git_repo {
-        match git::git_ls_files(repo_path) {
+        match git::git_ls_files(&repo_path) {
             Ok(files) => files,
             Err(e) => {
                 warn!("failed to list tracked files: {e}");
@@ -133,7 +133,7 @@ pub fn run(
 
     let home = crate::paths::home_dir()?;
     let has_git = repo.is_git_repo;
-    let config = repo.config;
+    let config = repo.config.clone();
 
     // Build the plan (pure function — no side effects)
     let input = AddPlanInput {
@@ -153,11 +153,11 @@ pub fn run(
     } else {
         plan::ExecuteMode::Normal
     };
-    plan::execute_plan(&output.plan, mode, state_path)?;
+    plan::execute_plan(&output.plan, mode, &mut repo)?;
 
     // Write updated config only after successful plan execution.
     if !dry_run && !output.plan.is_empty() {
-        write_config(state_path, &output.config)?;
+        write_config(&state_path, &output.config)?;
     }
 
     Ok(())

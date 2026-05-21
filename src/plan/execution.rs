@@ -14,6 +14,7 @@ use indicatif::ProgressBar;
 
 use crate::error::DottyError;
 use crate::git;
+use crate::repo_state::RepoState;
 use crate::symlink::{self, is_symlink};
 
 use super::Action;
@@ -24,8 +25,12 @@ use super::Action;
 
 /// Execute the filesystem or git mutation described by this action.
 ///
-/// `repo_path` is used as the working directory for git operations.
-pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), DottyError> {
+/// `repo_state` provides the working directory for git operations and
+/// caches the git identity validation result.
+pub(crate) fn action_execute(
+    action: &Action,
+    repo_state: &mut RepoState,
+) -> Result<(), DottyError> {
     match action {
         Action::CreateDir { path } => {
             fs::create_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
@@ -134,8 +139,8 @@ pub(crate) fn action_execute(action: &Action, repo_path: &Path) -> Result<(), Do
             // with the actual content, so we restore it faithfully.
             copy_dir(source, dest, true)?;
         }
-        Action::GitAdd { paths } => git::git_add(repo_path, paths)?,
-        Action::GitCommit { message } => git::git_commit(repo_path, message)?,
+        Action::GitAdd { paths } => git::git_add(&repo_state.repo_path, paths)?,
+        Action::GitCommit { message } => git::git_commit(repo_state, message)?,
     }
     Ok(())
 }
@@ -229,7 +234,7 @@ impl ExecuteMode {
 pub(crate) fn execute_plan(
     plan: &super::Plan,
     mode: ExecuteMode,
-    state_path: &Path,
+    repo_state: &mut RepoState,
 ) -> Result<(), DottyError> {
     if plan.is_empty() {
         return Ok(());
@@ -247,7 +252,7 @@ pub(crate) fn execute_plan(
 
     // Save pending plan for crash recovery (skipped for rollback/dry-run)
     if mode.save_pending() {
-        crate::plan::save_pending_plan(plan, state_path)?;
+        crate::plan::save_pending_plan(plan, &repo_state.state_path)?;
     }
 
     let mut completed: Vec<usize> = Vec::new();
@@ -268,7 +273,7 @@ pub(crate) fn execute_plan(
         } else {
             print!("  {}. {} ... ", i + 1, action);
         }
-        match action.execute(&plan.repo_path) {
+        match action_execute(action, repo_state) {
             Ok(()) => {
                 if use_progress_bar {
                     if let Some(ref bar) = pb {
@@ -285,7 +290,7 @@ pub(crate) fn execute_plan(
                     bar.finish();
                 }
                 println!("FAILED: {e}");
-                rollback_completed(plan, &completed)?;
+                rollback_completed(plan, &completed, repo_state)?;
                 return Err(e);
             }
         }
@@ -297,7 +302,7 @@ pub(crate) fn execute_plan(
 
     // All actions succeeded — clear pending plan (skipped for rollback/dry-run)
     if mode.save_pending() {
-        crate::plan::clear_pending_plan(state_path)?;
+        crate::plan::clear_pending_plan(&repo_state.state_path)?;
     }
 
     Ok(())
@@ -324,13 +329,13 @@ enum RollbackAction {
 
 impl RollbackAction {
     /// Execute this rollback operation.
-    fn execute(&self, repo_path: &Path) -> Result<(), DottyError> {
+    fn execute(&self, repo_state: &mut RepoState) -> Result<(), DottyError> {
         match self {
-            RollbackAction::Filesystem(action) => action_execute(action, repo_path),
-            RollbackAction::GitResetSoft => git::git_reset_soft_head(repo_path),
+            RollbackAction::Filesystem(action) => action_execute(action, repo_state),
+            RollbackAction::GitResetSoft => git::git_reset_soft_head(&repo_state.repo_path),
             RollbackAction::GitResetHead { paths } => {
                 let path_strs: Vec<&str> = paths.iter().filter_map(|p| p.to_str()).collect();
-                git::git_reset(repo_path, &path_strs)
+                git::git_reset(&repo_state.repo_path, &path_strs)
             }
         }
     }
@@ -372,10 +377,14 @@ impl RollbackAction {
 /// Each action is converted to a `RollbackAction` (filesystem or git) and
 /// executed in reverse order. Git actions are batched per type so that
 /// `git reset HEAD` is called once with all paths.
-fn rollback_completed(plan: &super::Plan, completed_indices: &[usize]) -> Result<(), DottyError> {
+fn rollback_completed(
+    plan: &super::Plan,
+    completed_indices: &[usize],
+    repo_state: &mut RepoState,
+) -> Result<(), DottyError> {
     debug!("rolling back {} completed actions", completed_indices.len());
     let actions = &plan.actions;
-    let repo_path = &plan.repo_path;
+    let _repo_path = &plan.repo_path;
 
     let mut indices: Vec<usize> = completed_indices.to_vec();
     indices.sort_unstable();
@@ -401,7 +410,7 @@ fn rollback_completed(plan: &super::Plan, completed_indices: &[usize]) -> Result
     // Execute non-GitAdd rollbacks in order
     for rb in &rollbacks {
         println!("  rollback: {}", rb.display());
-        rb.execute(repo_path)?;
+        rb.execute(repo_state)?;
     }
 
     // Batch GitAdd rollback (all paths in one git reset call)
@@ -410,7 +419,7 @@ fn rollback_completed(plan: &super::Plan, completed_indices: &[usize]) -> Result
             paths: git_add_paths,
         };
         println!("  rollback: {}", rb.display());
-        rb.execute(repo_path)?;
+        rb.execute(repo_state)?;
     }
 
     Ok(())
@@ -693,7 +702,14 @@ mod tests {
             dest: backup.clone(),
             follow_symlinks: false,
         };
-        action.execute(&std::path::PathBuf::from(".")).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(
+                std::path::PathBuf::from("."),
+                std::path::PathBuf::from("."),
+            ),
+        )
+        .unwrap();
 
         // Real file should be backed up
         assert!(backup.join("real.txt").exists());
@@ -724,7 +740,14 @@ mod tests {
             dest: backup.clone(),
             follow_symlinks: true,
         };
-        action.execute(&std::path::PathBuf::from(".")).unwrap();
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(
+                std::path::PathBuf::from("."),
+                std::path::PathBuf::from("."),
+            ),
+        )
+        .unwrap();
 
         // Real file should be backed up
         assert!(backup.join("real.txt").exists());

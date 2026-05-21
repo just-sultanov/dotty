@@ -5,6 +5,7 @@ use std::process::{Command, Output};
 use tracing::debug;
 
 use crate::error::DottyError;
+use crate::repo_state::RepoState;
 
 /// Run a git command in the given directory.
 ///
@@ -37,7 +38,7 @@ pub(crate) fn git_run_raw(dir: &Path, args: &[&str]) -> Result<Output, DottyErro
 ///
 /// Returns the stdout as a string. On failure, returns a `DottyError::Git`
 /// containing the stderr output.
-fn git_run(dir: &Path, args: &[&str]) -> Result<String, DottyError> {
+pub(crate) fn git_run(dir: &Path, args: &[&str]) -> Result<String, DottyError> {
     let output = git_run_raw(dir, args)?;
 
     if !output.status.success() {
@@ -96,28 +97,13 @@ pub(crate) fn git_add(dir: &Path, paths: &[PathBuf]) -> Result<(), DottyError> {
     Ok(())
 }
 
-/// Pre-flight check: verify git identity (user.name / user.email) is configured.
-///
-/// Returns a descriptive error with actionable guidance if either setting is missing.
-/// This prevents `git commit` from failing with exit code 127 on fresh machines.
-fn git_check_identity(dir: &Path) -> Result<(), DottyError> {
-    let name = git_run(dir, &["config", "user.name"]);
-    let email = git_run(dir, &["config", "user.email"]);
-
-    match (name, email) {
-        (Ok(n), Ok(e)) if !n.trim().is_empty() && !e.trim().is_empty() => Ok(()),
-        _ => Err(DottyError::Git {
-            exit_code: 127,
-            stderr: "Git identity is not configured. Run `git config user.name 'Your Name'` and `git config user.email 'you@example.com'`".into(),
-        }),
-    }
-}
-
 /// Commit staged changes with the given message.
-pub(crate) fn git_commit(dir: &Path, message: &str) -> Result<(), DottyError> {
-    // Pre-flight: fail fast if git identity is missing, before attempting the commit.
-    git_check_identity(dir)?;
-    git_run(dir, &["commit", "-m", message])?;
+///
+/// Checks git identity (cached in `repo_state`) before attempting the commit.
+pub(crate) fn git_commit(repo_state: &mut RepoState, message: &str) -> Result<(), DottyError> {
+    // Pre-flight: check cached identity, fail fast if missing.
+    repo_state.validate_git_identity()?;
+    git_run(&repo_state.repo_path, &["commit", "-m", message])?;
     Ok(())
 }
 
@@ -167,9 +153,24 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::repo_state::RepoState;
 
-    /// Helper: create a git repo with empty local identity to shadow global config.
+    /// Pre-flight check helper for tests: verify git identity.
     ///
+    /// This is the same logic as the production identity check, kept here
+    /// as a test helper since the production path now uses RepoState.
+    fn git_check_identity(dir: &std::path::Path) -> Result<(), crate::error::DottyError> {
+        let name = crate::git::git_run(dir, &["config", "user.name"]);
+        let email = crate::git::git_run(dir, &["config", "user.email"]);
+
+        match (name, email) {
+            (Ok(n), Ok(e)) if !n.trim().is_empty() && !e.trim().is_empty() => Ok(()),
+            _ => Err(crate::error::DottyError::Git {
+                exit_code: 127,
+                stderr: "Git identity is not configured. Run `git config user.name 'Your Name'` and `git config user.email 'you@example.com'`".into(),
+            }),
+        }
+    }
     /// Local config takes precedence over global, so setting empty values ensures
     /// `git config user.name` returns empty regardless of global settings.
     fn create_repo_without_identity() -> tempfile::TempDir {
@@ -281,7 +282,9 @@ mod tests {
             .args(["add", "test.txt"])
             .output()
             .unwrap();
-        let result = git_commit(repo.path(), "test commit");
+        let mut repo_state =
+            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+        let result = git_commit(&mut repo_state, "test commit");
         assert!(result.is_err());
         let err = result.unwrap_err();
         match err {
@@ -291,5 +294,89 @@ mod tests {
             }
             _ => panic!("expected DottyError::Git, got {err:?}"),
         }
+    }
+
+    /// Test that git identity validation is cached after first check.
+    ///
+    /// Verifies that `validate_git_identity` returns Ok immediately on
+    /// second call without spawning subprocesses (checked by verifying
+    /// `git_identity_valid` is true after first call).
+    #[test]
+    fn test_git_identity_validation_is_cached() {
+        let repo = create_repo_without_identity();
+        // Set valid local identity
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["config", "--local", "user.name", "Test User"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["config", "--local", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+
+        let mut repo_state =
+            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+        assert!(!repo_state.git_identity_valid);
+
+        // First call: should validate and cache
+        assert!(repo_state.validate_git_identity().is_ok());
+        assert!(repo_state.git_identity_valid);
+
+        // Second call: should return Ok immediately (cached)
+        assert!(repo_state.validate_git_identity().is_ok());
+        assert!(repo_state.git_identity_valid);
+    }
+
+    /// Test that reset_git_identity allows re-checking after invalidation.
+    #[test]
+    fn test_reset_git_identity_allows_recheck() {
+        let repo = create_repo_without_identity();
+        // Set valid local identity
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["config", "--local", "user.name", "Test User"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(repo.path())
+            .args(["config", "--local", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+
+        let mut repo_state =
+            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+
+        // Validate and cache
+        assert!(repo_state.validate_git_identity().is_ok());
+        assert!(repo_state.git_identity_valid);
+
+        // Reset the cache
+        repo_state.reset_git_identity();
+        assert!(!repo_state.git_identity_valid);
+
+        // Re-validate should work again
+        assert!(repo_state.validate_git_identity().is_ok());
+        assert!(repo_state.git_identity_valid);
+    }
+
+    /// Test that cached identity check fails fast when identity is invalid.
+    #[test]
+    fn test_cached_identity_check_fails_when_invalid() {
+        let repo = create_repo_without_identity();
+        let mut repo_state =
+            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+
+        // First call: should fail (no identity)
+        let result = repo_state.validate_git_identity();
+        assert!(result.is_err());
+        // Should still be false (not cached as valid)
+        assert!(!repo_state.git_identity_valid);
+
+        // Second call: should fail again (not cached, need to re-check)
+        let result = repo_state.validate_git_identity();
+        assert!(result.is_err());
+        assert!(!repo_state.git_identity_valid);
     }
 }
