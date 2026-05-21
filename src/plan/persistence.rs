@@ -7,7 +7,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -107,14 +106,15 @@ pub(crate) fn load_pending_plan(
 
     // Verify git can read the repo (catches corrupted .git dirs missing HEAD, broken refs, etc.).
     // `git rev-parse --git-dir` is extremely fast (<10ms) and safe — it only reads metadata.
-    let output = Command::new("git")
-        .current_dir(&repo_path)
-        .args(["rev-parse", "--git-dir"])
-        .output()
-        .map_err(|e| crate::error::DottyError::PendingPlanInvalid {
-            reason: format!("failed to run git: {}", e),
-            source: Some(e),
-        })?;
+    let output = crate::git::git_run_raw(&repo_path, &["rev-parse", "--git-dir"]).map_err(|e| {
+        crate::error::DottyError::PendingPlanInvalid {
+            reason: format!(
+                "git command failed for pending plan repo at {}",
+                repo_path.display()
+            ),
+            source: Some(Box::new(e)),
+        }
+    })?;
     if !output.status.success() {
         return Err(crate::error::DottyError::PendingPlanInvalid {
             reason: format!("repository at {} is corrupted", repo_path.display()),

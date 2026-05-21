@@ -75,7 +75,7 @@ pub(crate) enum DottyError {
     #[error("pending plan is invalid: {reason}")]
     PendingPlanInvalid {
         reason: String,
-        source: Option<std::io::Error>,
+        source: Option<Box<DottyError>>,
     },
 
     /// Init failed: target directory already exists and is not empty.

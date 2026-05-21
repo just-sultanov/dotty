@@ -1,6 +1,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use tracing::debug;
 
@@ -8,11 +8,14 @@ use crate::error::DottyError;
 
 /// Run a git command in the given directory.
 ///
-/// Returns the stdout as a string. On failure, returns a `DottyError::Git`
-/// containing the stderr output.
-fn git_run(dir: &Path, args: &[&str]) -> Result<String, DottyError> {
+/// Returns the raw `std::process::Output` (stdout, stderr, exit code).
+/// On failure to execute git (e.g., not installed), returns a `DottyError::GitNotInstalled`.
+///
+/// This is the low-level primitive. Callers can inspect `output.status.success()`
+/// and `output.stderr` to produce domain-specific errors (e.g. `PendingPlanInvalid`
+/// for a corrupted repo vs `Git` for a command failure).
+pub(crate) fn git_run_raw(dir: &Path, args: &[&str]) -> Result<Output, DottyError> {
     debug!("git {}", args.join(" "));
-    // Check for NotFound separately so users see "git is not installed" instead of "exit code -1".
     let output = Command::new("git")
         .current_dir(dir)
         .args(args)
@@ -27,6 +30,15 @@ fn git_run(dir: &Path, args: &[&str]) -> Result<String, DottyError> {
                 }
             }
         })?;
+    Ok(output)
+}
+
+/// Run a git command in the given directory.
+///
+/// Returns the stdout as a string. On failure, returns a `DottyError::Git`
+/// containing the stderr output.
+fn git_run(dir: &Path, args: &[&str]) -> Result<String, DottyError> {
+    let output = git_run_raw(dir, args)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
