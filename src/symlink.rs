@@ -119,10 +119,8 @@ fn resolve_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
 
     #[test]
-    #[serial]
     fn test_is_symlink_regular_file() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("regular.txt");
@@ -132,7 +130,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_is_symlink_symlink() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("target.txt");
@@ -151,7 +148,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_would_be_circular_self_reference() {
         let dir = tempfile::tempdir().unwrap();
         let link = dir.path().join("self_link");
@@ -160,7 +156,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_would_be_circular_chain() {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a");
@@ -171,7 +166,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_would_not_be_circular_normal() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("real_file");
@@ -186,7 +180,6 @@ mod tests {
     /// On Unix, `symlink_file` handles directory targets transparently.
     /// On Windows, this test exercises the `symlink_dir` branch.
     #[test]
-    #[serial]
     fn test_create_symlink_to_directory() {
         let dir = tempfile::tempdir().unwrap();
         let target_dir = dir.path().join("target_dir");
@@ -206,7 +199,6 @@ mod tests {
     /// On Windows, the replacement symlink must use `symlink_dir` (junction)
     /// because the target is a directory.
     #[test]
-    #[serial]
     fn test_create_symlink_replaces_existing_directory() {
         let dir = tempfile::tempdir().unwrap();
         let target_dir = dir.path().join("target_dir");

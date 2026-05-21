@@ -461,21 +461,23 @@ mod tests {
                 |s: &String| !s.is_empty() && !s.starts_with('/') && has_no_dotdot_component(s),
             ),
         ) {
-            let repo_path = PathBuf::from("base").join(&root).join(&file_components);
+            crate::tests::with_test_home(|_| {
+                let repo_path = PathBuf::from("base").join(&root).join(&file_components);
 
-            // repo_to_target then target_to_repo should preserve the relative path
-            // (scope component is stripped, which is expected)
-            let target = repo_to_target(&repo_path).expect("valid repo path");
-            let repo_back = target_to_repo(&target).expect("valid target path");
+                // repo_to_target then target_to_repo should preserve the relative path
+                // (scope component is stripped, which is expected)
+                let target = repo_to_target(&repo_path).expect("valid repo path");
+                let repo_back = target_to_repo(&target).expect("valid target path");
 
-            // Expected: root/file (without the scope "base")
-            let expected = PathBuf::from(&root).join(&file_components);
+                // Expected: root/file (without the scope "base")
+                let expected = PathBuf::from(&root).join(&file_components);
 
-            prop_assert_eq!(
-                &repo_back, &expected,
-                "repo→target→repo roundtrip failed: {:?} → {:?} → {:?} (expected {:?})",
-                repo_path, target, repo_back, expected
-            );
+                assert_eq!(
+                    &repo_back, &expected,
+                    "repo→target→repo roundtrip failed: {:?} → {:?} → {:?} (expected {:?})",
+                    repo_path, target, repo_back, expected
+                );
+            });
         }
     }
 
@@ -495,27 +497,29 @@ mod tests {
                 |s: &String| !s.is_empty() && has_no_dotdot_component(s),
             ),
         ) {
-            let home = home_dir().unwrap();
+            crate::tests::with_test_home(|_| {
+                let home = home_dir().unwrap();
 
-            let target = if variant {
-                // Home-relative: ~/... → /home/user/...
-                home.join(&home_components)
-            } else {
-                // Absolute: /<dir>/... (at least 2 components)
-                PathBuf::from("/".to_string() + &abs_components)
-            };
+                let target = if variant {
+                    // Home-relative: ~/... → /home/user/...
+                    home.join(&home_components)
+                } else {
+                    // Absolute: /<dir>/... (at least 2 components)
+                    PathBuf::from("/".to_string() + &abs_components)
+                };
 
-            let repo_relative = target_to_repo(&target).expect("valid target path");
-            // repo_to_target expects scope/root/file, but target_to_repo returns root/file.
-            // Prepend a dummy scope to complete the roundtrip.
-            let repo_with_scope = PathBuf::from("base").join(&repo_relative);
-            let target_back = repo_to_target(&repo_with_scope).expect("valid repo path");
+                let repo_relative = target_to_repo(&target).expect("valid target path");
+                // repo_to_target expects scope/root/file, but target_to_repo returns root/file.
+                // Prepend a dummy scope to complete the roundtrip.
+                let repo_with_scope = PathBuf::from("base").join(&repo_relative);
+                let target_back = repo_to_target(&repo_with_scope).expect("valid repo path");
 
-            prop_assert_eq!(
-                &target_back, &target,
-                "target→repo→target roundtrip failed: {:?} → {:?} → {:?} → {:?}",
-                target, repo_relative, repo_with_scope, target_back
-            );
+                assert_eq!(
+                    &target_back, &target,
+                    "target→repo→target roundtrip failed: {:?} → {:?} → {:?} → {:?}",
+                    target, repo_relative, repo_with_scope, target_back
+                );
+            });
         }
     }
 
@@ -525,23 +529,25 @@ mod tests {
             // Generate 1-8 path components for deep nesting
             depth in 1usize..8,
         ) {
-            let components: Vec<String> = (0..depth)
-                .map(|i| format!(".file_{}", i))
-                .collect();
+            crate::tests::with_test_home(|_| {
+                let components: Vec<String> = (0..depth)
+                    .map(|i| format!(".file_{}", i))
+                    .collect();
 
-            let file_path = components.join("/");
-            let repo_path = PathBuf::from("base").join("home").join(&file_path);
+                let file_path = components.join("/");
+                let repo_path = PathBuf::from("base").join("home").join(&file_path);
 
-            let target = repo_to_target(&repo_path).expect("valid repo path");
-            let repo_back = target_to_repo(&target).expect("valid target path");
+                let target = repo_to_target(&repo_path).expect("valid repo path");
+                let repo_back = target_to_repo(&target).expect("valid target path");
 
-            let expected = PathBuf::from("home").join(&file_path);
+                let expected = PathBuf::from("home").join(&file_path);
 
-            prop_assert_eq!(
-                &repo_back, &expected,
-                "deep nesting roundtrip failed (depth {}): {:?} → {:?} → {:?}",
-                depth, repo_path, target, repo_back
-            );
+                assert_eq!(
+                    &repo_back, &expected,
+                    "deep nesting roundtrip failed (depth {}): {:?} → {:?} → {:?}",
+                    depth, repo_path, target, repo_back
+                );
+            });
         }
     }
 }
