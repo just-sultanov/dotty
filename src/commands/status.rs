@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -236,8 +236,9 @@ fn find_tier_conflicts(
         Err(_) => return Vec::new(),
     };
 
-    // Collect all tiers for each target path
-    let mut all_tiers: HashMap<PathBuf, Vec<(String, String)>> = HashMap::new();
+    // Collect all tiers for each target path.
+    // IndexMap preserves insertion order, ensuring deterministic conflict output.
+    let mut all_tiers: IndexMap<PathBuf, Vec<(String, String)>> = IndexMap::new();
 
     for file in &tracked_files {
         let repo_path_buf = PathBuf::from(file);
