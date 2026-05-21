@@ -108,6 +108,7 @@ pub(crate) fn build_apply_plan(
                     target: repo_file.clone(),
                     link: target.clone(),
                     backup_path: None,
+                    backup_exists: false,
                 });
                 TargetState::CircularSymlink
             }
@@ -119,6 +120,7 @@ pub(crate) fn build_apply_plan(
                     target: repo_file.clone(),
                     link: target.clone(),
                     backup_path: None,
+                    backup_exists: false,
                 });
                 TargetState::NeedsSymlink
             }
@@ -142,7 +144,8 @@ pub(crate) fn build_apply_plan(
                 plan.add(Action::CreateSymlink {
                     target: repo_file.clone(),
                     link: target.clone(),
-                    backup_path: Some(backup_dest),
+                    backup_path: Some(backup_dest.clone()),
+                    backup_exists: true,
                 });
                 TargetState::NeedsBackup
             }
@@ -183,7 +186,8 @@ pub(crate) fn build_apply_plan(
                 plan.add(Action::CreateSymlink {
                     target: repo_file.clone(),
                     link: target.clone(),
-                    backup_path: Some(backup_dest),
+                    backup_path: Some(backup_dest.clone()),
+                    backup_exists: true,
                 });
                 warn!(
                     "replacing directory {} with symlink → {}",

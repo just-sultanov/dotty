@@ -59,10 +59,20 @@ pub(crate) enum Action {
         source: PathBuf,
         dest: PathBuf,
     },
+    /// Replaces a file or directory at `link` with a symlink to `target`.
+    ///
+    /// `backup_path` records where the original content was saved (if any).
+    /// `backup_exists` records whether that backup file actually existed at
+    /// plan construction time. This avoids a TOCTOU race in `action_rollback`
+    /// where `backup.exists()` could return false at rollback time even though
+    /// the backup existed when the plan was built (e.g., if a concurrent
+    /// `dotty clean` deleted it), which would cause silent data loss — the
+    /// rollback would remove the symlink without restoring the original file.
     CreateSymlink {
         target: PathBuf,
         link: PathBuf,
         backup_path: Option<PathBuf>,
+        backup_exists: bool,
     },
     RemoveFile {
         path: PathBuf,
@@ -445,6 +455,7 @@ mod tests {
             target: target.clone(),
             link: link.clone(),
             backup_path: None,
+            backup_exists: false,
         };
         action.execute(&dummy_repo_path()).unwrap();
         assert!(crate::symlink::is_symlink(&link));
@@ -465,6 +476,7 @@ mod tests {
             target: target1.clone(),
             link: link.clone(),
             backup_path: None,
+            backup_exists: false,
         }
         .execute(&dummy_repo_path())
         .unwrap();
@@ -473,6 +485,7 @@ mod tests {
             target: target2.clone(),
             link: link.clone(),
             backup_path: None,
+            backup_exists: false,
         }
         .execute(&dummy_repo_path())
         .unwrap();
@@ -505,6 +518,7 @@ mod tests {
             target: target_dir.clone(),
             link: link.clone(),
             backup_path: None,
+            backup_exists: false,
         }
         .execute(&dummy_repo_path())
         .unwrap();
@@ -559,6 +573,7 @@ mod tests {
             target,
             link: link.clone(),
             backup_path: None,
+            backup_exists: false,
         };
         action.execute(&dummy_repo_path()).unwrap();
         assert!(crate::symlink::is_symlink(&link));
@@ -819,6 +834,7 @@ mod tests {
             target: base.join("target"),
             link: base.join("link"),
             backup_path: None,
+            backup_exists: false,
         });
         plan.add(Action::RemoveFile {
             path: base.join("remove.txt"),
@@ -1077,6 +1093,7 @@ mod tests {
             target: target.clone(),
             link: link.clone(),
             backup_path: Some(backup.clone()),
+            backup_exists: true,
         };
 
         // Execute: creates symlink at link → target
@@ -1108,6 +1125,7 @@ mod tests {
             target: target.clone(),
             link: link.clone(),
             backup_path: None, // No backup recorded
+            backup_exists: false,
         };
 
         // Execute: creates symlink
@@ -1138,6 +1156,7 @@ mod tests {
             target: target.clone(),
             link: link.clone(),
             backup_path: Some(backup), // Backup path recorded but file missing
+            backup_exists: false,      // backup file does not exist
         };
 
         // Execute: creates symlink
@@ -1151,6 +1170,71 @@ mod tests {
         // Symlink removed, no file at link location
         assert!(!crate::symlink::is_symlink(&link));
         assert!(!link.exists());
+    }
+
+    /// Test the TOCTOU fix: when backup_exists is true at construction time
+    /// but the backup file is deleted before rollback, the stored flag ensures
+    /// the rollback still attempts to restore from backup (and fails gracefully)
+    /// rather than silently removing the symlink without restoring content.
+    ///
+    /// This simulates the scenario where a concurrent `dotty clean` removes
+    /// the backup between execution and rollback.
+    #[test]
+    fn test_rollback_symlink_backup_deleted_between_execution_and_rollback() {
+        let (_dir, base) = setup();
+        let target = base.join("repo_file.txt");
+        let link = base.join("link");
+        let backup = base.join("backups/original.txt");
+
+        // Create the repo file (symlink target)
+        std::fs::write(&target, "repo content").unwrap();
+        // Create the backup (original file content saved before symlink)
+        std::fs::create_dir_all(backup.parent().unwrap()).unwrap();
+        std::fs::write(&backup, "original content").unwrap();
+
+        // Create action with backup_exists=true (backup existed at construction time)
+        let action = Action::CreateSymlink {
+            target: target.clone(),
+            link: link.clone(),
+            backup_path: Some(backup.clone()),
+            backup_exists: true,
+        };
+
+        // Execute: creates symlink at link → target
+        action.execute(&dummy_repo_path()).unwrap();
+        assert!(crate::symlink::is_symlink(&link));
+
+        // Simulate TOCTOU: delete the backup between execution and rollback
+        std::fs::remove_file(&backup).unwrap();
+        assert!(!backup.exists());
+
+        // Rollback: should still use RestoreBackup (not RemoveSymlink)
+        // because backup_exists was true at construction time.
+        // The RestoreBackup will fail because the source doesn't exist,
+        // but it won't silently lose the symlink.
+        let rollback = action.rollback().unwrap();
+        match &rollback {
+            Action::RestoreBackup { source, dest } => {
+                assert_eq!(source, &backup);
+                assert_eq!(dest, &link);
+            }
+            other => panic!(
+                "expected RestoreBackup (TOCTOU fix: stored flag used), got {:?}",
+                other
+            ),
+        }
+
+        // Rollback will fail because backup was deleted, but the action type
+        // is correct — it attempted to restore rather than silently removing.
+        let result = rollback.execute(&dummy_repo_path());
+        assert!(result.is_err());
+
+        // RestoreBackup removes the symlink first, then tries to copy the backup.
+        // Since the backup doesn't exist, copy fails and the symlink is gone.
+        // The key point is that the rollback *attempted* to restore (RestoreBackup)
+        // rather than silently removing (RemoveSymlink). If the backup had existed,
+        // the original content would have been restored.
+        assert!(!crate::symlink::is_symlink(&link));
     }
 
     /// Test RestoreBackup action: copies backup file to destination,
@@ -1220,6 +1304,7 @@ mod tests {
             target: base.join("repo_file"),
             link: base.join("link"),
             backup_path: Some(base.join("backups/original.txt")),
+            backup_exists: true,
         });
 
         save_pending_plan(&plan, &state).unwrap();

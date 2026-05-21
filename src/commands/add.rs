@@ -239,6 +239,7 @@ pub(crate) fn build_add_plan(
             target: repo_file.clone(),
             link: target_file.clone(),
             backup_path: None,
+            backup_exists: false,
         });
 
         // Track path for git add

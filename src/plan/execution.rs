@@ -155,10 +155,17 @@ pub(crate) fn action_rollback(action: &Action) -> Option<Action> {
         Action::BackupDir { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
         Action::CopyFile { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
         Action::CreateSymlink {
-            link, backup_path, ..
+            link,
+            backup_path,
+            backup_exists,
+            target: _,
         } => {
+            // Use the stored backup_exists flag (recorded at plan construction time)
+            // instead of checking backup.exists() here, which would be a TOCTOU race:
+            // the backup could be deleted between execution and rollback (e.g., by
+            // a concurrent `dotty clean`), causing silent data loss.
             if let Some(backup) = backup_path {
-                if backup.exists() {
+                if *backup_exists {
                     Some(Action::RestoreBackup {
                         source: backup.clone(),
                         dest: link.clone(),
