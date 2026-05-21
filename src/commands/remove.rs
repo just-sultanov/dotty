@@ -172,6 +172,73 @@ pub(crate) struct RemovePlanOutput {
     pub config: Config,
 }
 
+/// Phase 1: Copy files from repo back to target (restore as regular files).
+///
+/// For each managed pair where the repo file exists and the file is not
+/// skipped, adds a `CopyFile` action. This phase runs before symlink removal
+/// so that if CopyFile fails, the original symlink is still intact — no data
+/// loss, and rollback can restore it.
+///
+/// See: high-fix-remove-plan-phase-ordering
+pub(crate) fn build_restore_file_phase(input: &RemovePlanInput) -> Vec<Action> {
+    let mut actions = Vec::new();
+    for (target_file, repo_rel) in &input.managed_pairs {
+        if input.skipped.contains(repo_rel) {
+            continue;
+        }
+        let repo_file = input.repo_path.join(repo_rel);
+        if repo_file.exists() {
+            actions.push(Action::CopyFile {
+                source: repo_file,
+                dest: target_file.clone(),
+            });
+        }
+    }
+    actions
+}
+
+/// Phase 2: Remove symlinks at target locations.
+///
+/// For each managed pair where the target is a symlink and the file is not
+/// skipped, adds a `RemoveSymlink` action.
+pub(crate) fn build_remove_symlink_phase(input: &RemovePlanInput) -> Vec<Action> {
+    let mut actions = Vec::new();
+    for (target_file, repo_rel) in &input.managed_pairs {
+        if input.skipped.contains(repo_rel) {
+            continue;
+        }
+        if is_symlink(target_file) {
+            actions.push(Action::RemoveSymlink {
+                path: target_file.clone(),
+            });
+        }
+    }
+    actions
+}
+
+/// Phase 3: Remove files from repo, update config, and prepare git staging.
+///
+/// For each managed pair where the file is not skipped, adds a `RemoveFile`
+/// action, removes the entry from the config's managed map, and collects the
+/// repo-relative path for git staging.
+pub(crate) fn build_repo_cleanup_phase(
+    config: &mut Config,
+    input: &RemovePlanInput,
+) -> (Vec<Action>, Vec<PathBuf>) {
+    let mut actions = Vec::new();
+    let mut git_rm_paths = Vec::new();
+    for (_target_file, repo_rel) in &input.managed_pairs {
+        if input.skipped.contains(repo_rel) {
+            continue;
+        }
+        let repo_file = input.repo_path.join(repo_rel);
+        actions.push(Action::RemoveFile { path: repo_file });
+        config.managed.shift_remove(repo_rel);
+        git_rm_paths.push(PathBuf::from(repo_rel));
+    }
+    (actions, git_rm_paths)
+}
+
 /// Build a plan for removing files from the dotty repository.
 ///
 /// This is a pure function: it takes resolved input data (managed pairs,
@@ -184,59 +251,15 @@ pub(crate) fn build_remove_plan(
     let mut plan = Plan::new(&input.repo_path);
     let mut config = config.clone();
 
-    // Collect repo-relative paths for git staging
-    let mut git_rm_paths: Vec<PathBuf> = Vec::new();
+    // Phase 1: Restore files from repo
+    plan.actions.extend(build_restore_file_phase(input));
 
-    // Phase 1: Copy files from repo back to target (restore as regular files).
-    // Executed before symlink removal so that if CopyFile fails, the original
-    // symlink is still intact — no data loss, and rollback can restore it.
-    // See: high-fix-remove-plan-phase-ordering
-    for (target_file, repo_rel) in &input.managed_pairs {
-        if input.skipped.contains(repo_rel) {
-            continue;
-        }
+    // Phase 2: Remove symlinks
+    plan.actions.extend(build_remove_symlink_phase(input));
 
-        let repo_file = input.repo_path.join(repo_rel);
-
-        if repo_file.exists() {
-            plan.add(Action::CopyFile {
-                source: repo_file.clone(),
-                dest: target_file.clone(),
-            });
-        }
-    }
-
-    // Phase 2: Remove symlinks at target locations.
-    // Files already restored in Phase 1 are excluded via `skipped` check
-    // above; here we only remove symlinks for files that were restored.
-    for (target_file, repo_rel) in &input.managed_pairs {
-        if input.skipped.contains(repo_rel) {
-            continue;
-        }
-
-        if is_symlink(target_file) {
-            plan.add(Action::RemoveSymlink {
-                path: target_file.clone(),
-            });
-        }
-    }
-
-    // Phase 3: Remove files from repo and update config.
-    for (_target_file, repo_rel) in &input.managed_pairs {
-        if input.skipped.contains(repo_rel) {
-            continue;
-        }
-
-        let repo_file = input.repo_path.join(repo_rel);
-
-        plan.add(Action::RemoveFile {
-            path: repo_file.clone(),
-        });
-
-        config.managed.shift_remove(repo_rel);
-
-        git_rm_paths.push(PathBuf::from(repo_rel));
-    }
+    // Phase 3: Repo cleanup (remove files, update config, collect git paths)
+    let (cleanup_actions, git_rm_paths) = build_repo_cleanup_phase(&mut config, input);
+    plan.actions.extend(cleanup_actions);
 
     // Stage deletions in git
     if !git_rm_paths.is_empty() {
@@ -627,5 +650,291 @@ mod tests {
         // Skipped: no CopyFile, no RemoveSymlink, no RemoveFile
         assert!(output.plan.is_empty());
         assert!(output.config.managed.contains_key("base/home/.vimrc"));
+    }
+
+    // -- phase extraction unit tests --
+
+    #[test]
+    fn test_build_restore_file_phase_with_repo_file() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped: HashSet::new(),
+            commit: None,
+        };
+        let actions = build_restore_file_phase(&input);
+
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            Action::CopyFile { source, dest } => {
+                assert_eq!(source, &repo_file);
+                assert_eq!(dest, &target);
+            }
+            other => panic!("expected CopyFile, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_restore_file_phase_missing_repo_file() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped: HashSet::new(),
+            commit: None,
+        };
+        let actions = build_restore_file_phase(&input);
+
+        // Repo file doesn't exist, so no CopyFile action
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn test_build_restore_file_phase_skipped() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+
+        let mut skipped = HashSet::new();
+        skipped.insert("base/home/.vimrc".to_string());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped,
+            commit: None,
+        };
+        let actions = build_restore_file_phase(&input);
+
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn test_build_remove_symlink_phase_with_symlink() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped: HashSet::new(),
+            commit: None,
+        };
+        let actions = build_remove_symlink_phase(&input);
+
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            Action::RemoveSymlink { path } => assert_eq!(path, &target),
+            other => panic!("expected RemoveSymlink, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_remove_symlink_phase_not_a_symlink() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        std::fs::write(&target, "content").unwrap();
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped: HashSet::new(),
+            commit: None,
+        };
+        let actions = build_remove_symlink_phase(&input);
+
+        // Target is a regular file, not a symlink
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn test_build_remove_symlink_phase_skipped() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+
+        let mut skipped = HashSet::new();
+        skipped.insert("base/home/.vimrc".to_string());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped,
+            commit: None,
+        };
+        let actions = build_remove_symlink_phase(&input);
+
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn test_build_repo_cleanup_phase() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped: HashSet::new(),
+            commit: None,
+        };
+        let (actions, git_paths) = build_repo_cleanup_phase(&mut config, &input);
+
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            Action::RemoveFile { path } => assert_eq!(path, &repo_file),
+            other => panic!("expected RemoveFile, got: {:?}", other),
+        }
+        assert_eq!(git_paths, vec![PathBuf::from("base/home/.vimrc")]);
+        assert!(!config.managed.contains_key("base/home/.vimrc"));
+    }
+
+    #[test]
+    fn test_build_repo_cleanup_phase_skipped() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        let repo_file = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file, "content").unwrap();
+
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        let mut skipped = HashSet::new();
+        skipped.insert("base/home/.vimrc".to_string());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            skipped,
+            commit: None,
+        };
+        let (actions, git_paths) = build_repo_cleanup_phase(&mut config, &input);
+
+        assert!(actions.is_empty());
+        assert!(git_paths.is_empty());
+        // Config should be unchanged for skipped files
+        assert!(config.managed.contains_key("base/home/.vimrc"));
+    }
+
+    #[test]
+    fn test_build_repo_cleanup_phase_multiple_files() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let vimrc_target = home.join(".vimrc");
+        let vimrc_repo = repo.join("base/home/.vimrc");
+        let nvim_target = home.join(".config/nvim/init.lua");
+        let nvim_repo = repo.join("base/home/.config/nvim/init.lua");
+        std::fs::create_dir_all(vimrc_repo.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(nvim_repo.parent().unwrap()).unwrap();
+        std::fs::write(&vimrc_repo, "vimrc").unwrap();
+        std::fs::write(&nvim_repo, "init").unwrap();
+
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+        config.managed.insert(
+            "base/home/.config/nvim/init.lua".into(),
+            "~/.config/nvim/init.lua".into(),
+        );
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            managed_pairs: vec![
+                (vimrc_target.clone(), "base/home/.vimrc".to_string()),
+                (
+                    nvim_target.clone(),
+                    "base/home/.config/nvim/init.lua".to_string(),
+                ),
+            ],
+            skipped: HashSet::new(),
+            commit: None,
+        };
+        let (actions, git_paths) = build_repo_cleanup_phase(&mut config, &input);
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(git_paths.len(), 2);
+        assert_eq!(config.managed.len(), 0);
     }
 }
