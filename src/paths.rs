@@ -169,17 +169,62 @@ pub fn format_target_display(path: &Path) -> String {
 
 /// Expand `~` prefix in a path string to the full home directory path.
 ///
+/// Supports three forms:
+/// - `"~"` — the current user's home directory
+/// - `"~/path"` — a path relative to the current user's home
+/// - `"~user/path"` — a path relative to another user's home (Unix only)
+///
+/// On non-Unix platforms, `~user` expansion is silently ignored.
+///
 /// E.g. `"~/.vimrc"` → `/home/user/.vimrc`, `"/opt/app"` → `/opt/app`.
 pub fn expand_tilde(path: &str) -> Result<PathBuf, DottyError> {
     let home = home_dir()?;
 
-    if let Some(rest) = path.strip_prefix("~/") {
-        return Ok(home.join(rest));
-    }
+    // Handle `~` alone
     if path == "~" {
         return Ok(home);
     }
+
+    // Handle `~/path` — current user's home
+    if let Some(rest) = path.strip_prefix("~/") {
+        return Ok(home.join(rest));
+    }
+
+    // Handle `~user/path` — another user's home (Unix only)
+    if let Some(rest) = path.strip_prefix("~")
+        && let Some(slash_pos) = rest.find('/')
+        && !rest[..slash_pos].is_empty()
+        && let Some(user_home) = expand_tilde_user(&rest[..slash_pos])
+    {
+        return Ok(user_home.join(&rest[slash_pos + 1..]));
+    }
+
     Ok(PathBuf::from(path))
+}
+
+/// Look up another user's home directory from `/etc/passwd`.
+///
+/// Returns `None` if the user is not found or the file cannot be read.
+#[cfg(unix)]
+fn expand_tilde_user(username: &str) -> Option<PathBuf> {
+    std::fs::read_to_string("/etc/passwd")
+        .ok()
+        .and_then(|data| {
+            data.lines().find_map(|line| {
+                let fields: Vec<&str> = line.split(':').collect();
+                if fields.len() >= 7 && fields[0] == username {
+                    Some(PathBuf::from(&fields[5]))
+                } else {
+                    None
+                }
+            })
+        })
+}
+
+#[cfg(not(unix))]
+fn expand_tilde_user(_username: &str) -> Option<PathBuf> {
+    // ~user expansion is not supported on non-Unix platforms
+    None
 }
 
 #[cfg(test)]
@@ -414,6 +459,32 @@ mod tests {
         // "~/" in the middle of a path should NOT be expanded.
         let path = expand_tilde("/some/dir/~/file").unwrap();
         assert_eq!(path, PathBuf::from("/some/dir/~/file"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_expand_tilde_user() {
+        // On Unix, ~user expansion reads /etc/passwd. The `root` user always
+        // exists and has a well-known home directory.
+        let path = expand_tilde("~root/some/file").unwrap();
+        assert!(path.is_absolute());
+        assert!(path.to_string_lossy().ends_with("some/file"));
+    }
+
+    #[test]
+    fn test_expand_tilde_user_nonexistent() {
+        // Nonexistent user should fall through to raw path.
+        let path = expand_tilde("~nonexistent_user_xyz_12345/some/file").unwrap();
+        assert_eq!(path, PathBuf::from("~nonexistent_user_xyz_12345/some/file"));
+    }
+
+    #[test]
+    fn test_expand_tilde_tilde_only_no_slash() {
+        // `~` without trailing slash should return home dir.
+        crate::tests::with_test_home(|home| {
+            let path = expand_tilde("~").unwrap();
+            assert_eq!(path, *home);
+        });
     }
 
     // ── format_target_display tests ──

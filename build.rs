@@ -6,10 +6,10 @@ use std::process::Command;
 fn main() {
     let version = env!("CARGO_PKG_VERSION");
 
-    let sha = run_git(&["rev-parse", "--short", "HEAD"]).unwrap_or_default();
+    let sha = run_git(&["rev-parse", "--short", "HEAD"]).unwrap_or("unknown".into());
     let date = run_git(&["log", "-1", "--format=%ci"])
-        .map(|s| s.split_whitespace().next().unwrap_or("").to_string())
-        .unwrap_or_default();
+        .map(|s| s.split_whitespace().next().unwrap_or("unknown").to_string())
+        .unwrap_or_else(|| "unknown".into());
 
     println!("cargo:rustc-env=DOTTY_VERSION={version}");
     println!("cargo:rustc-env=DOTTY_GIT_SHA={sha}");

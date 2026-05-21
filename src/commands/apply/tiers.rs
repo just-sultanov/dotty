@@ -7,47 +7,39 @@ use std::path::PathBuf;
 /// Higher tiers override lower tiers for the same target path.
 /// Uses `IndexMap` to preserve insertion order (base → platform → machine)
 /// for deterministic iteration during plan building.
+///
+/// This function performs a single linear scan of `tracked_files`, classifying
+/// each file into its tier in one pass. Previously this used three separate
+/// loops (O(3n)); the single-pass version is O(n) and functionally identical.
 pub(crate) fn merge_tiers(
     tracked_files: &[String],
     machine: &str,
     platform: &Option<String>,
 ) -> IndexMap<PathBuf, (String, String)> {
     let mut merged: IndexMap<PathBuf, (String, String)> = IndexMap::new();
-
-    // Process tiers in order: base (lowest) → platform → machine (highest)
-    // Later tiers overwrite earlier tiers for the same target path.
-
-    // Tier 1: base
-    for file in tracked_files {
-        if let Some(_rest) = file.strip_prefix("base/") {
-            let repo_path = PathBuf::from(file);
-            if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
-                merged.insert(target, ("base".to_string(), file.clone()));
-            }
-        }
-    }
-
-    // Tier 2: platform
-    if let Some(plat) = platform {
-        let platform_prefix = format!("{}/", plat);
-        for file in tracked_files {
-            if let Some(_rest) = file.strip_prefix(&platform_prefix) {
-                let repo_path = PathBuf::from(file);
-                if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
-                    merged.insert(target, (plat.clone(), file.clone()));
-                }
-            }
-        }
-    }
-
-    // Tier 3: machine (highest priority)
     let machine_prefix = format!("{}/", machine);
+    let platform_prefix = platform.as_ref().map(|p| format!("{}/", p));
+
     for file in tracked_files {
-        if let Some(_rest) = file.strip_prefix(&machine_prefix) {
-            let repo_path = PathBuf::from(file);
-            if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
-                merged.insert(target, (machine.to_string(), file.clone()));
-            }
+        // Determine tier: machine > platform > base
+        let (tier_name, repo_path) = if file.starts_with(&machine_prefix) {
+            // Tier 3: machine (highest priority)
+            (machine.to_string(), PathBuf::from(file))
+        } else if let Some(ref plat_prefix) = platform_prefix
+            && file.starts_with(plat_prefix)
+        {
+            // Tier 2: platform
+            (platform.as_ref().unwrap().clone(), PathBuf::from(file))
+        } else if file.starts_with("base/") {
+            // Tier 1: base (lowest priority)
+            ("base".to_string(), PathBuf::from(file))
+        } else {
+            // File doesn't belong to any active tier — skip
+            continue;
+        };
+
+        if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
+            merged.insert(target, (tier_name, file.clone()));
         }
     }
 

@@ -15,7 +15,7 @@ use crate::paths::{
 };
 use crate::plan::{self, Action, Plan};
 use crate::platform::KNOWN_PLATFORMS;
-use crate::prompt::{is_interactive, prompt_confirm, prompt_select};
+use crate::prompt::{prompt_confirm, prompt_select};
 use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
 
@@ -67,7 +67,7 @@ pub fn run(
 
     // Warn about non-standard config paths (only for base tier)
     if scope == "base" {
-        warn_non_xdg(&target_path)?;
+        warn_non_xdg(&target_path, crate::prompt::is_interactive)?;
     }
 
     // Validate platform if specified
@@ -294,7 +294,10 @@ fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> Result<
 ///
 /// In interactive mode, prompts the user for confirmation on both
 /// non-standard and sensitive paths.
-fn warn_non_xdg(target_path: &Path) -> Result<()> {
+///
+/// The `is_interactive` closure is injected for testability — callers
+/// pass `crate::prompt::is_interactive` in production and a mock in tests.
+fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Result<()> {
     // Guard: skip interactive prompts in non-TTY contexts to avoid hangs.
     if !is_interactive() {
         let home = crate::paths::home_dir()?;
@@ -723,7 +726,7 @@ mod tests {
         let home = dir.path().to_path_buf();
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             // Non-standard path should not panic or error in non-interactive mode
-            let result = warn_non_xdg(&home.join("some/weird/path"));
+            let result = warn_non_xdg(&home.join("some/weird/path"), || false);
             assert!(
                 result.is_ok(),
                 "warn_non_xdg should return Ok in non-interactive mode, got: {result:?}"
@@ -739,7 +742,7 @@ mod tests {
         let dir = test_dir();
         let home = dir.path().to_path_buf();
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
-            let result = warn_non_xdg(&home.join("custom/weird/path"));
+            let result = warn_non_xdg(&home.join("custom/weird/path"), || false);
             assert!(result.is_ok(), "should default to base without error");
         });
     }
@@ -751,7 +754,7 @@ mod tests {
         let home = dir.path().to_path_buf();
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             temp_env::with_var("CI", Some("1"), || {
-                let result = warn_non_xdg(&home.join("some/weird/path"));
+                let result = warn_non_xdg(&home.join("some/weird/path"), || false);
                 assert!(
                     result.is_ok(),
                     "CI env should default to base without hanging"
@@ -766,17 +769,17 @@ mod tests {
         let dir = test_dir();
         let home = dir.path().to_path_buf();
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
-            let result = warn_non_xdg(&home.join(".config/nvim/init.lua"));
+            let result = warn_non_xdg(&home.join(".config/nvim/init.lua"), || false);
             assert!(result.is_ok());
 
-            let result = warn_non_xdg(&home.join(".vimrc"));
+            let result = warn_non_xdg(&home.join(".vimrc"), || false);
             assert!(result.is_ok());
         });
     }
 
     #[test]
     fn test_warn_non_xdg_non_interactive_rejects_sensitive_etc() {
-        let result = warn_non_xdg(Path::new("/etc/foobar"));
+        let result = warn_non_xdg(Path::new("/etc/foobar"), || false);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("sensitive system directory"));
@@ -785,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_warn_non_xdg_non_interactive_rejects_sensitive_usr() {
-        let result = warn_non_xdg(Path::new("/usr/local/bin/custom-tool"));
+        let result = warn_non_xdg(Path::new("/usr/local/bin/custom-tool"), || false);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("sensitive system directory"));
@@ -793,13 +796,13 @@ mod tests {
 
     #[test]
     fn test_warn_non_xdg_non_interactive_rejects_sensitive_sys() {
-        let result = warn_non_xdg(Path::new("/sys/class/net"));
+        let result = warn_non_xdg(Path::new("/sys/class/net"), || false);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_warn_non_xdg_non_interactive_rejects_sensitive_proc() {
-        let result = warn_non_xdg(Path::new("/proc/cpuinfo"));
+        let result = warn_non_xdg(Path::new("/proc/cpuinfo"), || false);
         assert!(result.is_err());
     }
 
@@ -809,7 +812,7 @@ mod tests {
         let dir = test_dir();
         let home = dir.path().to_path_buf();
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
-            let result = warn_non_xdg(&home.join("custom/.config"));
+            let result = warn_non_xdg(&home.join("custom/.config"), || false);
             assert!(result.is_ok());
         });
     }
