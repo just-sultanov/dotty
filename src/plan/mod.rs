@@ -208,13 +208,20 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
+    /// Initialize a real git repo at the given path.
+    fn init_git_repo(path: &Path) {
+        std::process::Command::new("git")
+            .current_dir(path)
+            .args(["init"])
+            .output()
+            .expect("git init should work in test env");
+    }
+
     fn setup() -> (tempfile::TempDir, PathBuf) {
         let dir = test_dir();
         let path = dir.path().to_path_buf();
         std::fs::create_dir_all(&path).unwrap();
-        // Create .git so the temp dir is treated as a valid git repository
-        // by pending plan integrity validation.
-        std::fs::create_dir_all(path.join(".git")).unwrap();
+        init_git_repo(&path);
         (dir, path)
     }
 
@@ -939,7 +946,7 @@ mod tests {
         let outer = tempfile::tempdir().unwrap();
         let repo_dir = outer.path().join("repo");
         std::fs::create_dir_all(&repo_dir).unwrap();
-        std::fs::create_dir_all(repo_dir.join(".git")).unwrap();
+        init_git_repo(&repo_dir);
 
         let mut plan = Plan::new(&repo_dir);
         plan.add(Action::CreateDir {
@@ -1002,7 +1009,7 @@ mod tests {
         // Create a valid git repo
         let repo = base.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
-        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        init_git_repo(&repo);
 
         let mut plan = Plan::new(&repo);
         plan.add(Action::CreateDir {
@@ -1014,6 +1021,39 @@ mod tests {
         let loaded = load_pending_plan(&state).unwrap();
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap().repo_path, repo);
+    }
+
+    #[test]
+    fn test_load_pending_plan_rejects_corrupted_git_repo() {
+        let (_dir, base) = setup();
+        let state = base.join("state");
+        std::fs::create_dir_all(&state).unwrap();
+
+        // Create a corrupted repo in a separate tempdir (not under base, which is a git repo).
+        // git rev-parse --git-dir climbs the directory tree, so the corrupted repo must be
+        // outside any parent git repository to ensure the check properly detects corruption.
+        let outer = tempfile::tempdir().unwrap();
+        let fake_repo = outer.path().join("fake_repo");
+        std::fs::create_dir_all(&fake_repo).unwrap();
+        init_git_repo(&fake_repo);
+        // Corrupt: remove HEAD so git rev-parse fails
+        std::fs::remove_file(fake_repo.join(".git").join("HEAD")).unwrap();
+
+        let mut plan = Plan::new(&fake_repo);
+        plan.add(Action::CreateDir {
+            path: fake_repo.join("dir"),
+        });
+        save_pending_plan(&plan, &state).unwrap();
+
+        // Should return PendingPlanInvalid because git rev-parse fails
+        let result = load_pending_plan(&state);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::error::DottyError::PendingPlanInvalid { reason, .. } => {
+                assert!(reason.contains("corrupted"));
+            }
+            other => panic!("expected PendingPlanInvalid, got: {other}"),
+        }
     }
 
     // -- CreateSymlink rollback with backup restoration tests --

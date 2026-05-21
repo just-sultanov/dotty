@@ -7,6 +7,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -100,6 +101,23 @@ pub(crate) fn load_pending_plan(
     if !repo_path.join(".git").exists() {
         return Err(crate::error::DottyError::PendingPlanInvalid {
             reason: format!("path is not a git repository: {}", repo_path.display()),
+            source: None,
+        });
+    }
+
+    // Verify git can read the repo (catches corrupted .git dirs missing HEAD, broken refs, etc.).
+    // `git rev-parse --git-dir` is extremely fast (<10ms) and safe — it only reads metadata.
+    let output = Command::new("git")
+        .current_dir(&repo_path)
+        .args(["rev-parse", "--git-dir"])
+        .output()
+        .map_err(|e| crate::error::DottyError::PendingPlanInvalid {
+            reason: format!("failed to run git: {}", e),
+            source: Some(e),
+        })?;
+    if !output.status.success() {
+        return Err(crate::error::DottyError::PendingPlanInvalid {
+            reason: format!("repository at {} is corrupted", repo_path.display()),
             source: None,
         });
     }
