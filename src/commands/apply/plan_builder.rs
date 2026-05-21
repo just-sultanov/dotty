@@ -6,6 +6,7 @@
 //! console output. Orphan detection is delegated to `orphan_detection`.
 
 use indexmap::IndexMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -64,6 +65,10 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
     let mut plan = Plan::new(&input.repo_path);
     let mut file_results: Vec<FileResult> = Vec::new();
 
+    // Collect unique parent directories to avoid duplicate CreateDir actions
+    // when multiple files share the same parent directory.
+    let mut created_parents = HashSet::new();
+
     // Process each merged file
     for (target_path, (tier, repo_rel)) in &input.merged {
         let repo_file = input.repo_path.join(repo_rel);
@@ -90,9 +95,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                     path: target.clone(),
                 });
                 if let Some(parent) = target.parent() {
-                    plan.add(Action::CreateDir {
-                        path: parent.to_path_buf(),
-                    });
+                    created_parents.insert(parent.to_path_buf());
                 }
                 plan.add(Action::CreateSymlink {
                     target: repo_file.clone(),
@@ -103,9 +106,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
             }
             TargetState::NeedsSymlink => {
                 if let Some(parent) = target.parent() {
-                    plan.add(Action::CreateDir {
-                        path: parent.to_path_buf(),
-                    });
+                    created_parents.insert(parent.to_path_buf());
                 }
                 plan.add(Action::CreateSymlink {
                     target: repo_file.clone(),
@@ -116,9 +117,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
             }
             TargetState::NeedsBackup => {
                 if let Some(parent) = target.parent() {
-                    plan.add(Action::CreateDir {
-                        path: parent.to_path_buf(),
-                    });
+                    created_parents.insert(parent.to_path_buf());
                 }
                 let backup_base = input.state_path.join("backups");
                 let backup_ts = crate::backups::backup_timestamp();
@@ -158,9 +157,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                     continue;
                 }
                 if let Some(parent) = target.parent() {
-                    plan.add(Action::CreateDir {
-                        path: parent.to_path_buf(),
-                    });
+                    created_parents.insert(parent.to_path_buf());
                 }
                 let backup_base = input.state_path.join("backups");
                 let backup_ts = crate::backups::backup_timestamp();
@@ -197,6 +194,11 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
             skipped: false,
             overrides,
         });
+    }
+
+    // Add deduplicated CreateDir actions for all unique parent directories.
+    for parent in created_parents {
+        plan.add(Action::CreateDir { path: parent });
     }
 
     // Orphan detection delegated to dedicated module.
@@ -609,19 +611,32 @@ mod tests {
             };
             let output = build_apply_plan(&input).unwrap();
 
-            // With --force, directory replacement should proceed
+            // With --force, directory replacement should proceed.
+            // CreateDir is now deduplicated and added after per-file actions.
             assert_eq!(output.plan.actions.len(), 3);
             assert!(
-                matches!(&output.plan.actions[0], Action::CreateDir { .. }),
-                "first action should be CreateDir"
+                output
+                    .plan
+                    .actions
+                    .iter()
+                    .any(|a| matches!(a, Action::CreateDir { .. })),
+                "plan should contain CreateDir"
             );
             assert!(
-                matches!(&output.plan.actions[1], Action::BackupDir { .. }),
-                "second action should be BackupDir"
+                output
+                    .plan
+                    .actions
+                    .iter()
+                    .any(|a| matches!(a, Action::BackupDir { .. })),
+                "plan should contain BackupDir"
             );
             assert!(
-                matches!(&output.plan.actions[2], Action::CreateSymlink { .. }),
-                "third action should be CreateSymlink"
+                output
+                    .plan
+                    .actions
+                    .iter()
+                    .any(|a| matches!(a, Action::CreateSymlink { .. })),
+                "plan should contain CreateSymlink"
             );
             assert_eq!(output.file_results.len(), 1);
             assert!(output.file_results[0].applied);
@@ -1137,6 +1152,128 @@ mod tests {
                 removal_actions.is_empty(),
                 "plan should have no removal actions for non-existent orphan"
             );
+        });
+    }
+
+    /// Tests that CreateDir actions are deduplicated when multiple files
+    /// share the same parent directory. Only one CreateDir action should
+    /// be produced per unique parent.
+    #[test]
+    fn test_build_apply_plan_deduplicate_createdir() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        // Create 3 repo files in the same parent directory
+        let common_parent = home.join(".config/nvim");
+        std::fs::create_dir_all(&common_parent).unwrap();
+
+        let target1 = common_parent.join("init.lua");
+        let repo_file1 = repo.join("base/home/.config/nvim/init.lua");
+        std::fs::create_dir_all(repo_file1.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file1, "init").unwrap();
+
+        let target2 = common_parent.join("plugins.lua");
+        let repo_file2 = repo.join("base/home/.config/nvim/plugins.lua");
+        std::fs::create_dir_all(repo_file2.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file2, "plugins").unwrap();
+
+        let target3 = common_parent.join("lua/settings.lua");
+        let repo_file3 = repo.join("base/home/.config/nvim/lua/settings.lua");
+        std::fs::create_dir_all(repo_file3.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file3, "settings").unwrap();
+
+        // Create 1 file in a different parent directory
+        let other_parent = home.join(".config/skhd");
+        std::fs::create_dir_all(&other_parent).unwrap();
+        let target4 = other_parent.join("skhdrc");
+        let repo_file4 = repo.join("base/home/.config/skhd/skhdrc");
+        std::fs::create_dir_all(repo_file4.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file4, "skhd").unwrap();
+
+        let mut merged = IndexMap::new();
+        merged.insert(
+            target1.clone(),
+            (
+                "base".to_string(),
+                "base/home/.config/nvim/init.lua".to_string(),
+            ),
+        );
+        merged.insert(
+            target2.clone(),
+            (
+                "base".to_string(),
+                "base/home/.config/nvim/plugins.lua".to_string(),
+            ),
+        );
+        merged.insert(
+            target3.clone(),
+            (
+                "base".to_string(),
+                "base/home/.config/nvim/lua/settings.lua".to_string(),
+            ),
+        );
+        merged.insert(
+            target4.clone(),
+            (
+                "base".to_string(),
+                "base/home/.config/skhd/skhdrc".to_string(),
+            ),
+        );
+        let mut config = Config::new();
+        config.managed.insert(
+            "base/home/.config/nvim/init.lua".into(),
+            target1.to_string_lossy().to_string(),
+        );
+        config.managed.insert(
+            "base/home/.config/nvim/plugins.lua".into(),
+            target2.to_string_lossy().to_string(),
+        );
+        config.managed.insert(
+            "base/home/.config/nvim/lua/settings.lua".into(),
+            target3.to_string_lossy().to_string(),
+        );
+        config.managed.insert(
+            "base/home/.config/skhd/skhdrc".into(),
+            target4.to_string_lossy().to_string(),
+        );
+
+        crate::tests::with_test_home(|_| {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: IndexMap::new(),
+                config,
+                force: false,
+                follow_symlinks: false,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            // 4 files across 3 unique parent directories:
+            //   ~/.config/nvim (2 files), ~/.config/nvim/lua (1 file),
+            //   ~/.config/skhd (1 file) → exactly 3 CreateDir actions
+            let create_dir_count = output
+                .plan
+                .actions
+                .iter()
+                .filter(|a| matches!(a, Action::CreateDir { .. }))
+                .count();
+            assert_eq!(
+                create_dir_count, 3,
+                "expected 3 CreateDir actions for 3 unique parents, got {}",
+                create_dir_count
+            );
+
+            // All 4 files should have results
+            assert_eq!(output.file_results.len(), 4);
+            assert!(output.orphans.is_empty());
         });
     }
 }

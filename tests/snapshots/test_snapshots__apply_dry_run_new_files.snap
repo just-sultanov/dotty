@@ -1,10 +1,11 @@
 ---
 source: tests/test_snapshots.rs
+assertion_line: 120
 expression: normalized
 ---
 [dry-run] Plan (2 actions):
-[dry-run]  1. create dir    [HOME]
-[dry-run]  2. create link   [HOME]/.vimrc → [REPO]/base/home/.vimrc
+[dry-run]  1. create link   [HOME]/.vimrc → [REPO]/base/home/.vimrc
+[dry-run]  2. create dir    [HOME]
 [dry-run] no changes made
   [dry-run] ✓ ~/.vimrc (base)
   [dry-run] ────────────────────────────────────────
