@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -412,8 +411,9 @@ fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> {
 }
 
 /// Build a map from target path → list of repo-relative paths that manage it.
-fn build_conflict_map(existing_files: &[String]) -> HashMap<PathBuf, Vec<String>> {
-    let mut map: HashMap<PathBuf, Vec<String>> = HashMap::new();
+/// Uses IndexMap to preserve insertion order for deterministic conflict display.
+fn build_conflict_map(existing_files: &[String]) -> indexmap::IndexMap<PathBuf, Vec<String>> {
+    let mut map: indexmap::IndexMap<PathBuf, Vec<String>> = indexmap::IndexMap::new();
 
     for repo_rel in existing_files {
         let repo_path = PathBuf::from(repo_rel);
@@ -430,7 +430,7 @@ fn build_conflict_map(existing_files: &[String]) -> HashMap<PathBuf, Vec<String>
 /// Returns the subset of files that should proceed (after user confirmation).
 fn resolve_conflicts(
     files_to_add: &[PathBuf],
-    conflict_map: &HashMap<PathBuf, Vec<String>>,
+    conflict_map: &indexmap::IndexMap<PathBuf, Vec<String>>,
 ) -> Result<Vec<PathBuf>, DottyError> {
     let mut conflicting: Vec<(&PathBuf, &Vec<String>)> = Vec::new();
 
@@ -1078,6 +1078,30 @@ mod tests {
                 "value should use forward slashes: {}",
                 value
             );
+        });
+    }
+
+    /// Verifies that conflict_map preserves insertion order via IndexMap,
+    /// ensuring deterministic conflict display across runs.
+    #[test]
+    fn test_build_conflict_map_deterministic_order() {
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            // Insert in a specific order: .gitconfig, .vimrc, .config/nvim/plugins.lua
+            let existing = vec![
+                "base/home/.gitconfig".into(),
+                "base/home/.vimrc".into(),
+                "macbook/home/.config/nvim/plugins.lua".into(),
+            ];
+            let map = build_conflict_map(&existing);
+
+            // Verify keys are in insertion order (deterministic)
+            let keys: Vec<PathBuf> = map.keys().cloned().collect();
+            assert_eq!(keys.len(), 3);
+            assert_eq!(keys[0], home.join(".gitconfig"));
+            assert_eq!(keys[1], home.join(".vimrc"));
+            assert_eq!(keys[2], home.join(".config/nvim/plugins.lua"));
         });
     }
 }

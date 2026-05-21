@@ -6,8 +6,9 @@
 //! console output. Orphan detection is delegated to `orphan_detection`.
 
 use indexmap::IndexMap;
-use std::collections::HashSet;
 use std::path::PathBuf;
+
+use indexmap::IndexSet;
 
 use tracing::warn;
 
@@ -74,7 +75,9 @@ pub(crate) fn build_apply_plan(
 
     // Collect unique parent directories to avoid duplicate CreateDir actions
     // when multiple files share the same parent directory.
-    let mut created_parents = HashSet::new();
+    // IndexSet preserves insertion order, ensuring deterministic CreateDir
+    // action ordering in dry-run output across runs.
+    let mut created_parents = IndexSet::new();
 
     // Process each merged file
     for (target_path, (tier, repo_rel)) in &input.merged {
@@ -1285,6 +1288,119 @@ mod tests {
             // All 4 files should have results
             assert_eq!(output.file_results.len(), 4);
             assert!(output.orphans.is_empty());
+        });
+    }
+
+    /// Verifies that CreateDir actions appear in deterministic insertion order,
+    /// not arbitrary hash-set iteration order. Running the same input multiple
+    /// times must yield identical CreateDir ordering.
+    #[test]
+    fn test_build_apply_plan_deterministic_createdir_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        // Create files in 3 different parent directories
+        let parent_a = home.join(".config/a");
+        std::fs::create_dir_all(&parent_a).unwrap();
+        let target_a = parent_a.join("file.txt");
+        let repo_file_a = repo.join("base/home/.config/a/file.txt");
+        std::fs::create_dir_all(repo_file_a.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file_a, "a").unwrap();
+
+        let parent_b = home.join(".config/b");
+        std::fs::create_dir_all(&parent_b).unwrap();
+        let target_b = parent_b.join("file.txt");
+        let repo_file_b = repo.join("base/home/.config/b/file.txt");
+        std::fs::create_dir_all(repo_file_b.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file_b, "b").unwrap();
+
+        let parent_c = home.join(".config/c");
+        std::fs::create_dir_all(&parent_c).unwrap();
+        let target_c = parent_c.join("file.txt");
+        let repo_file_c = repo.join("base/home/.config/c/file.txt");
+        std::fs::create_dir_all(repo_file_c.parent().unwrap()).unwrap();
+        std::fs::write(&repo_file_c, "c").unwrap();
+
+        let mut merged = IndexMap::new();
+        merged.insert(
+            target_a.clone(),
+            (
+                "base".to_string(),
+                "base/home/.config/a/file.txt".to_string(),
+            ),
+        );
+        merged.insert(
+            target_b.clone(),
+            (
+                "base".to_string(),
+                "base/home/.config/b/file.txt".to_string(),
+            ),
+        );
+        merged.insert(
+            target_c.clone(),
+            (
+                "base".to_string(),
+                "base/home/.config/c/file.txt".to_string(),
+            ),
+        );
+        let mut config = Config::new();
+        config.managed.insert(
+            "base/home/.config/a/file.txt".into(),
+            target_a.to_string_lossy().to_string(),
+        );
+        config.managed.insert(
+            "base/home/.config/b/file.txt".into(),
+            target_b.to_string_lossy().to_string(),
+        );
+        config.managed.insert(
+            "base/home/.config/c/file.txt".into(),
+            target_c.to_string_lossy().to_string(),
+        );
+
+        crate::tests::with_test_home(|_| {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: IndexMap::new(),
+                config,
+                force: false,
+                follow_symlinks: false,
+            };
+            let output = build_apply_plan(&input).unwrap();
+
+            // Collect CreateDir paths in order
+            let create_dirs: Vec<PathBuf> = output
+                .plan
+                .actions
+                .iter()
+                .filter_map(|a| match a {
+                    Action::CreateDir { path } => Some(path.clone()),
+                    _ => None,
+                })
+                .collect();
+
+            // Should have exactly 3 CreateDir actions in insertion order
+            assert_eq!(create_dirs.len(), 3, "expected 3 CreateDir actions");
+            assert_eq!(
+                create_dirs[0], parent_a,
+                "first CreateDir should be parent_a"
+            );
+            assert_eq!(
+                create_dirs[1], parent_b,
+                "second CreateDir should be parent_b"
+            );
+            assert_eq!(
+                create_dirs[2], parent_c,
+                "third CreateDir should be parent_c"
+            );
         });
     }
 }
