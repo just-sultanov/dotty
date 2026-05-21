@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::DottyError;
 
 use crate::config::write_config;
 use crate::git;
@@ -29,9 +29,9 @@ pub fn run(
     platform_override: Option<String>,
     force: bool,
     follow_symlinks: bool,
-) -> Result<()> {
-    let repo = RepoState::new().map_err(|e| anyhow::anyhow!("{e}"))?;
-    repo.require_git().map_err(|e| anyhow::anyhow!("{e}"))?;
+) -> Result<(), DottyError> {
+    let repo = RepoState::new()?;
+    repo.require_git()?;
 
     let repo_path = &repo.repo_path;
     let state_path = &repo.state_path;
@@ -41,7 +41,8 @@ pub fn run(
 
     // 1. Detect platform and resolve machine
     let platform = platform_override.or_else(detect_platform);
-    let machine_name = resolve_machine(repo_path, &mut config, state_path, dry_run, &platform)?;
+    let machine_name = resolve_machine(repo_path, &mut config, state_path, dry_run, &platform)
+        .map_err(|e| DottyError::CommandError(e.to_string()))?;
 
     // 2. Collect all tracked files from git
     let tracked_files = git::git_ls_files(repo_path)?;
@@ -69,7 +70,7 @@ pub fn run(
         force,
         follow_symlinks,
     };
-    let output = build_apply_plan(&input)?;
+    let output = build_apply_plan(&input).map_err(|e| DottyError::CommandError(e.to_string()))?;
 
     // 6. Execute plan
     plan::execute_plan(&output.plan, dry_run, state_path)?;

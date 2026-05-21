@@ -84,6 +84,11 @@ pub(crate) enum DottyError {
         "directory {path} already exists and is not empty. Remove it or choose a different path via $DOTTY_HOME."
     )]
     InitDirectoryNotEmpty { path: String },
+
+    /// Generic command error for cases where a domain-specific variant
+    /// does not cleanly apply. Used when converting from anyhow::Error.
+    #[error("command error: {0}")]
+    CommandError(String),
 }
 
 #[cfg(test)]

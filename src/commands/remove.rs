@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use crate::error::DottyError;
 
 use crate::config::Config;
 use crate::config::write_config;
@@ -20,9 +20,9 @@ pub fn run(
     machine: Option<String>,
     commit: Option<String>,
     dry_run: bool,
-) -> Result<()> {
-    let repo = RepoState::new().map_err(|e| anyhow::anyhow!("{e}"))?;
-    repo.require_git().map_err(|e| anyhow::anyhow!("{e}"))?;
+) -> Result<(), DottyError> {
+    let repo = RepoState::new()?;
+    repo.require_git()?;
 
     let repo_path = &repo.repo_path;
     let state_path = &repo.state_path;
@@ -33,7 +33,10 @@ pub fn run(
     // Collect all files to remove (recursively for directories)
     let target_files = collect_target_files(&target_path)?;
     if target_files.is_empty() {
-        anyhow::bail!("No files found at path: {}", target_path.display());
+        return Err(DottyError::InvalidTargetPath {
+            path: target_path.display().to_string(),
+            reason: "no files found at this path".into(),
+        });
     }
 
     // Get tracked files from repo
@@ -82,7 +85,10 @@ pub fn run(
     }
 
     if managed_pairs.is_empty() {
-        anyhow::bail!("Path not managed by dotty: {}", target_path.display());
+        return Err(DottyError::InvalidTargetPath {
+            path: target_path.display().to_string(),
+            reason: "Path not managed by dotty".into(),
+        });
     }
 
     // Deduplicate by repo path
@@ -133,7 +139,7 @@ pub fn run(
 }
 
 /// Collect all target files under the given path.
-fn collect_target_files(target_path: &Path) -> Result<Vec<PathBuf>> {
+fn collect_target_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> {
     let mut files = Vec::new();
 
     if target_path.is_file() || is_symlink(target_path) {
@@ -174,7 +180,7 @@ pub(crate) struct RemovePlanOutput {
 pub(crate) fn build_remove_plan(
     input: &RemovePlanInput,
     config: &Config,
-) -> Result<RemovePlanOutput> {
+) -> Result<RemovePlanOutput, DottyError> {
     let mut plan = Plan::new(&input.repo_path);
     let mut config = config.clone();
 
@@ -257,7 +263,7 @@ pub(crate) fn build_remove_plan(
 fn resolve_remove_skipped(
     managed_pairs: &[(PathBuf, String)],
     repo_path: &Path,
-) -> Result<HashSet<String>> {
+) -> Result<HashSet<String>, DottyError> {
     let mut skipped = HashSet::new();
 
     for (target_file, repo_rel) in managed_pairs {

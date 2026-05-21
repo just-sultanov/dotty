@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use crate::error::DottyError;
 use tracing::warn;
 
 use crate::backups::backup_timestamp;
@@ -26,8 +26,8 @@ pub fn run(
     platform: Option<String>,
     commit: Option<String>,
     dry_run: bool,
-) -> Result<()> {
-    let repo = RepoState::new().map_err(|e| anyhow::anyhow!("{e}"))?;
+) -> Result<(), DottyError> {
+    let repo = RepoState::new()?;
 
     let repo_path = &repo.repo_path;
     let state_path = &repo.state_path;
@@ -36,7 +36,7 @@ pub fn run(
     let target_path = expand_tilde(&path)?;
 
     // Determine scope (tier directory name)
-    let scope = resolve_scope(&machine, &platform)?;
+    let scope = resolve_scope(&machine, &platform);
 
     // Reject paths inside the dotty repo itself.
     // Two-layer defense: (1) canonicalize both paths and compare, (2) string-prefix fallback
@@ -62,7 +62,10 @@ pub fn run(
     };
 
     if is_self_reference {
-        anyhow::bail!("Cannot add files from inside the dotty repository.");
+        return Err(DottyError::InvalidRepoPath {
+            path: target_path.to_string_lossy().to_string(),
+            reason: "Cannot add files from inside the dotty repository".into(),
+        });
     }
 
     // Warn about non-standard config paths (only for base tier)
@@ -102,7 +105,10 @@ pub fn run(
     // Collect all files to add (recursively for directories)
     let files_to_add = collect_files(&target_path)?;
     if files_to_add.is_empty() {
-        anyhow::bail!("No files found at path: {}", target_path.display());
+        return Err(DottyError::InvalidTargetPath {
+            path: target_path.display().to_string(),
+            reason: "no files found at this path".into(),
+        });
     }
 
     // Build conflict map from existing tracked files
@@ -179,7 +185,10 @@ pub(crate) struct AddPlanOutput {
 /// This is a pure function: it takes all resolved input data and returns
 /// a `Plan` with actions and an updated `Config`. No filesystem or git
 /// operations are performed.
-pub(crate) fn build_add_plan(input: &AddPlanInput, config: &Config) -> Result<AddPlanOutput> {
+pub(crate) fn build_add_plan(
+    input: &AddPlanInput,
+    config: &Config,
+) -> Result<AddPlanOutput, DottyError> {
     let mut plan = Plan::new(&input.repo_path);
     let mut config = config.clone();
 
@@ -235,11 +244,10 @@ pub(crate) fn build_add_plan(input: &AddPlanInput, config: &Config) -> Result<Ad
 
         // Update managed map (normalize separators to `/` for cross-platform keys)
         let repo_rel = normalize_path(repo_file.strip_prefix(&input.repo_path).map_err(|_| {
-            anyhow::anyhow!(
-                "Repo file {} is not inside the repository at {}",
-                repo_file.display(),
-                input.repo_path.display()
-            )
+            DottyError::InvalidRepoPath {
+                path: repo_file.to_string_lossy().to_string(),
+                reason: format!("not inside the repository at {}", input.repo_path.display()),
+            }
         })?);
         let target_rel = format_target_display(target_file);
         config.managed.insert(repo_rel, target_rel);
@@ -269,13 +277,13 @@ pub(crate) fn build_add_plan(input: &AddPlanInput, config: &Config) -> Result<Ad
 /// Resolve the scope (tier directory name) from --machine / --platform flags.
 ///
 /// Priority: --machine > --platform > "base" (default).
-fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> Result<String> {
+fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> String {
     if let Some(name) = machine {
-        Ok(name.clone())
+        name.clone()
     } else if let Some(name) = platform {
-        Ok(name.clone())
+        name.clone()
     } else {
-        Ok("base".to_string())
+        "base".to_string()
     }
 }
 
@@ -307,7 +315,7 @@ fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> Result<
 /// only handles the HOME-missing case: when `home_dir()` returns `None`,
 /// we cannot determine whether the path is under `~`, so we default to
 /// non-standard behavior (warning + interactive prompt) rather than failing.
-fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Result<()> {
+fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Result<(), DottyError> {
     // Guard: skip interactive prompts in non-TTY contexts to avoid hangs.
     if !is_interactive() {
         let home = crate::paths::home_dir().ok();
@@ -341,10 +349,13 @@ fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Resul
             .iter()
             .any(|&prefix| path_str == prefix || path_str.starts_with(&format!("{}/", prefix)))
         {
-            anyhow::bail!(
-                "'{}' is under a sensitive system directory. Adding system files is not supported in non-interactive mode.",
-                target_path.display()
-            );
+            return Err(DottyError::InvalidTargetPath {
+                path: target_path.to_string_lossy().to_string(),
+                reason: format!(
+                    "'{}' is under a sensitive system directory",
+                    target_path.display()
+                ),
+            });
         }
 
         return Ok(());
@@ -382,9 +393,7 @@ fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Resul
             "Add this file to a specific machine or platform tier instead of base? (yes = specify tier, no = add to base)",
         )?;
         if ok {
-            anyhow::bail!(
-                "Aborted. Re-run with --machine <name> or --platform <name> to target a specific tier."
-            );
+            return Err(DottyError::Cancelled);
         }
     }
 
@@ -401,7 +410,7 @@ fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Resul
         );
         let ok = prompt_confirm("Proceed anyway?")?;
         if !ok {
-            anyhow::bail!("Aborted.");
+            return Err(DottyError::Cancelled);
         }
     }
 
@@ -409,7 +418,7 @@ fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Resul
 }
 
 /// Collect all files under the given path.
-fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>> {
+fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> {
     let mut files = Vec::new();
 
     if target_path.is_file() || is_symlink(target_path) {
@@ -417,7 +426,10 @@ fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>> {
     } else if target_path.is_dir() {
         walk_dir(target_path, &mut files, 0)?;
     } else {
-        anyhow::bail!("Path does not exist: {}", target_path.display());
+        return Err(DottyError::InvalidTargetPath {
+            path: target_path.display().to_string(),
+            reason: "path does not exist".into(),
+        });
     }
 
     Ok(files)
@@ -443,7 +455,7 @@ fn build_conflict_map(existing_files: &[String]) -> HashMap<PathBuf, Vec<String>
 fn resolve_conflicts(
     files_to_add: &[PathBuf],
     conflict_map: &HashMap<PathBuf, Vec<String>>,
-) -> Result<Vec<PathBuf>> {
+) -> Result<Vec<PathBuf>, DottyError> {
     let mut conflicting: Vec<(&PathBuf, &Vec<String>)> = Vec::new();
 
     for file in files_to_add {
@@ -518,25 +530,25 @@ mod tests {
 
     #[test]
     fn test_resolve_scope_machine() {
-        let scope = resolve_scope(&Some("macbook".into()), &None).unwrap();
+        let scope = resolve_scope(&Some("macbook".into()), &None);
         assert_eq!(scope, "macbook");
     }
 
     #[test]
     fn test_resolve_scope_platform() {
-        let scope = resolve_scope(&None, &Some("macos".into())).unwrap();
+        let scope = resolve_scope(&None, &Some("macos".into()));
         assert_eq!(scope, "macos");
     }
 
     #[test]
     fn test_resolve_scope_default() {
-        let scope = resolve_scope(&None, &None).unwrap();
+        let scope = resolve_scope(&None, &None);
         assert_eq!(scope, "base");
     }
 
     #[test]
     fn test_resolve_scope_machine_over_platform() {
-        let scope = resolve_scope(&Some("macbook".into()), &Some("macos".into())).unwrap();
+        let scope = resolve_scope(&Some("macbook".into()), &Some("macos".into()));
         assert_eq!(scope, "macbook");
     }
 
