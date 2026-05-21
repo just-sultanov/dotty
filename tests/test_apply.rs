@@ -353,6 +353,67 @@ fn apply_platform_override_uses_specified_tier() {
 }
 
 // ---------------------------------------------------------------------------
+// apply — dry-run does not persist machine name to config.toml
+// ---------------------------------------------------------------------------
+
+#[test]
+fn apply_dry_run_does_not_write_machine_to_config() {
+    let env = TestEnv::new();
+
+    // Init with --machine so config is created (non-interactive).
+    env.run_ok(&["init", "--machine", "testbox"]);
+    env.git_config_identity();
+
+    // Remove the machine entry from config.toml so resolve_machine
+    // will attempt to write it during apply.
+    let config_path = env.state.join("config.toml");
+    let mut config_content = std::fs::read_to_string(&config_path).unwrap();
+    // Strip the machine line (handles both 'machine = "testbox"' and 'machine="testbox"')
+    let lines: Vec<&str> = config_content.lines().collect();
+    config_content = lines
+        .into_iter()
+        .filter(|line| !line.trim().starts_with("machine"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&config_path, config_content).unwrap();
+
+    // Verify config exists but has no machine set.
+    let config_before = env.read_config();
+    assert!(
+        !config_before.contains("machine"),
+        "config should not have machine set after cleanup"
+    );
+
+    // Create a repo file so apply has something to do.
+    let repo_file = env.repo.join("base/home/.dryrunrc");
+    std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+    std::fs::write(&repo_file, "dry-run test").unwrap();
+
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["add", "base/home/.dryrunrc"])
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["commit", "-m", "add dryrunrc", "--allow-empty"])
+        .output()
+        .unwrap();
+
+    // Run apply with --dry-run. It will fail because no machine is set,
+    // but the key assertion is that config.toml was NOT modified.
+    let _out = env.run(&["apply", "--dry-run"]);
+
+    // Config.toml should still not contain a machine entry.
+    let config_after = env.read_config();
+    assert!(
+        !config_after.contains("machine"),
+        "dry-run should not persist machine name to config.toml:\n{}",
+        config_after
+    );
+}
+
+// ---------------------------------------------------------------------------
 // apply — config write failure
 // ---------------------------------------------------------------------------
 

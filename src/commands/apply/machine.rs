@@ -37,6 +37,11 @@ pub(crate) fn resolve_machine(
 
     let name = prompt_machine_selection(&known)?;
     config.machine = Some(name.clone());
-    write_config(state_path, config)?;
+    // Guard against persisting machine name during dry-run: the config
+    // should only be written when the apply is actually executed, not
+    // when the user is only previewing what would happen.
+    if !dry_run {
+        write_config(state_path, config)?;
+    }
     Ok(name)
 }
