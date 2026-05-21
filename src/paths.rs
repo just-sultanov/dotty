@@ -242,10 +242,12 @@ mod tests {
 
     #[test]
     fn test_repo_to_target_home() {
-        let repo = Path::new("base/home/.vimrc");
-        let target = repo_to_target(repo).unwrap();
-        assert!(target.to_string_lossy().ends_with(".vimrc"));
-        assert!(target.starts_with(home_dir().unwrap()));
+        crate::tests::with_test_home(|home| {
+            let repo = Path::new("base/home/.vimrc");
+            let target = repo_to_target(repo).unwrap();
+            assert!(target.to_string_lossy().ends_with(".vimrc"));
+            assert!(target.starts_with(home));
+        });
     }
 
     #[test]
@@ -274,10 +276,11 @@ mod tests {
 
     #[test]
     fn test_target_to_repo_home() {
-        let home = home_dir().unwrap();
-        let target = home.join(".vimrc");
-        let repo = target_to_repo(&target).unwrap();
-        assert_eq!(repo, PathBuf::from("home/.vimrc"));
+        crate::tests::with_test_home(|home| {
+            let target = home.join(".vimrc");
+            let repo = target_to_repo(&target).unwrap();
+            assert_eq!(repo, PathBuf::from("home/.vimrc"));
+        });
     }
 
     #[test]
@@ -304,17 +307,18 @@ mod tests {
         // Defense-in-depth: if the resulting repo path somehow contains "..",
         // it should be rejected. With current strip_prefix logic this won't
         // trigger for normal paths, but the guard protects against regressions.
-        let home = home_dir().unwrap();
-        // A path like /home/user/../etc/passwd would strip_prefix home and
-        // produce "home/../etc/passwd" — the ".." check catches this.
-        // We simulate by constructing a path that would produce ".." after strip.
-        // In practice, canonical paths won't have "..", but the validation exists.
-        let target = home.join("subdir");
-        let repo = target_to_repo(&target).unwrap();
-        // Normal path should not contain ".."
-        for component in repo.components() {
-            assert_ne!(component.as_os_str(), "..");
-        }
+        crate::tests::with_test_home(|home| {
+            // A path like /home/user/../etc/passwd would strip_prefix home and
+            // produce "home/../etc/passwd" — the ".." check catches this.
+            // We simulate by constructing a path that would produce ".." after strip.
+            // In practice, canonical paths won't have "..", but the validation exists.
+            let target = home.join("subdir");
+            let repo = target_to_repo(&target).unwrap();
+            // Normal path should not contain ".."
+            for component in repo.components() {
+                assert_ne!(component.as_os_str(), "..");
+            }
+        });
     }
 
     #[test]
@@ -336,15 +340,19 @@ mod tests {
 
     #[test]
     fn test_expand_tilde_home() {
-        let path = expand_tilde("~/.vimrc").unwrap();
-        assert!(path.to_string_lossy().ends_with(".vimrc"));
-        assert!(path.starts_with(home_dir().unwrap()));
+        crate::tests::with_test_home(|home| {
+            let path = expand_tilde("~/.vimrc").unwrap();
+            assert!(path.to_string_lossy().ends_with(".vimrc"));
+            assert!(path.starts_with(home));
+        });
     }
 
     #[test]
     fn test_expand_tilde_tilde_only() {
-        let path = expand_tilde("~").unwrap();
-        assert_eq!(path, home_dir().unwrap());
+        crate::tests::with_test_home(|home| {
+            let path = expand_tilde("~").unwrap();
+            assert_eq!(path, *home);
+        });
     }
 
     #[test]
@@ -412,18 +420,20 @@ mod tests {
 
     #[test]
     fn test_format_target_display_home_path() {
-        let home = home_dir().unwrap();
-        let path = home.join(".vimrc");
-        let formatted = format_target_display(&path);
-        assert_eq!(formatted, "~/.vimrc");
+        crate::tests::with_test_home(|home| {
+            let path = home.join(".vimrc");
+            let formatted = format_target_display(&path);
+            assert_eq!(formatted, "~/.vimrc");
+        });
     }
 
     #[test]
     fn test_format_target_display_nested_home_path() {
-        let home = home_dir().unwrap();
-        let path = home.join(".config/nvim/init.lua");
-        let formatted = format_target_display(&path);
-        assert_eq!(formatted, "~/.config/nvim/init.lua");
+        crate::tests::with_test_home(|home| {
+            let path = home.join(".config/nvim/init.lua");
+            let formatted = format_target_display(&path);
+            assert_eq!(formatted, "~/.config/nvim/init.lua");
+        });
     }
 
     #[test]

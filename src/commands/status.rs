@@ -338,10 +338,11 @@ mod tests {
 
     #[test]
     fn test_format_target_display_home() {
-        let home = crate::paths::home_dir().unwrap();
-        let path = home.join(".vimrc");
-        let formatted = format_target_display(&path);
-        assert_eq!(formatted, "~/.vimrc");
+        crate::tests::with_test_home(|home| {
+            let path = home.join(".vimrc");
+            let formatted = format_target_display(&path);
+            assert_eq!(formatted, "~/.vimrc");
+        });
     }
 
     #[test]
