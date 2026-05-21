@@ -1,5 +1,7 @@
 use crate::error::DottyError;
 
+use tracing::warn;
+
 use crate::config::write_config;
 use crate::git;
 use crate::paths::home_dir;
@@ -85,11 +87,7 @@ pub fn run(
     // knows the managed map may be stale (orphan detection will be
     // incorrect on the next apply until the config is fixed).
     if !dry_run && let Err(e) = write_config(state_path, &config) {
-        eprintln!(
-            "Warning: failed to write config: {e}\n\
-             Your managed map may be out of sync — orphans may not be detected on the next apply.\n\
-             Check file permissions or disk space and run `dotty apply` again.",
-        );
+        warn!("failed to write config: {e}. Your managed map may be out of sync.");
     }
 
     Ok(())

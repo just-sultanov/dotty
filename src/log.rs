@@ -1,4 +1,5 @@
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::time::UtcTime;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -54,7 +55,7 @@ pub fn init(verbosity: Verbosity) {
             tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stderr)
                 .with_target(false)
-                .without_time(),
+                .with_timer(UtcTime::rfc_3339()),
         )
         .with(
             EnvFilter::try_from_default_env()

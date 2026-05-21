@@ -434,8 +434,8 @@ fn apply_reports_config_write_failure_to_stderr() {
         stderr
     );
     assert!(
-        stderr.contains("orphans"),
-        "expected orphan detection warning in stderr:\n{}",
+        stderr.contains("out of sync"),
+        "expected out of sync warning in stderr:\n{}",
         stderr
     );
 }
