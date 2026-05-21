@@ -5,6 +5,7 @@ use anyhow::Result;
 
 use crate::config::Config;
 use crate::convention::classify_tier;
+use crate::error::DottyError;
 use crate::fs_utils::calculate_dir_size;
 use crate::git;
 use crate::paths::{expand_tilde, format_target_display, repo_to_target};
@@ -40,8 +41,16 @@ pub fn run() -> Result<()> {
     }
 
     // Git dirty status
+    // Error handling strategy: print warning to stderr and continue with partial output.
+    // The status command is a diagnostic tool — we report what we can rather than aborting.
     let git_status = git_status_summary(repo_path);
-    println!("Git:       {}", git_status);
+    match git_status {
+        Ok(summary) => println!("Git:       {}", summary),
+        Err(e) => {
+            eprintln!("{} Failed to read git status: {e}", crate::symbols::warn());
+            println!("Git:       (unavailable)");
+        }
+    }
 
     // Broken symlinks
     let broken = find_broken_symlinks(repo_path, config);
@@ -96,14 +105,15 @@ pub fn run() -> Result<()> {
 }
 
 /// Summarize git status as a human-readable string.
-fn git_status_summary(repo_path: &Path) -> String {
-    let porcelain = match git::git_status(repo_path) {
-        Ok(p) => p,
-        Err(_) => return "(error)".to_string(),
-    };
+///
+/// Returns `DottyError::Git` if the git command fails (e.g., git not installed,
+/// corrupted repo, insufficient permissions). The caller is responsible for
+/// deciding whether to abort or continue with partial output.
+fn git_status_summary(repo_path: &Path) -> Result<String, DottyError> {
+    let porcelain = git::git_status(repo_path)?;
 
     if porcelain.is_empty() {
-        return "clean".to_string();
+        return Ok("clean".to_string());
     }
 
     let mut modified = 0usize;
@@ -148,9 +158,9 @@ fn git_status_summary(repo_path: &Path) -> String {
     }
 
     if parts.is_empty() {
-        "clean".to_string()
+        Ok("clean".to_string())
     } else {
-        parts.join(", ")
+        Ok(parts.join(", "))
     }
 }
 
@@ -389,5 +399,23 @@ mod tests {
         std::fs::write(snap.join("vimrc.bak"), "content").unwrap();
 
         assert_eq!(count_backup_entries(state_path), 1);
+    }
+
+    #[test]
+    fn test_git_status_summary_returns_error_on_non_repo() {
+        // A directory without a git repo should cause git_status to fail,
+        // which should propagate as a DottyError::Git.
+        let dir = tempfile::tempdir().unwrap();
+        let result = git_status_summary(dir.path());
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::Git { stderr, .. } => {
+                assert!(
+                    stderr.contains("git status") && stderr.contains("failed"),
+                    "expected git status error, got: {stderr}"
+                );
+            }
+            other => panic!("expected DottyError::Git, got {other:?}"),
+        }
     }
 }
