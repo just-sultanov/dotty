@@ -380,16 +380,24 @@ fn apply_reports_config_write_failure_to_stderr() {
         .unwrap();
 
     // Make the config.toml read-only so write_config will fail.
-    let config_path = env.state.join("config.toml");
     // Run apply once to create the config
     env.run_ok(&["apply"]);
     // Now make it read-only (remove write permission)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        let config_path = env.state.join("config.toml");
         let mut perms = std::fs::metadata(&config_path).unwrap().permissions();
         perms.set_mode(0o444); // read-only
         std::fs::set_permissions(&config_path, perms).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("attrib")
+            .current_dir(&env.state)
+            .args(["+r", "config.toml"])
+            .output()
+            .unwrap();
     }
 
     // Add another file that will trigger a config rewrite
