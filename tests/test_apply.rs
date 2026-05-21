@@ -351,3 +351,83 @@ fn apply_platform_override_uses_specified_tier() {
     );
     env.assert_symlink(&target, &repo_file);
 }
+
+// ---------------------------------------------------------------------------
+// apply — config write failure
+// ---------------------------------------------------------------------------
+
+#[test]
+fn apply_reports_config_write_failure_to_stderr() {
+    let env = TestEnv::new();
+
+    env.run_ok(&["init", "--machine", "testbox"]);
+    env.git_config_identity();
+
+    // Repo file
+    let repo_file = env.repo.join("base/home/.warnrc");
+    std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+    std::fs::write(&repo_file, "warn test").unwrap();
+
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["add", "base/home/.warnrc"])
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["commit", "-m", "add warnrc", "--allow-empty"])
+        .output()
+        .unwrap();
+
+    // Make the config.toml read-only so write_config will fail.
+    let config_path = env.state.join("config.toml");
+    // Run apply once to create the config
+    env.run_ok(&["apply"]);
+    // Now make it read-only (remove write permission)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&config_path).unwrap().permissions();
+        perms.set_mode(0o444); // read-only
+        std::fs::set_permissions(&config_path, perms).unwrap();
+    }
+
+    // Add another file that will trigger a config rewrite
+    let repo_file2 = env.repo.join("base/home/.warnrc2");
+    std::fs::create_dir_all(repo_file2.parent().unwrap()).unwrap();
+    std::fs::write(&repo_file2, "warn test 2").unwrap();
+
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["add", "base/home/.warnrc2"])
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["commit", "-m", "add warnrc2", "--allow-empty"])
+        .output()
+        .unwrap();
+
+    // Second apply should fail to write config and report to stderr
+    let out = env.run(&["apply"]);
+    assert!(
+        out.status.success(),
+        "apply should still succeed (non-fatal config write error)"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("failed to write config"),
+        "expected config write failure message in stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("managed map"),
+        "expected managed map warning in stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("orphans"),
+        "expected orphan detection warning in stderr:\n{}",
+        stderr
+    );
+}

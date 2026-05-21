@@ -1,5 +1,4 @@
 use anyhow::Result;
-use tracing::warn;
 
 use crate::config::write_config;
 use crate::git;
@@ -72,9 +71,18 @@ pub fn run(dry_run: bool, platform_override: Option<String>, force: bool) -> Res
     // 7. Print per-file summary
     print_per_file_summary(&output.file_results, &output.orphans, dry_run);
 
-    // 8. Write updated config (managed map was rebuilt in step 4b)
+    // 8. Write updated config (managed map was rebuilt in step 4b).
+    //
+    // Config write failure is non-fatal: the apply itself succeeded.
+    // We print to stderr with details and a recommendation so the user
+    // knows the managed map may be stale (orphan detection will be
+    // incorrect on the next apply until the config is fixed).
     if !dry_run && let Err(e) = write_config(state_path, &config) {
-        warn!("failed to write config: {e}");
+        eprintln!(
+            "Warning: failed to write config: {e}\n\
+             Your managed map may be out of sync — orphans may not be detected on the next apply.\n\
+             Check file permissions or disk space and run `dotty apply` again.",
+        );
     }
 
     Ok(())
