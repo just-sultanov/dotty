@@ -246,14 +246,16 @@ pub(crate) fn build_add_plan(
             git_add_paths.push(rel.to_path_buf());
         }
 
-        // Update managed map (normalize separators to `/` for cross-platform keys)
+        // Update managed map (normalize separators to `/` for cross-platform keys and values)
         let repo_rel = normalize_path(repo_file.strip_prefix(&input.repo_path).map_err(|_| {
             DottyError::InvalidRepoPath {
                 path: repo_file.to_string_lossy().to_string(),
                 reason: format!("not inside the repository at {}", input.repo_path.display()),
             }
         })?);
-        let target_rel = format_target_display(target_file);
+        // Normalize the value too: format_target_display may produce backslashes on Windows,
+        // which would cause key-value mismatches in orphan detection and status display.
+        let target_rel = normalize_path(Path::new(&format_target_display(target_file)));
         config.managed.insert(repo_rel, target_rel);
     }
 
@@ -1024,6 +1026,57 @@ mod tests {
 
             // Should produce valid plan for non-repo path (symlink resolves to same dir)
             assert!(!output.plan.is_empty());
+        });
+    }
+
+    #[test]
+    fn test_build_add_plan_normalized_value_in_managed() {
+        // Verify that config.managed values use forward slashes consistently,
+        // matching the key format. This prevents cross-platform mismatches
+        // where format_target_display might produce backslashes on Windows.
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(home.join(".config/nvim")).unwrap();
+
+        let target = home.join(".config/nvim/init.lua");
+        fs::write(&target, "vim.g.mapleader = ' '").unwrap();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "macbook".to_string(),
+                files_to_add: vec![target.clone()],
+                commit: None,
+                has_git: false,
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            // Both key and value should use forward slashes
+            let managed = &output.config.managed;
+            assert!(
+                managed.contains_key("macbook/home/.config/nvim/init.lua"),
+                "key should use forward slashes"
+            );
+            let value = managed.get("macbook/home/.config/nvim/init.lua").unwrap();
+            assert!(
+                !value.contains('\\'),
+                "value should not contain backslashes: {}",
+                value
+            );
+            // Value should use forward slashes matching the key format
+            assert!(
+                value.contains('/'),
+                "value should use forward slashes: {}",
+                value
+            );
         });
     }
 }
