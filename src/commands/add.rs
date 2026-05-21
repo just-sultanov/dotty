@@ -70,7 +70,11 @@ pub fn run(
 
     // Warn about non-standard config paths (only for base tier)
     if scope == "base" {
-        warn_non_xdg(&target_path, crate::prompt::is_interactive)?;
+        if crate::prompt::is_interactive() {
+            warn_non_xdg_interactive(&target_path)?;
+        } else {
+            warn_non_xdg_non_interactive(&target_path)?;
+        }
     }
 
     // Validate platform if specified
@@ -287,81 +291,14 @@ fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> String 
     }
 }
 
-/// Warn if the path doesn't look like a standard config location.
+/// Check whether a path looks like a standard XDG config location.
 ///
-/// A path is considered "standard" if it's under `~/.config/`, `~/.local/`,
-/// `~/.ssh/`, or is a dotfile (starts with `.` but not `..`).
+/// A path is considered "standard" if, relative to HOME, it is under
+/// `~/.config/`, `~/.local/`, `~/.ssh/`, or is a dotfile (starts with `.`
+/// but not `..`).
 ///
-/// Also warns if the path is under a sensitive system directory
-/// (`/etc/`, `/usr/`, `/sys/`, `/proc/`).
-///
-/// In non-interactive mode (CI, pipes, scripts), this function rejects
-/// paths under sensitive system directories with an error (preventing
-/// silent acceptance of system paths in automated workflows). Non-standard
-/// paths outside sensitive directories still log a warning and return `Ok`.
-///
-/// In interactive mode, prompts the user for confirmation on both
-/// non-standard and sensitive paths.
-///
-/// The `is_interactive` closure is injected for testability — callers
-/// pass `crate::prompt::is_interactive` in production and a mock in tests.
-/// Warn if the path doesn't look like a standard config location.
-///
-/// A path is considered "standard" if it's under `~/.config/`, `~/.local/`,
-/// `~/.ssh/`, or is a dotfile (starts with `.` but not `..`).
-///
-/// The self-reference check in `run()` executes before this function, so
-/// paths inside the dotty repository are already rejected here. This function
-/// only handles the HOME-missing case: when `home_dir()` returns `None`,
-/// we cannot determine whether the path is under `~`, so we default to
-/// non-standard behavior (warning + interactive prompt) rather than failing.
-fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Result<(), DottyError> {
-    // Guard: skip interactive prompts in non-TTY contexts to avoid hangs.
-    if !is_interactive() {
-        let home = crate::paths::home_dir().ok();
-        let rel_str = match home {
-            Some(home) => {
-                let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
-                relative.to_string_lossy().into_owned()
-            }
-            None => {
-                // HOME is unset — cannot determine standard-ness relative to ~.
-                // Default to non-standard so the user gets a warning.
-                target_path.to_string_lossy().into_owned()
-            }
-        };
-
-        let is_standard = rel_str.starts_with(".config/")
-            || rel_str.starts_with(".local/")
-            || rel_str.starts_with(".ssh/")
-            || (rel_str.starts_with('.') && !rel_str.starts_with(".."));
-
-        if !is_standard {
-            warn!(
-                "'{}' doesn't look like a standard config location. Defaulting to base tier (run interactively to specify a different tier).",
-                target_path.display()
-            );
-        }
-
-        let sensitive_prefixes = ["/etc", "/usr", "/sys", "/proc"];
-        let path_str = target_path.to_string_lossy();
-        if sensitive_prefixes
-            .iter()
-            .any(|&prefix| path_str == prefix || path_str.starts_with(&format!("{}/", prefix)))
-        {
-            return Err(DottyError::InvalidTargetPath {
-                path: target_path.to_string_lossy().to_string(),
-                reason: format!(
-                    "'{}' is under a sensitive system directory",
-                    target_path.display()
-                ),
-            });
-        }
-
-        return Ok(());
-    }
-
-    // Interactive mode: prompt the user.
+/// When HOME is unset, the path is treated as non-standard.
+fn is_standard_xdg_path(target_path: &Path) -> bool {
     let home = crate::paths::home_dir().ok();
     let rel_str = match home {
         Some(home) => {
@@ -369,18 +306,60 @@ fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Resul
             relative.to_string_lossy().into_owned()
         }
         None => {
-            // HOME is unset — cannot determine standard-ness relative to ~.
-            // Default to non-standard so the user gets a warning.
+            // HOME is unset — cannot determine standard-ness; treat as non-standard.
             target_path.to_string_lossy().into_owned()
         }
     };
 
-    let is_standard = rel_str.starts_with(".config/")
+    rel_str.starts_with(".config/")
         || rel_str.starts_with(".local/")
         || rel_str.starts_with(".ssh/")
-        || (rel_str.starts_with('.') && !rel_str.starts_with("..")); // dotfile, not `..`
+        || (rel_str.starts_with('.') && !rel_str.starts_with(".."))
+}
 
-    if !is_standard {
+/// Check whether a path is under a sensitive system directory.
+///
+/// Sensitive prefixes: `/etc`, `/usr`, `/sys`, `/proc`.
+fn is_sensitive_system_path(target_path: &Path) -> bool {
+    let sensitive_prefixes = ["/etc", "/usr", "/sys", "/proc"];
+    let path_str = target_path.to_string_lossy();
+    sensitive_prefixes
+        .iter()
+        .any(|&prefix| path_str == prefix || path_str.starts_with(&format!("{}/", prefix)))
+}
+
+/// Warn about non-standard config paths in non-interactive (CI/script) mode.
+///
+/// Prints a warning for non-standard paths and returns an error for
+/// sensitive system directories (e.g. `/etc`, `/usr`). Non-standard but
+/// non-sensitive paths are allowed to proceed.
+fn warn_non_xdg_non_interactive(target_path: &Path) -> Result<(), DottyError> {
+    if !is_standard_xdg_path(target_path) {
+        warn!(
+            "'{}' doesn't look like a standard config location. Defaulting to base tier (run interactively to specify a different tier).",
+            target_path.display()
+        );
+    }
+
+    if is_sensitive_system_path(target_path) {
+        return Err(DottyError::InvalidTargetPath {
+            path: target_path.to_string_lossy().to_string(),
+            reason: format!(
+                "'{}' is under a sensitive system directory",
+                target_path.display()
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+/// Warn about non-standard config paths in interactive mode.
+///
+/// Prompts the user for non-standard paths (offering to re-run with a
+/// specific tier) and for sensitive system paths (offering to proceed).
+fn warn_non_xdg_interactive(target_path: &Path) -> Result<(), DottyError> {
+    if !is_standard_xdg_path(target_path) {
         println!(
             "Warning: '{}' doesn't look like a standard config location.",
             target_path.display()
@@ -397,13 +376,7 @@ fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Resul
         }
     }
 
-    // Warn on sensitive system paths
-    let sensitive_prefixes = ["/etc", "/usr", "/sys", "/proc"];
-    let path_str = target_path.to_string_lossy();
-    if sensitive_prefixes
-        .iter()
-        .any(|&prefix| path_str == prefix || path_str.starts_with(&format!("{}/", prefix)))
-    {
+    if is_sensitive_system_path(target_path) {
         println!(
             "Warning: '{}' is under a sensitive system directory.",
             target_path.display()
@@ -756,7 +729,101 @@ mod tests {
         });
     }
 
-    // -- warn_non_xdg tests --
+    // -- is_standard_xdg_path tests --
+
+    #[test]
+    fn test_is_standard_xdg_config() {
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            assert!(is_standard_xdg_path(&home.join(".config/nvim/init.lua")));
+            assert!(is_standard_xdg_path(&home.join(".config/app.conf")));
+        });
+    }
+
+    #[test]
+    fn test_is_standard_xdg_local() {
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            assert!(is_standard_xdg_path(&home.join(".local/share/app")));
+        });
+    }
+
+    #[test]
+    fn test_is_standard_xdg_ssh() {
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            assert!(is_standard_xdg_path(&home.join(".ssh/id_rsa")));
+        });
+    }
+
+    #[test]
+    fn test_is_standard_xdg_dotfile() {
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            assert!(is_standard_xdg_path(&home.join(".vimrc")));
+            assert!(is_standard_xdg_path(&home.join(".gitconfig")));
+        });
+    }
+
+    #[test]
+    fn test_is_standard_xdg_not_standard() {
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            assert!(!is_standard_xdg_path(&home.join("custom/.config")));
+            assert!(!is_standard_xdg_path(&home.join("some/weird/path")));
+        });
+    }
+
+    #[test]
+    fn test_is_standard_xdg_double_dot_prefix() {
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            // ..something should NOT be treated as a dotfile
+            assert!(!is_standard_xdg_path(&home.join("..hidden")));
+        });
+    }
+
+    #[test]
+    fn test_is_standard_xdg_missing_home() {
+        // Without HOME, absolute paths are non-standard
+        temp_env::with_var_unset("HOME", || {
+            assert!(!is_standard_xdg_path(Path::new("/some/path")));
+        });
+    }
+
+    // -- is_sensitive_system_path tests --
+
+    #[test]
+    fn test_is_sensitive_system_path_etc() {
+        assert!(is_sensitive_system_path(Path::new("/etc/passwd")));
+        assert!(is_sensitive_system_path(Path::new("/etc")));
+    }
+
+    #[test]
+    fn test_is_sensitive_system_path_usr() {
+        assert!(is_sensitive_system_path(Path::new("/usr/local/bin/tool")));
+        assert!(is_sensitive_system_path(Path::new("/usr")));
+    }
+
+    #[test]
+    fn test_is_sensitive_system_path_sys_proc() {
+        assert!(is_sensitive_system_path(Path::new("/sys/class/net")));
+        assert!(is_sensitive_system_path(Path::new("/proc/cpuinfo")));
+    }
+
+    #[test]
+    fn test_is_sensitive_system_path_not_sensitive() {
+        assert!(!is_sensitive_system_path(Path::new("/home/user/.config")));
+        assert!(!is_sensitive_system_path(Path::new("/var/log/app.log")));
+    }
+
+    // -- warn_non_xdg_non_interactive tests --
 
     #[test]
     fn test_warn_non_xdg_non_interactive_no_hang() {
@@ -766,10 +833,10 @@ mod tests {
         let home = dir.path().to_path_buf();
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             // Non-standard path should not panic or error in non-interactive mode
-            let result = warn_non_xdg(&home.join("some/weird/path"), || false);
+            let result = warn_non_xdg_non_interactive(&home.join("some/weird/path"));
             assert!(
                 result.is_ok(),
-                "warn_non_xdg should return Ok in non-interactive mode, got: {result:?}"
+                "warn_non_xdg_non_interactive should return Ok, got: {result:?}"
             );
         });
     }
@@ -782,7 +849,7 @@ mod tests {
         let dir = test_dir();
         let home = dir.path().to_path_buf();
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
-            let result = warn_non_xdg(&home.join("custom/weird/path"), || false);
+            let result = warn_non_xdg_non_interactive(&home.join("custom/weird/path"));
             assert!(result.is_ok(), "should default to base without error");
         });
     }
@@ -794,7 +861,7 @@ mod tests {
         let home = dir.path().to_path_buf();
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             temp_env::with_var("CI", Some("1"), || {
-                let result = warn_non_xdg(&home.join("some/weird/path"), || false);
+                let result = warn_non_xdg_non_interactive(&home.join("some/weird/path"));
                 assert!(
                     result.is_ok(),
                     "CI env should default to base without hanging"
@@ -809,17 +876,17 @@ mod tests {
         let dir = test_dir();
         let home = dir.path().to_path_buf();
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
-            let result = warn_non_xdg(&home.join(".config/nvim/init.lua"), || false);
+            let result = warn_non_xdg_non_interactive(&home.join(".config/nvim/init.lua"));
             assert!(result.is_ok());
 
-            let result = warn_non_xdg(&home.join(".vimrc"), || false);
+            let result = warn_non_xdg_non_interactive(&home.join(".vimrc"));
             assert!(result.is_ok());
         });
     }
 
     #[test]
     fn test_warn_non_xdg_non_interactive_rejects_sensitive_etc() {
-        let result = warn_non_xdg(Path::new("/etc/foobar"), || false);
+        let result = warn_non_xdg_non_interactive(Path::new("/etc/foobar"));
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("sensitive system directory"));
@@ -828,7 +895,7 @@ mod tests {
 
     #[test]
     fn test_warn_non_xdg_non_interactive_rejects_sensitive_usr() {
-        let result = warn_non_xdg(Path::new("/usr/local/bin/custom-tool"), || false);
+        let result = warn_non_xdg_non_interactive(Path::new("/usr/local/bin/custom-tool"));
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("sensitive system directory"));
@@ -836,13 +903,13 @@ mod tests {
 
     #[test]
     fn test_warn_non_xdg_non_interactive_rejects_sensitive_sys() {
-        let result = warn_non_xdg(Path::new("/sys/class/net"), || false);
+        let result = warn_non_xdg_non_interactive(Path::new("/sys/class/net"));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_warn_non_xdg_non_interactive_rejects_sensitive_proc() {
-        let result = warn_non_xdg(Path::new("/proc/cpuinfo"), || false);
+        let result = warn_non_xdg_non_interactive(Path::new("/proc/cpuinfo"));
         assert!(result.is_err());
     }
 
@@ -852,33 +919,33 @@ mod tests {
         let dir = test_dir();
         let home = dir.path().to_path_buf();
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
-            let result = warn_non_xdg(&home.join("custom/.config"), || false);
+            let result = warn_non_xdg_non_interactive(&home.join("custom/.config"));
             assert!(result.is_ok());
         });
     }
 
-    // -- warn_non_xdg: missing HOME tests --
+    // -- warn_non_xdg_non_interactive: missing HOME tests --
 
     #[test]
-    fn test_warn_non_xdg_missing_home_non_interactive() {
+    fn test_warn_non_xdg_non_interactive_missing_home() {
         // When HOME is unset, warn_non_xdg should NOT fail with
         // MissingHomeDirectory. Instead it should default to non-standard
         // behavior (warning + proceed) in non-interactive mode.
         temp_env::with_var_unset("HOME", || {
-            let result = warn_non_xdg(Path::new("/some/path/file"), || false);
+            let result = warn_non_xdg_non_interactive(Path::new("/some/path/file"));
             assert!(
                 result.is_ok(),
-                "warn_non_xdg should not error when HOME is unset in non-interactive mode, got: {result:?}"
+                "warn_non_xdg_non_interactive should not error when HOME is unset, got: {result:?}"
             );
         });
     }
 
     #[test]
-    fn test_warn_non_xdg_missing_home_sensitive_path() {
+    fn test_warn_non_xdg_non_interactive_missing_home_sensitive_path() {
         // Even without HOME, sensitive system paths should still be rejected
         // in non-interactive mode.
         temp_env::with_var_unset("HOME", || {
-            let result = warn_non_xdg(Path::new("/etc/passwd"), || false);
+            let result = warn_non_xdg_non_interactive(Path::new("/etc/passwd"));
             assert!(result.is_err());
             let msg = result.unwrap_err().to_string();
             assert!(msg.contains("sensitive system directory"));
