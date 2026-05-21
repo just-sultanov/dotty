@@ -297,12 +297,31 @@ fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> Result<
 ///
 /// The `is_interactive` closure is injected for testability — callers
 /// pass `crate::prompt::is_interactive` in production and a mock in tests.
+/// Warn if the path doesn't look like a standard config location.
+///
+/// A path is considered "standard" if it's under `~/.config/`, `~/.local/`,
+/// `~/.ssh/`, or is a dotfile (starts with `.` but not `..`).
+///
+/// The self-reference check in `run()` executes before this function, so
+/// paths inside the dotty repository are already rejected here. This function
+/// only handles the HOME-missing case: when `home_dir()` returns `None`,
+/// we cannot determine whether the path is under `~`, so we default to
+/// non-standard behavior (warning + interactive prompt) rather than failing.
 fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Result<()> {
     // Guard: skip interactive prompts in non-TTY contexts to avoid hangs.
     if !is_interactive() {
-        let home = crate::paths::home_dir()?;
-        let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
-        let rel_str = relative.to_string_lossy();
+        let home = crate::paths::home_dir().ok();
+        let rel_str = match home {
+            Some(home) => {
+                let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
+                relative.to_string_lossy().into_owned()
+            }
+            None => {
+                // HOME is unset — cannot determine standard-ness relative to ~.
+                // Default to non-standard so the user gets a warning.
+                target_path.to_string_lossy().into_owned()
+            }
+        };
 
         let is_standard = rel_str.starts_with(".config/")
             || rel_str.starts_with(".local/")
@@ -332,9 +351,18 @@ fn warn_non_xdg<F: Fn() -> bool>(target_path: &Path, is_interactive: F) -> Resul
     }
 
     // Interactive mode: prompt the user.
-    let home = crate::paths::home_dir()?;
-    let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
-    let rel_str = relative.to_string_lossy();
+    let home = crate::paths::home_dir().ok();
+    let rel_str = match home {
+        Some(home) => {
+            let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
+            relative.to_string_lossy().into_owned()
+        }
+        None => {
+            // HOME is unset — cannot determine standard-ness relative to ~.
+            // Default to non-standard so the user gets a warning.
+            target_path.to_string_lossy().into_owned()
+        }
+    };
 
     let is_standard = rel_str.starts_with(".config/")
         || rel_str.starts_with(".local/")
@@ -814,6 +842,34 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let result = warn_non_xdg(&home.join("custom/.config"), || false);
             assert!(result.is_ok());
+        });
+    }
+
+    // -- warn_non_xdg: missing HOME tests --
+
+    #[test]
+    fn test_warn_non_xdg_missing_home_non_interactive() {
+        // When HOME is unset, warn_non_xdg should NOT fail with
+        // MissingHomeDirectory. Instead it should default to non-standard
+        // behavior (warning + proceed) in non-interactive mode.
+        temp_env::with_var_unset("HOME", || {
+            let result = warn_non_xdg(Path::new("/some/path/file"), || false);
+            assert!(
+                result.is_ok(),
+                "warn_non_xdg should not error when HOME is unset in non-interactive mode, got: {result:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn test_warn_non_xdg_missing_home_sensitive_path() {
+        // Even without HOME, sensitive system paths should still be rejected
+        // in non-interactive mode.
+        temp_env::with_var_unset("HOME", || {
+            let result = warn_non_xdg(Path::new("/etc/passwd"), || false);
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(msg.contains("sensitive system directory"));
         });
     }
 
