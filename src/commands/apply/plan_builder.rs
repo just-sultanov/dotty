@@ -204,8 +204,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
         merged: &input.merged,
         config: &input.config,
     };
-    let orphan_output =
-        detect_orphans_and_build_removals(&orphan_input, &input.state_path, &input.home);
+    let orphan_output = detect_orphans_and_build_removals(&orphan_input);
 
     // Add orphan removal actions to the plan.
     for action in orphan_output.removal_actions {

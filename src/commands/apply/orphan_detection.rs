@@ -40,8 +40,6 @@ pub(crate) struct OrphanDetectionOutput {
 /// removal action (RemoveSymlink, RemoveFile) based on the file type on disk.
 pub(crate) fn detect_orphans_and_build_removals(
     input: &OrphanDetectionInput,
-    _state_path: &PathBuf,
-    _home: &PathBuf,
 ) -> OrphanDetectionOutput {
     // Build tracked_set from config.managed keys to ensure consistent
     // key format (repo_rel strings) across both sources.
@@ -122,7 +120,7 @@ mod tests {
             merged: &merged,
             config: &config,
         };
-        let output = detect_orphans_and_build_removals(&input, &PathBuf::new(), &PathBuf::new());
+        let output = detect_orphans_and_build_removals(&input);
 
         assert!(output.orphans.is_empty());
         assert!(output.removal_actions.is_empty());
@@ -149,7 +147,7 @@ mod tests {
             merged: &merged,
             config: &config,
         };
-        let output = detect_orphans_and_build_removals(&input, &PathBuf::new(), &PathBuf::new());
+        let output = detect_orphans_and_build_removals(&input);
 
         assert_eq!(output.orphans.len(), 1);
         assert_eq!(output.orphans[0].0, "base/home/.old");
@@ -179,7 +177,7 @@ mod tests {
             merged: &merged,
             config: &config,
         };
-        let output = detect_orphans_and_build_removals(&input, &PathBuf::new(), &home);
+        let output = detect_orphans_and_build_removals(&input);
 
         assert_eq!(output.orphans.len(), 1);
         assert_eq!(output.removal_actions.len(), 1);
@@ -209,7 +207,7 @@ mod tests {
             merged: &merged,
             config: &config,
         };
-        let output = detect_orphans_and_build_removals(&input, &PathBuf::new(), &home);
+        let output = detect_orphans_and_build_removals(&input);
 
         assert_eq!(output.orphans.len(), 1);
         assert_eq!(output.removal_actions.len(), 1);
@@ -239,7 +237,7 @@ mod tests {
             merged: &merged,
             config: &config,
         };
-        let output = detect_orphans_and_build_removals(&input, &PathBuf::new(), &home);
+        let output = detect_orphans_and_build_removals(&input);
 
         assert_eq!(output.orphans.len(), 1);
         assert!(
