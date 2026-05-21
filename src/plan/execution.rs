@@ -190,24 +190,52 @@ pub(crate) fn action_rollback(action: &Action) -> Option<Action> {
 // Plan execution
 // ---------------------------------------------------------------------------
 
+/// Execution mode for [`execute_plan`].
+///
+/// Controls whether the plan is a dry-run, whether a pending plan is saved
+/// for crash recovery, and whether it is cleared on success.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExecuteMode {
+    /// Normal execution: save pending plan, clear on success.
+    Normal,
+    /// Dry-run: no mutations, no pending plan.
+    DryRun,
+    /// Rollback: no pending plan (avoids nested pending plans).
+    Rollback,
+}
+
+impl ExecuteMode {
+    /// Whether this mode skips all mutations.
+    fn is_dry_run(&self) -> bool {
+        matches!(self, ExecuteMode::DryRun)
+    }
+
+    /// Whether this mode saves/clears a pending plan for crash recovery.
+    fn save_pending(&self) -> bool {
+        matches!(self, ExecuteMode::Normal)
+    }
+}
+
 /// Execute all actions in the plan.
 ///
-/// If `dry_run` is true, print each action but perform no mutations.
+/// The `mode` parameter controls execution behavior:
+/// - [`ExecuteMode::Normal`] — save pending plan for crash recovery, clear on success.
+/// - [`ExecuteMode::DryRun`] — print actions, perform no mutations.
+/// - [`ExecuteMode::Rollback`] — execute without saving pending plan to avoid
+///   nested pending plans (used by crash recovery rollback).
+///
 /// If any action fails, roll back all previously completed actions in
 /// reverse order.
-///
-/// `state_path` is used to save a pending plan before execution for
-/// crash recovery. The pending plan is cleared on success.
 pub(crate) fn execute_plan(
     plan: &super::Plan,
-    dry_run: bool,
+    mode: ExecuteMode,
     state_path: &Path,
 ) -> Result<(), DottyError> {
     if plan.is_empty() {
         return Ok(());
     }
 
-    if dry_run {
+    if mode.is_dry_run() {
         debug!("dry-run: {} actions", plan.actions.len());
         println!("[dry-run] Plan ({} actions):", plan.actions.len());
         for (i, action) in plan.actions.iter().enumerate() {
@@ -217,8 +245,10 @@ pub(crate) fn execute_plan(
         return Ok(());
     }
 
-    // Save pending plan for crash recovery
-    crate::plan::save_pending_plan(plan, state_path)?;
+    // Save pending plan for crash recovery (skipped for rollback/dry-run)
+    if mode.save_pending() {
+        crate::plan::save_pending_plan(plan, state_path)?;
+    }
 
     let mut completed: Vec<usize> = Vec::new();
     let check = crate::symbols::check();
@@ -265,8 +295,10 @@ pub(crate) fn execute_plan(
         bar.finish_and_clear();
     }
 
-    // All actions succeeded — clear pending plan
-    crate::plan::clear_pending_plan(state_path)?;
+    // All actions succeeded — clear pending plan (skipped for rollback/dry-run)
+    if mode.save_pending() {
+        crate::plan::clear_pending_plan(state_path)?;
+    }
 
     Ok(())
 }

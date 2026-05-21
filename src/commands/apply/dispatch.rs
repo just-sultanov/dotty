@@ -99,7 +99,12 @@ pub fn run(
     }
 
     // 6. Execute plan
-    plan::execute_plan(&plan, dry_run, state_path)?;
+    let mode = if dry_run {
+        plan::ExecuteMode::DryRun
+    } else {
+        plan::ExecuteMode::Normal
+    };
+    plan::execute_plan(&plan, mode, state_path)?;
 
     // 7. Print per-file summary
     print_per_file_summary(&output.file_results, &output.orphans, dry_run);

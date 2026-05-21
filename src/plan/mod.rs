@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) use execution::execute_plan;
+pub(crate) use execution::{ExecuteMode, execute_plan};
 pub(crate) use persistence::{clear_pending_plan, load_pending_plan, save_pending_plan};
 
 #[cfg(test)]
@@ -211,6 +211,7 @@ impl Plan {
 
 #[cfg(test)]
 mod tests {
+    use super::ExecuteMode;
     use super::*;
 
     /// Create a unique temporary directory that is automatically cleaned up on drop.
@@ -614,7 +615,7 @@ mod tests {
             path: base.join("should_not_exist"),
         });
 
-        execute_plan(&plan, true, &state).unwrap();
+        execute_plan(&plan, ExecuteMode::DryRun, &state).unwrap();
         assert!(!base.join("should_not_exist").exists());
     }
 
@@ -624,7 +625,7 @@ mod tests {
         let state = base.join("state");
         std::fs::create_dir_all(&state).unwrap();
         let plan = Plan::new(&base);
-        execute_plan(&plan, false, &state).unwrap();
+        execute_plan(&plan, ExecuteMode::Normal, &state).unwrap();
     }
 
     #[test]
@@ -880,7 +881,7 @@ mod tests {
         assert!(!state.join("pending_plan.json").exists());
 
         // Execute plan
-        execute_plan(&plan, false, &state).unwrap();
+        execute_plan(&plan, ExecuteMode::Normal, &state).unwrap();
 
         // After successful execution, pending plan is cleared
         assert!(!state.join("pending_plan.json").exists());
@@ -898,7 +899,7 @@ mod tests {
             path: base.join("should_not_exist"),
         });
 
-        execute_plan(&plan, true, &state).unwrap();
+        execute_plan(&plan, ExecuteMode::DryRun, &state).unwrap();
 
         // Dry run should not create pending plan file
         assert!(!state.join("pending_plan.json").exists());
@@ -919,7 +920,7 @@ mod tests {
             });
         }
 
-        execute_plan(&plan, false, &state).unwrap();
+        execute_plan(&plan, ExecuteMode::Normal, &state).unwrap();
 
         // All directories should be created
         for i in 0..25 {
@@ -943,7 +944,7 @@ mod tests {
             });
         }
 
-        execute_plan(&plan, false, &state).unwrap();
+        execute_plan(&plan, ExecuteMode::Normal, &state).unwrap();
 
         for i in 0..20 {
             assert!(base.join(format!("dir_{i}")).is_dir());
