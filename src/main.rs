@@ -136,11 +136,16 @@ fn handle_valid_plan(
         println!("  {}. {}", i + 1, action);
     }
 
+    // "ignore" means leave the pending plan and proceed with the command.
+    if recovery_action == Some("ignore") {
+        println!("Pending plan left as-is. Proceeding with command.");
+        return Ok(());
+    }
+
     let options = ["Rollback", "Discard", "Abort"];
     let choice = match recovery_action {
         Some("rollback") => 0,
         Some("discard") => 1,
-        Some("ignore") => 2,
         Some(other) => {
             anyhow::bail!(
                 "invalid recovery action '{}'. Must be one of: rollback, discard, ignore",
@@ -342,7 +347,7 @@ mod recovery_tests {
     }
 
     #[test]
-    fn test_handle_valid_plan_abort_returns_error() {
+    fn test_handle_valid_plan_ignore_proceeds_without_error() {
         let (_dir, state) = setup_state_with_repo();
         let repo = PathBuf::from(".");
         save_dummy_plan(&state, &repo);
@@ -350,10 +355,11 @@ mod recovery_tests {
         let plan = plan::load_pending_plan(&state).unwrap().unwrap();
 
         let result = handle_valid_plan(&plan, &state, Some("ignore"));
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Aborted"));
-        assert!(err.contains("Pending plan still exists"));
+        assert!(result.is_ok());
+
+        // Pending plan should still exist on disk (not cleared)
+        let plan_after = plan::load_pending_plan(&state).unwrap();
+        assert!(plan_after.is_some());
     }
 
     #[test]
