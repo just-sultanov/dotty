@@ -70,7 +70,7 @@ pub fn run(
         force,
         follow_symlinks,
     };
-    let output = build_apply_plan(&input).map_err(|e| DottyError::CommandError(e.to_string()))?;
+    let output = build_apply_plan(&input)?;
 
     // 6. Execute plan
     plan::execute_plan(&output.plan, dry_run, state_path)?;

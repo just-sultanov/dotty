@@ -9,7 +9,6 @@ use indexmap::IndexMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use anyhow::Result;
 use tracing::warn;
 
 use crate::config::Config;
@@ -17,6 +16,7 @@ use crate::plan::{Action, Plan};
 
 use super::inspect::{TargetState, inspect_target};
 use super::orphan_detection::{OrphanDetectionInput, detect_orphans_and_build_removals};
+use crate::error::DottyError;
 
 /// Input data for building an `apply` plan.
 pub(crate) struct ApplyPlanInput {
@@ -61,7 +61,14 @@ pub(crate) struct FileResult {
 /// builds a `Plan` with the necessary actions (CreateDir, Backup,
 /// CreateSymlink, RemoveSymlink). It also detects orphan managed entries
 /// and produces per-file results for console output.
-pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput> {
+///
+/// Returns `DottyError` for any plan-building failures. Currently infallible
+/// since all sub-operations (`inspect_target`, `detect_orphans_and_build_removals`)
+/// are non-fallible, but the error type is reserved for future fallible paths
+/// (e.g., backup timestamp generation, state path creation).
+pub(crate) fn build_apply_plan(
+    input: &ApplyPlanInput,
+) -> std::result::Result<ApplyPlanOutput, DottyError> {
     let mut plan = Plan::new(&input.repo_path);
     let mut file_results: Vec<FileResult> = Vec::new();
 
