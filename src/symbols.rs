@@ -93,8 +93,10 @@ pub fn arrow() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_symbols_are_nonempty() {
         assert!(!check().is_empty());
         assert!(!warn().is_empty());
