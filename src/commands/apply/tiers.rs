@@ -17,26 +17,14 @@ pub(crate) fn merge_tiers(
     platform: &Option<String>,
 ) -> IndexMap<PathBuf, (String, String)> {
     let mut merged: IndexMap<PathBuf, (String, String)> = IndexMap::new();
-    let machine_prefix = format!("{}/", machine);
-    let platform_prefix = platform.as_ref().map(|p| format!("{}/", p));
 
     for file in tracked_files {
-        // Determine tier: machine > platform > base
-        let (tier_name, repo_path) = if file.starts_with(&machine_prefix) {
-            // Tier 3: machine (highest priority)
-            (machine.to_string(), PathBuf::from(file))
-        } else if let Some(ref plat_prefix) = platform_prefix
-            && file.starts_with(plat_prefix)
-        {
-            // Tier 2: platform
-            (platform.as_ref().unwrap().clone(), PathBuf::from(file))
-        } else if file.starts_with("base/") {
-            // Tier 1: base (lowest priority)
-            ("base".to_string(), PathBuf::from(file))
-        } else {
-            // File doesn't belong to any active tier — skip
-            continue;
-        };
+        let tier_name =
+            match crate::convention::classify_tier(file, &Some(machine.to_string()), platform) {
+                Some(tier) => tier,
+                None => continue,
+            };
+        let repo_path = PathBuf::from(file);
 
         if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
             merged.insert(target, (tier_name, file.clone()));
