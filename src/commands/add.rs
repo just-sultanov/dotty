@@ -398,10 +398,36 @@ fn warn_non_xdg_interactive(target_path: &Path) -> Result<(), DottyError> {
 }
 
 /// Collect all files under the given path.
+///
+/// Symlink handling:
+/// - Symlink to a directory: recursively collect all files from the target directory.
+/// - Symlink to a file: collect the symlink path itself (matching `apply` behavior).
+/// - Broken symlink: treated as non-existent (error).
+/// - Real file: collected as-is.
+/// - Real directory: recursively collected via `walk_dir`.
 fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> {
     let mut files = Vec::new();
 
-    if target_path.is_file() || is_symlink(target_path) {
+    // Check for symlink FIRST using symlink_metadata (does not follow symlinks).
+    // This must come before is_file()/is_dir() which both follow symlinks.
+    if is_symlink(target_path) {
+        // is_dir() follows symlinks — if the target is a directory, traverse it.
+        // For broken symlinks, is_dir() returns false, so they fall through to
+        // the is_file() check below (which also returns false), resulting in
+        // a "path does not exist" error.
+        if target_path.is_dir() {
+            walk_dir(target_path, &mut files, 0)?;
+        } else if target_path.is_file() {
+            // Symlink to file: collect the symlink path itself.
+            files.push(target_path.to_path_buf());
+        } else {
+            // Broken symlink — neither is_dir nor is_file succeeds.
+            return Err(DottyError::InvalidTargetPath {
+                path: target_path.display().to_string(),
+                reason: "broken symlink".into(),
+            });
+        }
+    } else if target_path.is_file() {
         files.push(target_path.to_path_buf());
     } else if target_path.is_dir() {
         walk_dir(target_path, &mut files, 0)?;
@@ -1108,5 +1134,99 @@ mod tests {
             assert_eq!(keys[1], home.join(".vimrc"));
             assert_eq!(keys[2], home.join(".config/nvim/plugins.lua"));
         });
+    }
+
+    // -- collect_files symlink handling tests --
+
+    #[test]
+    fn test_collect_files_symlink_to_directory() {
+        // Symlink to directory should collect ALL files from the target directory,
+        // not just the symlink itself.
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+
+        // Create the real directory with files
+        let real_dir = base.join("real_dir");
+        fs::create_dir_all(real_dir.join("sub")).unwrap();
+        fs::write(real_dir.join("file1.txt"), "content1").unwrap();
+        fs::write(real_dir.join("sub").join("file2.txt"), "content2").unwrap();
+
+        // Create symlink to the directory
+        let link_dir = base.join("link_dir");
+        create_symlink(&real_dir, &link_dir).unwrap();
+
+        let files = collect_files(&link_dir).unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().any(|f| f.file_name().unwrap() == "file1.txt"));
+        assert!(files.iter().any(|f| f.file_name().unwrap() == "file2.txt"));
+    }
+
+    #[test]
+    fn test_collect_files_symlink_to_file() {
+        // Symlink to file should collect only the symlink path.
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+
+        let real_file = base.join("real_file.txt");
+        fs::write(&real_file, "content").unwrap();
+
+        let link_file = base.join("link_file.txt");
+        create_symlink(&real_file, &link_file).unwrap();
+
+        let files = collect_files(&link_file).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0], link_file);
+    }
+
+    #[test]
+    fn test_collect_files_broken_symlink() {
+        // Broken symlink should return an error.
+        let dir = test_dir();
+        let link = dir.path().join("broken_link");
+        create_symlink(&dir.path().join("nonexistent_target"), &link).unwrap();
+
+        let result = collect_files(&link);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("broken symlink"));
+    }
+
+    #[test]
+    fn test_collect_files_symlink_to_nonexistent() {
+        // Symlink to a non-existent path should return an error.
+        let dir = test_dir();
+        let link = dir.path().join("link_to_nothing");
+        // On Unix, we can create a symlink to a non-existent target
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/nonexistent/path", &link).unwrap();
+
+        let result = collect_files(&link);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_collect_files_real_directory() {
+        // Real directory should still be traversed recursively.
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+
+        fs::create_dir_all(base.join("sub")).unwrap();
+        fs::write(base.join("a.txt"), "a").unwrap();
+        fs::write(base.join("sub").join("b.txt"), "b").unwrap();
+
+        let files = collect_files(&base).unwrap();
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_files_real_file() {
+        // Real file should be collected as-is.
+        let dir = test_dir();
+        let file = dir.path().join("file.txt");
+        fs::write(&file, "content").unwrap();
+
+        let files = collect_files(&file).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0], file);
     }
 }

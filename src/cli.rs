@@ -93,7 +93,7 @@ pub enum Commands {
 
     /// Add a file or directory to the repository
     #[command(
-        after_help = "Examples:\n  # Add a config file to the base tier\n  dotty add ~/.vimrc\n\n  # Add to a machine-specific tier\n  dotty add ~/.vimrc --machine macbook\n\n  # Add to a platform-specific tier\n  dotty add ~/.bashrc --platform linux\n\n  # Add and commit in one step\n  dotty add ~/.config/alacritty --commit \"add alacritty config\""
+        after_help = "Examples:\n  # Add a config file to the base tier\n  dotty add ~/.vimrc\n\n  # Add to a machine-specific tier\n  dotty add ~/.vimrc --machine macbook\n\n  # Add to a platform-specific tier\n  dotty add ~/.bashrc --platform linux\n\n  # Add and commit in one step\n  dotty add ~/.config/alacritty --commit \"add alacritty config\"\n\nNotes:\n  Symlinks to directories are expanded: all files from the target directory\n  are collected recursively (matching real directory behavior).\n  Symlinks to files are added as-is (the symlink file itself)."
     )]
     Add {
         /// Path to add (file or directory)

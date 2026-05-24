@@ -15,6 +15,10 @@ const MAX_WALK_DEPTH: u32 = 50;
 /// directories are skipped to avoid following symlinks into arbitrary locations
 /// (symlinked *files* are still collected).
 ///
+/// If `dir` itself is a symlink to a directory, it is resolved to its target
+/// before traversal begins. This allows callers (e.g., `collect_files`) to
+/// pass a symlink path directly.
+///
 /// The iterative approach trades heap memory for stack safety: the work queue
 /// grows on the heap, which can handle far wider directory trees than the
 /// call stack can handle deep ones.
@@ -23,8 +27,20 @@ pub fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>, depth: u32) -> Result<(), 
         return Ok(());
     }
 
+    // Resolve the starting path: if it's a symlink to a directory, use the
+    // target so that traversal works correctly (walk_dir skips symlinked dirs
+    // during iteration, so we must resolve the initial path).
+    let start_path = if dir
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
+    } else {
+        dir.to_path_buf()
+    };
+
     // Iterative DFS using an explicit work queue (stack).
-    let mut queue: Vec<(PathBuf, u32)> = vec![(dir.to_path_buf(), depth)];
+    let mut queue: Vec<(PathBuf, u32)> = vec![(start_path, depth)];
 
     while let Some((current, current_depth)) = queue.pop() {
         let dir_entries = fs::read_dir(&current)?;
