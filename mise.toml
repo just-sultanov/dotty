@@ -26,12 +26,10 @@ file = "bin/setup-linters"
 
 [tasks.format]
 description = "Format code with cargo fmt"
-depends = ["setup-linters"]
 file = "bin/format"
 
 [tasks.lint]
 description = "Run formatters and linters"
-depends = ["setup-linters"]
 file = "bin/lint"
 
 ##
@@ -52,7 +50,7 @@ file = "bin/coverage"
 
 [tasks.check]
 description = "Run lint, tests, and code coverage"
-run = ["mise run lint", "mise run coverage"]
+file = "bin/check"
 
 ##
 # Build
