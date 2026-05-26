@@ -64,10 +64,16 @@ pub(crate) fn save_pending_plan(
     fs::create_dir_all(state_path)?;
     let pending = PendingPlan::from_plan(plan);
     let content = serde_json::to_string_pretty(&pending)?;
-    fs::write(pending_plan_path(state_path), content)?;
+    // Atomic write: write to a temp file first, then rename into place.
+    // If the process is killed mid-write, only the temp file is corrupted,
+    // and the existing pending_plan.json (if any) remains intact.
+    // `fs::rename` is atomic on POSIX when source and dest are on the same filesystem.
+    let tmp_path = state_path.join("pending_plan.json.tmp");
+    fs::write(&tmp_path, &content)?;
+    fs::rename(&tmp_path, pending_plan_path(state_path))?;
     debug!(
         "saved pending plan to {}",
-        pending_plan_path(state_path).display()
+        state_path.join(PENDING_PLAN_FILE).display()
     );
     Ok(())
 }
