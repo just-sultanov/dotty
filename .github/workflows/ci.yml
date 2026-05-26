@@ -10,20 +10,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  lint:
-    name: Lint (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: jdx/mise-action@v4
-      - run: mise run lint
-
-  test:
-    name: Test (${{ matrix.os }})
-    needs: lint
+  check:
+    name: Check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -35,11 +23,13 @@ jobs:
           git config --global user.email "ci@test"
           git config --global user.name "CI"
           git config --global init.defaultBranch main
-      - run: mise run test
+      - run: mise run setup-linters
+      - run: mise run setup-tools
+      - run: mise run check
 
   build-linux:
     name: Build (Linux x86_64 static)
-    needs: test
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -53,7 +43,7 @@ jobs:
 
   build-macos-arm:
     name: Build (macOS aarch64)
-    needs: test
+    needs: check
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
@@ -65,9 +55,23 @@ jobs:
           path: target/aarch64-apple-darwin/release/dotty
           if-no-files-found: error
 
+  build-macos-x86:
+    name: Build (macOS x86_64)
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+      - run: mise run build-macos-x86
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dotty-x86_64-apple-darwin
+          path: target/x86_64-apple-darwin/release/dotty
+          if-no-files-found: error
+
   build-windows:
     name: Build (Windows x86_64)
-    needs: test
+    needs: check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
