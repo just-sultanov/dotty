@@ -418,6 +418,7 @@ fn apply_dry_run_does_not_write_machine_to_config() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[cfg(unix)]
 fn apply_reports_config_write_failure_to_stderr() {
     let env = TestEnv::new();
 
