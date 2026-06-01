@@ -44,8 +44,7 @@ pub fn run(
 
     // 1. Detect platform and resolve machine
     let platform = platform_override.or_else(detect_platform);
-    let machine_name = resolve_machine(&repo_path, &mut config, &state_path, dry_run, &platform)
-        .map_err(|e| DottyError::CommandError(e.to_string()))?;
+    let machine_name = resolve_machine(&repo_path, &mut config, &state_path, dry_run, &platform)?;
 
     // 2. Collect all tracked files from git
     let tracked_files = git::git_ls_files(&repo_path)?;

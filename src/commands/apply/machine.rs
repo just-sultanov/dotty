@@ -4,18 +4,26 @@ use anyhow::Result;
 
 use crate::config::write_config;
 use crate::convention::scan_machine_directories;
+use crate::error::DottyError;
 use crate::prompt::prompt_machine_selection;
 
 /// Resolve the machine name. If missing from config, prompt user to select.
+/// In non-interactive mode, returns `DottyError::MissingMachineName` if no machine is configured.
 pub(crate) fn resolve_machine(
     repo_path: &Path,
     config: &mut crate::config::Config,
     state_path: &Path,
     dry_run: bool,
     _platform: &Option<String>,
-) -> Result<String> {
+) -> Result<String, DottyError> {
     if let Some(name) = &config.machine {
         return Ok(name.clone());
+    }
+
+    // No machine in config — check if we're in non-interactive mode
+    // If so, fail with a clear error message instead of trying to prompt
+    if !dry_run && !crate::prompt::is_interactive() {
+        return Err(DottyError::MissingMachineName);
     }
 
     // No machine in config — scan repo for known machines
@@ -23,16 +31,14 @@ pub(crate) fn resolve_machine(
 
     if dry_run {
         if known.is_empty() {
-            anyhow::bail!(
-                "No machine configured and no known machines in repo. \
-                 Run `dotty init` or `dotty config machine <name>` first."
-            );
+            return Err(DottyError::CommandError(
+                "No machine configured and no known machines in repo. Run `dotty init` or `dotty config machine <name>` first.".to_string()
+            ));
         }
-        anyhow::bail!(
-            "No machine configured. Known machines in repo: {}. \
-             Run `dotty config machine <name>` to select one.",
+        return Err(DottyError::CommandError(format!(
+            "No machine configured. Known machines in repo: {}. Run `dotty config machine <name>` to select one.",
             known.join(", ")
-        );
+        )));
     }
 
     let name = prompt_machine_selection(&known)?;
