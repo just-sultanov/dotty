@@ -27,6 +27,7 @@ dir_spec = "0.5.2"
 symlink-rs = "1.0.0"
 path-slash = "0.2"
 indicatif = "0.17"
+sha2 = "0.10"
 
 [dev-dependencies]
 insta = "1"

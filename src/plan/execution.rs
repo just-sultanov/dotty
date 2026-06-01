@@ -8,6 +8,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
 use tracing::{debug, trace, warn};
 
 use indicatif::ProgressBar;
@@ -492,11 +493,27 @@ pub(crate) fn copy_dir(
     Ok(())
 }
 
+/// Compute SHA-256 hash of a file.
+///
+/// Returns the hash as a lowercase hexadecimal string (64 characters).
+fn compute_file_hash(path: &Path) -> Result<String, DottyError> {
+    let mut file = fs::File::open(path).map_err(DottyError::Io)?;
+    let mut hasher = Sha256::new();
+    io::copy(&mut file, &mut hasher).map_err(DottyError::Io)?;
+    let hash = hasher.finalize();
+    Ok(format!("{:x}", hash))
+}
+
 /// Verify that a backup file was created correctly.
 ///
-/// Checks that the backup exists at the destination path and that its size
-/// matches the source file. Returns an error if either check fails.
+/// Uses a two-tier verification strategy for performance:
+/// - Files ≤ 1KB: size check only (fast, catches most corruption)
+/// - Files > 1KB: size check + SHA-256 hash verification (strong integrity)
+///
+/// The 1KB threshold balances security for critical dotfiles (SSH keys, GPG
+/// configs) against performance for many small config files.
 pub(crate) fn verify_backup_integrity(source: &Path, dest: &Path) -> Result<(), DottyError> {
+    // Fast pre-validation: check file sizes match
     let dest_meta = fs::metadata(dest).map_err(|e| DottyError::BackupVerification {
         path: dest.to_path_buf(),
         detail: format!("backup file does not exist or is not readable: {}", e),
@@ -517,6 +534,22 @@ pub(crate) fn verify_backup_integrity(source: &Path, dest: &Path) -> Result<(), 
                 source_size, dest_size
             ),
         });
+    }
+
+    // SHA-256 verification for files > 1KB (performance tradeoff)
+    // Small files use size-only check; larger files get cryptographic verification
+    const HASH_VERIFICATION_THRESHOLD: u64 = 1024; // 1KB
+    if source_size > HASH_VERIFICATION_THRESHOLD {
+        let source_hash = compute_file_hash(source)?;
+        let dest_hash = compute_file_hash(dest)?;
+
+        if source_hash != dest_hash {
+            return Err(DottyError::BackupHashMismatch {
+                path: dest.to_path_buf(),
+                expected_hash: source_hash,
+                actual_hash: dest_hash,
+            });
+        }
     }
 
     debug!("backup verified: {} ({} bytes)", dest.display(), dest_size);
@@ -544,6 +577,192 @@ mod tests {
     use std::fs;
 
     use crate::symlink::create_symlink;
+
+    /// Test SHA-256 hash computation produces expected result.
+    #[test]
+    fn test_compute_file_hash_known_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.txt");
+        fs::write(&file, "hello world").unwrap();
+
+        let hash = compute_file_hash(&file).unwrap();
+
+        // SHA-256 of "hello world" is a known value
+        assert_eq!(hash.len(), 64, "SHA-256 hash should be 64 hex characters");
+        assert_eq!(
+            hash,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+    }
+
+    /// Test SHA-256 hash is deterministic (same input = same output).
+    #[test]
+    fn test_compute_file_hash_deterministic() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.txt");
+        fs::write(&file, "test content").unwrap();
+
+        let hash1 = compute_file_hash(&file).unwrap();
+        let hash2 = compute_file_hash(&file).unwrap();
+
+        assert_eq!(hash1, hash2, "Same file should produce same hash");
+    }
+
+    /// Test SHA-256 hash differs for different content.
+    #[test]
+    fn test_compute_file_hash_different_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let file1 = dir.path().join("file1.txt");
+        let file2 = dir.path().join("file2.txt");
+        fs::write(&file1, "content A").unwrap();
+        fs::write(&file2, "content B").unwrap();
+
+        let hash1 = compute_file_hash(&file1).unwrap();
+        let hash2 = compute_file_hash(&file2).unwrap();
+
+        assert_ne!(hash1, hash2, "Different files should have different hashes");
+    }
+
+    /// Test hash computation fails for non-existent file.
+    #[test]
+    fn test_compute_file_hash_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("nonexistent.txt");
+
+        let result = compute_file_hash(&file);
+        assert!(result.is_err());
+    }
+
+    /// Test verify_backup_integrity passes for identical files ≤ 1KB.
+    #[test]
+    fn test_verify_backup_integrity_small_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        fs::write(&source, "small content").unwrap();
+        fs::copy(&source, &dest).unwrap();
+
+        let result = verify_backup_integrity(&source, &dest);
+        assert!(
+            result.is_ok(),
+            "Small identical files should pass verification"
+        );
+    }
+
+    /// Test verify_backup_integrity passes for identical files > 1KB.
+    #[test]
+    fn test_verify_backup_integrity_large_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        // Create a file > 1KB (1025 bytes)
+        let content = "x".repeat(1025);
+        fs::write(&source, &content).unwrap();
+        fs::copy(&source, &dest).unwrap();
+
+        let result = verify_backup_integrity(&source, &dest);
+        assert!(
+            result.is_ok(),
+            "Large identical files should pass verification"
+        );
+    }
+
+    /// Test verify_backup_integrity fails for size mismatch.
+    #[test]
+    fn test_verify_backup_integrity_size_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        fs::write(&source, "original content").unwrap();
+        fs::write(&dest, "short").unwrap();
+
+        let result = verify_backup_integrity(&source, &dest);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::BackupVerification { path, detail } => {
+                assert_eq!(path, dest);
+                assert!(detail.contains("size mismatch"));
+            }
+            _ => panic!("Expected BackupVerification error"),
+        }
+    }
+
+    /// Test verify_backup_integrity fails for hash mismatch (> 1KB).
+    #[test]
+    fn test_verify_backup_integrity_hash_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        // Create files with same size but different content (> 1KB)
+        let source_content = "x".repeat(2000);
+        let dest_content = "y".repeat(2000);
+        fs::write(&source, &source_content).unwrap();
+        fs::write(&dest, &dest_content).unwrap();
+
+        let result = verify_backup_integrity(&source, &dest);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::BackupHashMismatch {
+                path,
+                expected_hash,
+                actual_hash,
+            } => {
+                assert_eq!(path, dest);
+                assert_ne!(expected_hash, actual_hash);
+                assert_eq!(expected_hash.len(), 64);
+                assert_eq!(actual_hash.len(), 64);
+            }
+            _ => panic!("Expected BackupHashMismatch error"),
+        }
+    }
+
+    /// Test verify_backup_integrity fails for non-existent backup.
+    #[test]
+    fn test_verify_backup_integrity_nonexistent_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("nonexistent.txt");
+        fs::write(&source, "content").unwrap();
+
+        let result = verify_backup_integrity(&source, &dest);
+        assert!(result.is_err());
+    }
+
+    /// Test verify_backup_integrity at exactly 1KB boundary.
+    #[test]
+    fn test_verify_backup_integrity_exactly_1kb() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        // Exactly 1024 bytes = 1KB (should use size-only check)
+        let content = "x".repeat(1024);
+        fs::write(&source, &content).unwrap();
+        fs::copy(&source, &dest).unwrap();
+
+        let result = verify_backup_integrity(&source, &dest);
+        assert!(
+            result.is_ok(),
+            "Exactly 1KB file should pass with size check"
+        );
+    }
+
+    /// Test verify_backup_integrity at 1KB + 1 byte boundary.
+    #[test]
+    fn test_verify_backup_integrity_1kb_plus_1() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        // 1025 bytes = 1KB + 1 byte (should trigger hash verification)
+        let content = "x".repeat(1025);
+        fs::write(&source, &content).unwrap();
+        fs::copy(&source, &dest).unwrap();
+
+        let result = verify_backup_integrity(&source, &dest);
+        assert!(
+            result.is_ok(),
+            "1KB+1 file should pass with hash verification"
+        );
+    }
 
     /// Test that copy_dir skips symlinked files by default (follow_symlinks=false).
     ///

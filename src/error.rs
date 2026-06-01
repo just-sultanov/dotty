@@ -62,6 +62,13 @@ pub(crate) enum DottyError {
     #[error("backup verification failed for {path}: {detail}")]
     BackupVerification { path: PathBuf, detail: String },
 
+    #[error("backup hash mismatch for {path}: expected {expected_hash}, got {actual_hash}")]
+    BackupHashMismatch {
+        path: PathBuf,
+        expected_hash: String,
+        actual_hash: String,
+    },
+
     #[error("no dotty repository found at {path}. Run `dotty init` first.")]
     MissingGitRepository { path: PathBuf },
 
