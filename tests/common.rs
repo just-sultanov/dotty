@@ -23,6 +23,9 @@ pub struct TestEnv {
 }
 
 #[allow(dead_code)]
+/// Test helper methods — some may not be used in every test file.
+/// Rust compiles each test as a separate crate, so dead-code detection
+/// doesn't work across test files. This is a common pattern for test helpers.
 impl TestEnv {
     /// Create a fresh set of temp directories.
     pub fn new() -> Self {
@@ -95,14 +98,6 @@ impl TestEnv {
         }
         std::fs::write(&full, content).unwrap();
         full
-    }
-
-    /// Create a file at an arbitrary path.
-    pub fn create_file_at(&self, path: &Path, content: &str) {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::fs::write(path, content).unwrap();
     }
 
     /// Read config.toml from the state directory.

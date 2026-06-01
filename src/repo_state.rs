@@ -73,22 +73,6 @@ impl RepoState {
         }
     }
 
-    /// Require a machine name to be configured.
-    ///
-    /// Returns the machine name if set in config, or an error suggesting
-    /// the user configure one.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DottyError::MissingMachineName`] if no machine is set.
-    #[allow(dead_code)]
-    pub fn require_machine(&self) -> Result<&str, DottyError> {
-        self.config
-            .machine
-            .as_deref()
-            .ok_or(DottyError::MissingMachineName)
-    }
-
     /// Validate git identity (user.name and user.email) and cache the result.
     ///
     /// On the first call, spawns two `git config` subprocesses to check
