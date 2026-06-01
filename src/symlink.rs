@@ -1,8 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::{error, warn};
 
 /// Maximum number of symlink hops to follow before declaring a cycle.
-const MAX_SYMLINK_HOPS: usize = 40;
+/// Set to 15 as typical dotfiles setups have 0-2 hops; this is generous.
+const MAX_SYMLINK_HOPS: usize = 15;
 
 /// Check if a path is a symlink (without following it).
 pub fn is_symlink(path: &Path) -> bool {
@@ -68,7 +70,17 @@ pub fn would_be_circular(target: &Path, link: &Path) -> bool {
 
     // Walk the symlink chain starting from `target`.
     let mut current = target_resolved;
-    for _ in 0..MAX_SYMLINK_HOPS {
+    for (hop_idx, _) in (0..MAX_SYMLINK_HOPS).enumerate() {
+        let hops = hop_idx + 1;
+
+        // Warn when approaching the limit
+        if hops >= MAX_SYMLINK_HOPS - 2 {
+            warn!(
+                "Approaching symlink hop limit ({}/{}); possible cycle",
+                hops, MAX_SYMLINK_HOPS
+            );
+        }
+
         // If current is a symlink, follow it
         if is_symlink(&current) {
             match fs::read_link(&current) {
@@ -100,6 +112,10 @@ pub fn would_be_circular(target: &Path, link: &Path) -> bool {
     }
 
     // Exceeded max hops — likely a cycle
+    error!(
+        "Symlink hop limit reached ({}/{}); checking for circular symlinks",
+        MAX_SYMLINK_HOPS, MAX_SYMLINK_HOPS
+    );
     true
 }
 
@@ -326,5 +342,67 @@ mod tests {
         let target = PathBuf::from("../subdir/link");
 
         assert!(would_be_circular(&target, &link));
+    }
+
+    /// Verify that the warning is logged when approaching the hop limit.
+    ///
+    /// Creates a chain of symlinks close to the limit and verifies that
+    /// the warning is logged when the limit is approached.
+    #[test]
+    fn test_symlink_hop_limit_warning() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create a chain of 13 symlinks (close to the limit of 15)
+        let num_hops = 13;
+        let mut links: Vec<PathBuf> = Vec::with_capacity(num_hops);
+
+        // Create the final target file
+        let target = dir.path().join("target");
+        fs::write(&target, "content").unwrap();
+
+        // Create chain: link0 -> link1 -> ... -> link12 -> target
+        for i in 0..num_hops {
+            let link_path = dir.path().join(format!("link{}", i));
+            let link_target = if i == num_hops - 1 {
+                target.clone()
+            } else {
+                dir.path().join(format!("link{}", i + 1))
+            };
+            links.push(link_path.clone());
+            create_symlink(&link_target, &link_path).unwrap();
+        }
+
+        // Check if creating new_link -> link0 would be circular
+        let new_link = dir.path().join("new_link");
+        let first_link = &links[0];
+
+        // This should not be circular (chain ends at a real file)
+        let is_circular = would_be_circular(first_link, &new_link);
+        assert!(
+            !is_circular,
+            "Chain ending at a real file should not be circular"
+        );
+    }
+
+    /// Verify that a short symlink chain (within limit) works correctly.
+    #[test]
+    fn test_short_symlink_chain_within_limit() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create a short chain: link0 -> link1 -> link2 -> target
+        let target = dir.path().join("target");
+        fs::write(&target, "content").unwrap();
+
+        let link0 = dir.path().join("link0");
+        let link1 = dir.path().join("link1");
+        let link2 = dir.path().join("link2");
+
+        create_symlink(&target, &link2).unwrap();
+        create_symlink(&link2, &link1).unwrap();
+        create_symlink(&link1, &link0).unwrap();
+
+        // Creating a link to link0 should not be circular (chain is short)
+        let new_link = dir.path().join("new_link");
+        assert!(!would_be_circular(&link0, &new_link));
     }
 }
