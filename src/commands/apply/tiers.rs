@@ -1,3 +1,15 @@
+//! Tier merge algorithm.
+//!
+//! Higher tiers override lower tiers because we iterate in order:
+//! base → platform → machine. IndexMap::insert() overwrites,
+//! so the last insertion (highest priority) wins.
+//!
+//! # Priority Order (lowest to highest)
+//!
+//! 1. `base/` — Default configuration applied to all machines
+//! 2. `<platform>/` — Platform-specific overrides (macos/, linux/, windows/)
+//! 3. `<machine>/` — Machine-specific overrides (highest priority)
+
 use indexmap::IndexMap;
 use std::path::PathBuf;
 
@@ -8,9 +20,16 @@ use std::path::PathBuf;
 /// Uses `IndexMap` to preserve insertion order (base → platform → machine)
 /// for deterministic iteration during plan building.
 ///
-/// This function performs a single linear scan of `tracked_files`, classifying
-/// each file into its tier in one pass. Previously this used three separate
-/// loops (O(3n)); the single-pass version is O(n) and functionally identical.
+/// # Algorithm
+///
+/// Iterates through files in order, classifying each into its tier. Since
+/// we process files in the order they appear in `tracked_files`, and
+/// `IndexMap::insert()` overwrites existing keys, the last tier processed
+/// for a given target path wins. This enforces priority: machine > platform > base.
+///
+/// # Complexity
+///
+/// Single-pass O(n) where n is the number of tracked files.
 pub(crate) fn merge_tiers(
     tracked_files: &[String],
     machine: &str,
@@ -18,14 +37,20 @@ pub(crate) fn merge_tiers(
 ) -> IndexMap<PathBuf, (String, String)> {
     let mut merged: IndexMap<PathBuf, (String, String)> = IndexMap::new();
 
+    // Iterate through tracked files, classifying each into its tier.
+    // Files from higher tiers (machine > platform > base) will overwrite
+    // lower tier entries for the same target path.
     for file in tracked_files {
         let tier_name =
             match crate::convention::classify_tier(file, &Some(machine.to_string()), platform) {
                 Some(tier) => tier,
+                // Skip files that don't match any recognized tier
                 None => continue,
             };
         let repo_path = PathBuf::from(file);
 
+        // Convert repo path to target path and insert into merged map.
+        // If target already exists, this overwrites with the higher priority tier.
         if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
             merged.insert(target, (tier_name, file.clone()));
         }
