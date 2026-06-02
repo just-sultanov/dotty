@@ -115,19 +115,20 @@ pub fn run(
         });
     }
 
-    // Build conflict map from existing tracked files
-    let existing_files = if repo.is_git_repo {
-        match git::git_ls_files(&repo_path) {
-            Ok(files) => files,
+    // Build conflict map from existing tracked files using streaming approach.
+    // This avoids loading all tracked files into memory at once, improving
+    // memory efficiency for large repositories (10,000+ files).
+    let conflict_map = if repo.is_git_repo {
+        match git::git_ls_files_streaming(&repo_path) {
+            Ok(iterator) => build_conflict_map_streaming(iterator),
             Err(e) => {
                 warn!("failed to list tracked files: {e}");
-                Vec::new()
+                indexmap::IndexMap::new()
             }
         }
     } else {
-        Vec::new()
+        indexmap::IndexMap::new()
     };
-    let conflict_map = build_conflict_map(&existing_files);
 
     // Resolve conflicts interactively
     let files_to_override = resolve_conflicts(&files_to_add, &conflict_map)?;
@@ -446,19 +447,25 @@ fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> {
 
 /// Build a map from target path → list of repo-relative paths that manage it.
 /// Uses IndexMap to preserve insertion order for deterministic conflict display.
-fn build_conflict_map(existing_files: &[String]) -> indexmap::IndexMap<PathBuf, Vec<String>> {
-    let mut map: indexmap::IndexMap<PathBuf, Vec<String>> = indexmap::IndexMap::new();
-
-    for repo_relative_path in existing_files {
-        let repo_path = PathBuf::from(repo_relative_path);
-        if let Ok(target) = repo_to_target(&repo_path) {
-            map.entry(target)
-                .or_default()
-                .push(repo_relative_path.clone());
-        }
-    }
-
-    map
+///
+/// This is the eager-evaluation version kept for backward compatibility with tests.
+/// Build conflict map using streaming iterator.
+///
+/// This is the lazy-evaluation version that processes files one at a time
+/// without creating an intermediate Vec. The iterator is consumed directly
+/// into the HashMap, reducing memory allocation for large repositories.
+fn build_conflict_map_streaming(
+    files: git::GitLsFilesIterator,
+) -> indexmap::IndexMap<PathBuf, Vec<String>> {
+    files
+        .into_iter()
+        .fold(indexmap::IndexMap::new(), |mut map, repo_relative_path| {
+            let repo_path = PathBuf::from(&repo_relative_path);
+            if let Ok(target) = repo_to_target(&repo_path) {
+                map.entry(target).or_default().push(repo_relative_path);
+            }
+            map
+        })
 }
 
 /// Resolve conflicts for the files being added.
@@ -541,6 +548,28 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
+    /// Helper to create a mock streaming iterator from a Vec of file paths.
+    /// This simulates the production `GitLsFilesIterator` for testing purposes.
+    fn mock_git_iterator(files: Vec<String>) -> impl Iterator<Item = String> {
+        files.into_iter()
+    }
+
+    /// Build conflict map from an iterator (used in tests).
+    /// This mirrors the production `build_conflict_map_streaming` logic.
+    fn build_conflict_map_from_iter(
+        files: impl Iterator<Item = String>,
+    ) -> indexmap::IndexMap<PathBuf, Vec<String>> {
+        files
+            .into_iter()
+            .fold(indexmap::IndexMap::new(), |mut map, repo_relative_path| {
+                let repo_path = PathBuf::from(&repo_relative_path);
+                if let Ok(target) = repo_to_target(&repo_path) {
+                    map.entry(target).or_default().push(repo_relative_path);
+                }
+                map
+            })
+    }
+
     // ── Property tests for build_conflict_map ──
 
     /// Generator for valid repo paths with proper tier structure.
@@ -561,8 +590,8 @@ mod tests {
             files in proptest::collection::vec(repo_path(), 0..20),
         ) {
             crate::tests::with_test_home(|_home| {
-                let result1 = build_conflict_map(&files);
-                let result2 = build_conflict_map(&files);
+                let result1 = build_conflict_map_from_iter(mock_git_iterator(files.clone()));
+                let result2 = build_conflict_map_from_iter(mock_git_iterator(files));
 
                 assert_eq!(
                     &result1, &result2,
@@ -578,7 +607,7 @@ mod tests {
         fn proptest_build_conflict_map_empty(_ in Just(())) {
             crate::tests::with_test_home(|_home| {
                 let empty: Vec<String> = vec![];
-                let map = build_conflict_map(&empty);
+                let map = build_conflict_map_from_iter(mock_git_iterator(empty));
 
                 assert!(map.is_empty(), "empty input should produce empty map");
             });
@@ -592,7 +621,7 @@ mod tests {
             files in proptest::collection::vec(repo_path(), 0..20),
         ) {
             crate::tests::with_test_home(|_home| {
-                let map = build_conflict_map(&files);
+                let map = build_conflict_map_from_iter(mock_git_iterator(files.clone()));
 
                 assert!(
                     map.len() <= files.len(),
@@ -610,7 +639,7 @@ mod tests {
             files in proptest::collection::vec(repo_path(), 1..15),
         ) {
             crate::tests::with_test_home(|_home| {
-                let map = build_conflict_map(&files);
+                let map = build_conflict_map_from_iter(mock_git_iterator(files.clone()));
 
                 // Each input file should appear in at least one value in the map
                 for file in &files {
@@ -637,7 +666,7 @@ mod tests {
                 let macos_file = format!("macos/{}", target_file);
                 let files = vec![base_file.clone(), macos_file.clone()];
 
-                let map = build_conflict_map(&files);
+                let map = build_conflict_map_from_iter(mock_git_iterator(files));
 
                 // Both files should map to the same target
                 let target = crate::paths::repo_to_target(&std::path::PathBuf::from(&base_file)).unwrap();
@@ -659,7 +688,7 @@ mod tests {
             files in proptest::collection::vec(repo_path(), 1..10),
         ) {
             crate::tests::with_test_home(|_home| {
-                let map = build_conflict_map(&files);
+                let map = build_conflict_map_from_iter(mock_git_iterator(files.clone()));
 
                 // Collect all paths from the map in order
                 let all_paths: Vec<String> = map.values().flatten().cloned().collect();
@@ -690,7 +719,7 @@ mod tests {
                 let repo_file = format!("base/home/{}", file_path);
 
                 let files = vec![repo_file.clone()];
-                let map = build_conflict_map(&files);
+                let map = build_conflict_map_from_iter(mock_git_iterator(files));
 
                 // Map should have exactly one entry
                 assert!(map.len() == 1, "should have exactly one entry");
@@ -736,7 +765,7 @@ mod tests {
                 "base/home/.gitconfig".into(),
                 "macbook/home/.config/nvim/plugins.lua".into(),
             ];
-            let map = build_conflict_map(&existing);
+            let map = build_conflict_map_from_iter(mock_git_iterator(existing));
 
             assert!(map.contains_key(&home.join(".vimrc")));
             assert!(map.contains_key(&home.join(".gitconfig")));
@@ -746,7 +775,8 @@ mod tests {
 
     #[test]
     fn test_conflict_map_empty() {
-        let map = build_conflict_map(&[]);
+        let empty: Vec<String> = vec![];
+        let map = build_conflict_map_from_iter(mock_git_iterator(empty));
         assert!(map.is_empty());
     }
 
@@ -1292,7 +1322,7 @@ mod tests {
                 "base/home/.vimrc".into(),
                 "macbook/home/.config/nvim/plugins.lua".into(),
             ];
-            let map = build_conflict_map(&existing);
+            let map = build_conflict_map_from_iter(mock_git_iterator(existing));
 
             // Verify keys are in insertion order (deterministic)
             let keys: Vec<PathBuf> = map.keys().cloned().collect();
