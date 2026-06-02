@@ -15,6 +15,38 @@ use crate::prompt::prompt_confirm;
 use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
 
+/// Remove command implementation.
+///
+/// # Safety Invariant
+///
+/// The three-phase approach ensures no data loss during removal:
+///
+/// 1. **Phase 1 (Restore):** Copy files from repo to target, restoring the
+///    managed content to the target location. If the target is a regular file
+///    (user-modified), a backup is created first.
+///
+/// 2. **Phase 2 (Remove Symlink):** Remove symlinks at target locations.
+///
+/// 3. **Phase 3 (Cleanup):** Remove files from repo and update config.
+///
+/// # Safety Guarantee
+///
+/// If Phase 1 succeeds but Phase 2 fails, the target file exists (restored
+/// from repo) — no data loss. The rollback mechanism can restore the original
+/// symlink if needed, or the user can manually re-create it.
+///
+/// The ordering is critical:
+/// - CopyFile must execute before RemoveSymlink to preserve data
+/// - RemoveSymlink must execute before RemoveFile to maintain referential integrity
+///
+/// # Failure Modes
+///
+/// | Failure Point | Consequence | Recovery |
+/// |---------------|-------------|----------|
+/// | Phase 1 fails | Original symlink intact | No recovery needed |
+/// | Phase 2 fails | Target file exists (restored) | Rollback can restore symlink |
+/// | Phase 3 fails | Files removed from target, repo intact | Re-run `dotty apply` |
+///
 /// Run the `remove` command.
 pub fn run(
     path: String,
@@ -191,6 +223,18 @@ pub(crate) struct RemovePlanOutput {
 /// The `Backup` action preserves user modifications before they are overwritten
 /// by the repo version. Backups are stored in `<state_path>/backups/<timestamp>/<filename>`.
 ///
+/// # Safety
+///
+/// This phase must execute first to ensure data is restored before symlinks
+/// are removed. If this phase fails, the system remains in a consistent state
+/// with original symlinks intact.
+///
+/// # Failure Mode
+///
+/// If `CopyFile` fails partway through, some files may be restored while
+/// others are not. The rollback mechanism will restore original symlinks.
+/// User modifications are preserved in backups.
+///
 /// See: high-fix-remove-plan-phase-ordering
 /// See: medium-add-remove-backup
 pub(crate) fn build_restore_file_phase(input: &RemovePlanInput) -> Vec<Action> {
@@ -238,6 +282,19 @@ pub(crate) fn build_restore_file_phase(input: &RemovePlanInput) -> Vec<Action> {
 ///
 /// For each managed pair where the target is a symlink and the file is not
 /// skipped, adds a `RemoveSymlink` action.
+///
+/// # Safety
+///
+/// This phase executes after Phase 1 (Restore), ensuring that the target file
+/// content has been restored from the repo before the symlink is removed.
+/// This ordering guarantees no data loss: even if the operation fails after
+/// this phase, the restored file content exists at the target location.
+///
+/// # Failure Mode
+///
+/// If `RemoveSymlink` fails, the symlink still points to the repo file,
+/// but the repo file will be removed in Phase 3. The rollback mechanism
+/// can restore the original symlink target if needed.
 pub(crate) fn build_remove_symlink_phase(input: &RemovePlanInput) -> Vec<Action> {
     let mut actions = Vec::new();
     for (target_file, repo_rel) in &input.managed_pairs {
@@ -258,6 +315,19 @@ pub(crate) fn build_remove_symlink_phase(input: &RemovePlanInput) -> Vec<Action>
 /// For each managed pair where the file is not skipped, adds a `RemoveFile`
 /// action, removes the entry from the config's managed map, and collects the
 /// repo-relative path for git staging.
+///
+/// # Safety
+///
+/// This phase executes last, after data has been restored to the target
+/// (Phase 1) and symlinks have been removed (Phase 2). This ensures that
+/// removing files from the repo doesn't break any active symlinks.
+///
+/// # Failure Mode
+///
+/// If `RemoveFile` fails, the repo file still exists but the target may
+/// have the restored content. Running `dotty apply` will re-establish
+/// the correct state. The config update is atomic and will be rolled
+/// back if the plan execution fails.
 pub(crate) fn build_repo_cleanup_phase(
     config: &mut Config,
     input: &RemovePlanInput,
@@ -281,6 +351,18 @@ pub(crate) fn build_repo_cleanup_phase(
 /// This is a pure function: it takes resolved input data (managed pairs,
 /// skipped files from user prompts) and returns a `Plan` with actions
 /// and an updated `Config`. No filesystem or git operations are performed.
+///
+/// # Phase Ordering
+///
+/// The plan is built in three phases with a strict ordering:
+///
+/// 1. **Restore** (Phase 1): Copy files from repo to target
+/// 2. **Remove Symlink** (Phase 2): Remove symlinks at target locations
+/// 3. **Cleanup** (Phase 3): Remove files from repo, update config
+///
+/// This ordering is enforced to maintain the safety invariant: data is always
+/// restored before symlinks are removed, ensuring no data loss regardless of
+/// where the operation fails.
 pub(crate) fn build_remove_plan(
     input: &RemovePlanInput,
     config: &Config,
@@ -288,13 +370,16 @@ pub(crate) fn build_remove_plan(
     let mut plan = Plan::new(&input.repo_path);
     let mut config = config.clone();
 
-    // Phase 1: Restore files from repo
+    // Phase 1: Restore files from repo to target.
+    // Safety: Must run first to ensure data exists before symlinks are removed.
     plan.actions.extend(build_restore_file_phase(input));
 
-    // Phase 2: Remove symlinks
+    // Phase 2: Remove symlinks at target locations.
+    // Safety: Runs after restore, so target content exists even if this fails.
     plan.actions.extend(build_remove_symlink_phase(input));
 
-    // Phase 3: Repo cleanup (remove files, update config, collect git paths)
+    // Phase 3: Remove files from repo and update config.
+    // Safety: Runs last, so no active symlinks point to deleted repo files.
     let (cleanup_actions, git_rm_paths) = build_repo_cleanup_phase(&mut config, input);
     plan.actions.extend(cleanup_actions);
 
