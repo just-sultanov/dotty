@@ -72,9 +72,12 @@ impl Cli {
 /// Top-level CLI subcommands.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Bootstrap a new repository or clone an existing one
+    /// Bootstrap a new repository or clone an existing one.
+    ///
+    /// Without git_url: creates a fresh repo, prompts for machine name.
+    /// With git_url: clones repo, selects from existing machines or adds new.
     #[command(
-        after_help = "Examples:\n  # Create a fresh repository in the current directory\n  dotty init\n\n  # Clone an existing dotty repository\n  dotty init git@github.com:user/dotty.git\n\n  # Clone and set machine name in one step\n  dotty init git@github.com:user/dotty.git --machine macbook\n\nNotes:\n  If the target directory already contains a .git directory, dotty init\n  with a URL will fail. Use `dotty init` without a URL to use an existing\n  repository."
+        after_help = "Examples:\n  # Create a fresh repository in the current directory\n  dotty init\n\n  # Clone an existing dotty repository\n  dotty init git@github.com:user/dotty.git\n\n  # Clone and set machine name in one step\n  dotty init git@github.com:user/dotty.git --machine macbook\n\nNotes:\n  Without a URL, dotty creates a fresh repository and prompts for a\n  machine name. With a URL, it clones the repository and prompts you\n  to select an existing machine or add a new one.\n\n  If the target directory already contains a .git directory, dotty init\n  with a URL will fail. Use `dotty init` without a URL to use an existing\n  repository."
     )]
     Init {
         /// Git URL to clone (optional — omit for fresh repo)

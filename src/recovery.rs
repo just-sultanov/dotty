@@ -204,14 +204,13 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    /// Create a temp dir with a .git subdirectory (valid git repo) and return
-    /// the state path inside it.
+    /// Create a temp dir with a valid git repo and return the state path inside it.
     fn setup_state_with_repo() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let state = dir.path().join("state");
         std::fs::create_dir_all(&state).unwrap();
-        // Create .git so the repo validates
-        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        // Initialize a real git repo (not just an empty .git directory)
+        crate::git::git_init(dir.path()).unwrap();
         (dir, state)
     }
 
@@ -289,8 +288,8 @@ mod tests {
 
     #[test]
     fn test_handle_valid_plan_discard_removes_file() {
-        let (_dir, state) = setup_state_with_repo();
-        let repo = PathBuf::from(".");
+        let (dir, state) = setup_state_with_repo();
+        let repo = dir.path().to_path_buf();
         save_dummy_plan(&state, &repo);
 
         let plan = plan::load_pending_plan(&state).unwrap().unwrap();
@@ -308,8 +307,8 @@ mod tests {
 
     #[test]
     fn test_handle_valid_plan_rollback_executes_inverse() {
-        let (_dir, state) = setup_state_with_repo();
-        let repo = PathBuf::from(".");
+        let (dir, state) = setup_state_with_repo();
+        let repo = dir.path().to_path_buf();
         save_dummy_plan(&state, &repo);
 
         let plan = plan::load_pending_plan(&state).unwrap().unwrap();
@@ -329,8 +328,8 @@ mod tests {
 
     #[test]
     fn test_handle_valid_plan_ignore_proceeds_without_error() {
-        let (_dir, state) = setup_state_with_repo();
-        let repo = PathBuf::from(".");
+        let (dir, state) = setup_state_with_repo();
+        let repo = dir.path().to_path_buf();
         save_dummy_plan(&state, &repo);
 
         let plan = plan::load_pending_plan(&state).unwrap().unwrap();
@@ -350,8 +349,8 @@ mod tests {
 
     #[test]
     fn test_handle_valid_plan_invalid_recovery_action() {
-        let (_dir, state) = setup_state_with_repo();
-        let repo = PathBuf::from(".");
+        let (dir, state) = setup_state_with_repo();
+        let repo = dir.path().to_path_buf();
         save_dummy_plan(&state, &repo);
 
         let plan = plan::load_pending_plan(&state).unwrap().unwrap();
@@ -396,8 +395,8 @@ mod tests {
 
     #[test]
     fn test_check_pending_plan_delegates_to_valid_handler() {
-        let (_dir, state) = setup_state_with_repo();
-        let repo = PathBuf::from(".");
+        let (dir, state) = setup_state_with_repo();
+        let repo = dir.path().to_path_buf();
         save_dummy_plan(&state, &repo);
 
         let result = temp_env::with_var("DOTTY_STATE_HOME", Some(state.to_str().unwrap()), || {
@@ -424,8 +423,8 @@ mod tests {
     /// The original pending plan is cleared after rollback succeeds.
     #[test]
     fn test_rollback_no_new_pending_plan_created() {
-        let (_dir, state) = setup_state_with_repo();
-        let repo = PathBuf::from(".");
+        let (dir, state) = setup_state_with_repo();
+        let repo = dir.path().to_path_buf();
         save_dummy_plan(&state, &repo);
 
         // Verify original pending plan exists
@@ -451,8 +450,8 @@ mod tests {
     /// a failed rollback does not overwrite or remove the original plan.
     #[test]
     fn test_rollback_failure_leaves_original_plan() {
-        let (_dir, state) = setup_state_with_repo();
-        let repo = PathBuf::from(".");
+        let (dir, state) = setup_state_with_repo();
+        let repo = dir.path().to_path_buf();
         save_dummy_plan(&state, &repo);
 
         assert!(state.join("pending_plan.json").exists());
