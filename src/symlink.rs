@@ -124,6 +124,13 @@ pub fn would_be_circular(target: &Path, link: &Path) -> bool {
 /// Relative target paths with `..` components are resolved against the link's
 /// parent directory. This ensures that `../foo` in a target resolves to the
 /// correct location rather than the current working directory.
+///
+/// The function also normalizes paths by:
+/// - Resolving `..` (parent directory) components
+/// - Ignoring `.` (current directory) components
+/// - Preserving other components in order
+///
+/// This prevents false negatives in circular detection for paths like `././path`.
 pub fn resolve_target_with_parent(target: &Path, link_parent: &Path) -> PathBuf {
     if target.is_absolute() {
         // Absolute targets are resolved independently
@@ -135,13 +142,20 @@ pub fn resolve_target_with_parent(target: &Path, link_parent: &Path) -> PathBuf 
         if let Ok(canonical) = fs::canonicalize(&resolved) {
             canonical
         } else {
-            // Best effort: normalize using path components to resolve `..`
+            // Best effort: normalize using path components to resolve `..` and `.`
+            // This handles edge cases like `././path` that could cause false negatives
             let mut stack: Vec<std::path::Component<'_>> = Vec::new();
             for comp in resolved.components() {
-                if comp == std::path::Component::ParentDir {
-                    stack.pop();
-                } else {
-                    stack.push(comp);
+                match comp {
+                    std::path::Component::ParentDir => {
+                        stack.pop();
+                    }
+                    std::path::Component::CurDir => {
+                        // Ignore current directory references (normalize `.`)
+                    }
+                    _ => {
+                        stack.push(comp);
+                    }
                 }
             }
             stack.iter().collect::<PathBuf>()
@@ -307,6 +321,114 @@ mod tests {
         let target = PathBuf::from("../other");
 
         assert!(!would_be_circular(&target, &link));
+    }
+
+    /// Verify that `././path` patterns are correctly normalized and detected as circular.
+    ///
+    /// This tests the edge case where the target contains multiple current directory
+    /// references that should be normalized before comparison.
+    #[test]
+    fn test_would_be_circular_with_dot_dot_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+
+        let link = subdir.join("link");
+        // Target with multiple `.` references that resolves to the link itself
+        let target = PathBuf::from("././link");
+
+        assert!(would_be_circular(&target, &link));
+    }
+
+    /// Verify that `././path/to/file` patterns are correctly normalized.
+    ///
+    /// This tests a more complex case with nested path components.
+    #[test]
+    fn test_would_be_circular_with_complex_dot_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+
+        let link = subdir.join("link");
+        // Complex target with `.` references
+        let target = PathBuf::from("./././link");
+
+        assert!(would_be_circular(&target, &link));
+    }
+
+    /// Verify that `../..` patterns are correctly resolved.
+    ///
+    /// Scenario: link at `/dir/a/b/link` with target `../../a/b/link`.
+    /// This should be detected as circular because it resolves to the same path.
+    #[test]
+    fn test_would_be_circular_with_double_dotdot() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let b = a.join("b");
+        fs::create_dir_all(&b).unwrap();
+
+        let link = b.join("link");
+        // Target that goes up two levels and back down to the same path
+        let target = PathBuf::from("../../a/b/link");
+
+        assert!(would_be_circular(&target, &link));
+    }
+
+    /// Verify that mixed `.` and `..` patterns are correctly handled.
+    ///
+    /// Scenario: link at `/dir/subdir/link` with target `./../subdir/link`.
+    /// This should be detected as circular.
+    #[test]
+    fn test_would_be_circular_with_mixed_dot_patterns() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+
+        let link = subdir.join("link");
+        // Mixed pattern: `./../subdir/link` resolves to the link itself
+        let target = PathBuf::from("./../subdir/link");
+
+        assert!(would_be_circular(&target, &link));
+    }
+
+    /// Verify that `resolve_target_with_parent` correctly normalizes `././path` patterns.
+    #[test]
+    fn test_resolve_target_with_parent_normalizes_dot_dot() {
+        let dir = tempfile::tempdir().unwrap();
+        let link_parent = dir.path().join("subdir");
+        fs::create_dir(&link_parent).unwrap();
+
+        // Target with multiple `.` references
+        let target = PathBuf::from("././link");
+        let resolved = resolve_target_with_parent(&target, &link_parent);
+
+        // The resolved path should end with "subdir/link" (no `.` components)
+        // Use component iteration to check for CurDir components
+        let has_cur_dir = resolved
+            .components()
+            .any(|c| c == std::path::Component::CurDir);
+        assert!(
+            !has_cur_dir,
+            "Resolved path should not contain `.` (CurDir) components: {:?}",
+            resolved
+        );
+        assert!(resolved.ends_with("link"));
+    }
+
+    /// Verify that `resolve_target_with_parent` correctly handles `../..` patterns.
+    #[test]
+    fn test_resolve_target_with_parent_handles_double_dotdot() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let b = a.join("b");
+        fs::create_dir_all(&b).unwrap();
+
+        let link_parent = b.clone();
+        let target = PathBuf::from("../../a/b/link");
+        let resolved = resolve_target_with_parent(&target, &link_parent);
+
+        // The resolved path should end with "a/b/link"
+        assert!(resolved.ends_with("a/b/link"));
     }
 
     /// Verify that a symlink with `..` resolving to a valid non-circular path is allowed.
