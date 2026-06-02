@@ -1,6 +1,56 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// Error message formatting helper.
+///
+/// This macro provides consistent formatting for error messages across the codebase.
+///
+/// **Pattern A: Static messages** — use string literals directly:
+/// ```rust
+/// DottyError::Cancelled
+/// // Produces: "user cancelled operation"
+/// ```
+///
+/// **Pattern B: Single dynamic value** — use `err_msg!` with `{}` placeholder:
+/// ```rust
+/// err_msg!("operation failed: {}", reason)
+/// ```
+///
+/// **Pattern C: Multiple dynamic values** — use `err_msg!` with multiple placeholders:
+/// ```rust
+/// err_msg!("expected {}, got {}", expected, actual)
+/// ```
+///
+/// **Pattern D: Path context** — always include the path using `.display()`:
+/// ```rust
+/// err_msg!("cannot read file: {}", path.display())
+/// ```
+///
+/// The macro normalizes string literals and formatted strings to `String`.
+#[macro_export]
+macro_rules! err_msg {
+    // String literal — convert to String
+    ($lit:literal) => {
+        $lit.to_string()
+    };
+    // Format string with single argument
+    ($fmt:literal, $arg:expr) => {
+        format!($fmt, $arg)
+    };
+    // Format string with two arguments
+    ($fmt:literal, $arg1:expr, $arg2:expr) => {
+        format!($fmt, $arg1, $arg2)
+    };
+    // Format string with three arguments
+    ($fmt:literal, $arg1:expr, $arg2:expr, $arg3:expr) => {
+        format!($fmt, $arg1, $arg2, $arg3)
+    };
+    // Passthrough for already-formatted values
+    ($expr:expr) => {
+        $expr.to_string()
+    };
+}
+
 /// Top-level error type for dotty.
 ///
 /// Use `thiserror` for domain-specific errors and `anyhow` for the error chain

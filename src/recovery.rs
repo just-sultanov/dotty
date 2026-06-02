@@ -22,6 +22,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::err_msg;
 use crate::error::DottyError;
 use crate::plan;
 use crate::prompt;
@@ -64,8 +65,9 @@ pub(crate) fn handle_valid_plan(ctx: &RecoveryContext) -> Result<(), DottyError>
         Some("rollback") => 0,
         Some("discard") => 1,
         Some(other) => {
-            return Err(DottyError::CommandError(format!(
-                "invalid recovery action '{other}'. Must be one of: rollback, discard, ignore"
+            return Err(DottyError::CommandError(err_msg!(
+                "invalid recovery action '{}'. Must be one of: rollback, discard, ignore",
+                other
             )));
         }
         None => prompt::prompt_select("What would you like to do?", &options)?,
@@ -101,7 +103,7 @@ pub(crate) fn handle_valid_plan(ctx: &RecoveryContext) -> Result<(), DottyError>
         }
         2 => {
             // Abort: exit without running the current command
-            return Err(DottyError::CommandError(format!(
+            return Err(DottyError::CommandError(err_msg!(
                 "Aborted. Pending plan still exists at {}.",
                 ctx.state_path.display()
             )));
@@ -129,8 +131,9 @@ pub(crate) fn handle_stale_plan(
         Some("discard") => 0,
         Some("ignore") => 1,
         Some(other) => {
-            return Err(DottyError::CommandError(format!(
-                "invalid recovery action '{other}'. Must be one of: rollback, discard, ignore"
+            return Err(DottyError::CommandError(err_msg!(
+                "invalid recovery action '{}'. Must be one of: rollback, discard, ignore",
+                other
             )));
         }
         None => {

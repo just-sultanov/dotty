@@ -1,12 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::DottyError;
-use tracing::warn;
-
 use crate::backups::backup_timestamp;
 use crate::config::Config;
 use crate::config::write_config;
+use crate::err_msg;
+use crate::error::DottyError;
 use crate::fs_utils::walk_dir;
 use crate::git;
 use crate::paths::{
@@ -17,6 +16,7 @@ use crate::platform::KNOWN_PLATFORMS;
 use crate::prompt::{prompt_confirm, prompt_select};
 use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
+use tracing::warn;
 
 /// Run the `add` command.
 pub fn run(
@@ -351,7 +351,7 @@ fn warn_non_xdg_non_interactive(target_path: &Path) -> Result<(), DottyError> {
     if is_sensitive_system_path(target_path) {
         return Err(DottyError::InvalidTargetPath {
             path: target_path.to_string_lossy().to_string(),
-            reason: format!(
+            reason: err_msg!(
                 "'{}' is under a sensitive system directory",
                 target_path.display()
             ),

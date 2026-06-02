@@ -2,6 +2,7 @@ use std::path::Path;
 
 use tracing::warn;
 
+use crate::err_msg;
 use crate::error::DottyError;
 use crate::paths::repo_to_target;
 use crate::platform::KNOWN_PLATFORMS;
@@ -54,37 +55,37 @@ pub fn validate_machine_name(name: &str) -> Result<(), DottyError> {
     if name.trim().is_empty() {
         return Err(DottyError::InvalidMachineName {
             name: name.to_string(),
-            reason: "machine name cannot be empty".into(),
+            reason: err_msg!("machine name cannot be empty"),
         });
     }
     if name.starts_with('.') {
         return Err(DottyError::InvalidMachineName {
             name: name.to_string(),
-            reason: "machine name cannot start with a dot".into(),
+            reason: err_msg!("machine name cannot start with a dot"),
         });
     }
     if name.contains("..") {
         return Err(DottyError::InvalidMachineName {
             name: name.to_string(),
-            reason: "machine name cannot contain '..'".into(),
+            reason: err_msg!("machine name cannot contain '..'"),
         });
     }
     if name.contains('/') {
         return Err(DottyError::InvalidMachineName {
             name: name.to_string(),
-            reason: "machine name cannot contain '/'".into(),
+            reason: err_msg!("machine name cannot contain '/'"),
         });
     }
     if name == "base" {
         return Err(DottyError::InvalidMachineName {
             name: name.to_string(),
-            reason: "'base' is a reserved name".into(),
+            reason: err_msg!("'base' is a reserved name"),
         });
     }
     if KNOWN_PLATFORMS.contains(&name) {
         return Err(DottyError::InvalidMachineName {
             name: name.to_string(),
-            reason: format!("'{}' is a reserved platform name", name),
+            reason: err_msg!("'{}' is a reserved platform name", name),
         });
     }
     Ok(())

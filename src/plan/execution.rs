@@ -13,6 +13,7 @@ use tracing::{debug, trace, warn};
 
 use indicatif::ProgressBar;
 
+use crate::err_msg;
 use crate::error::DottyError;
 use crate::git;
 use crate::repo_state::RepoState;
@@ -39,7 +40,7 @@ pub(crate) fn action_execute(
         Action::Backup { source, dest } => {
             let parent = dest.parent().ok_or_else(|| DottyError::PathResolution {
                 path: dest.to_path_buf(),
-                reason: format!("cannot determine parent of backup path: {}", dest.display()),
+                reason: err_msg!("cannot determine parent of backup path: {}", dest.display()),
             })?;
             fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
             copy_file(source, dest)?;
@@ -52,7 +53,7 @@ pub(crate) fn action_execute(
         } => {
             let parent = dest.parent().ok_or_else(|| DottyError::PathResolution {
                 path: dest.to_path_buf(),
-                reason: format!(
+                reason: err_msg!(
                     "cannot determine parent of backup dir path: {}",
                     dest.display()
                 ),
@@ -479,7 +480,7 @@ pub(crate) fn copy_dir(
             .strip_prefix(source)
             .map_err(|e| DottyError::PathResolution {
                 path: file_path.clone(),
-                reason: format!("cannot strip source prefix: {e}"),
+                reason: err_msg!("cannot strip source prefix: {}", e),
             })?;
 
         let dest_file = dest.join(relative);
@@ -516,11 +517,11 @@ pub(crate) fn verify_backup_integrity(source: &Path, dest: &Path) -> Result<(), 
     // Fast pre-validation: check file sizes match
     let dest_meta = fs::metadata(dest).map_err(|e| DottyError::BackupVerification {
         path: dest.to_path_buf(),
-        detail: format!("backup file does not exist or is not readable: {}", e),
+        detail: err_msg!("backup file does not exist or is not readable: {}", e),
     })?;
     let source_meta = fs::metadata(source).map_err(|e| DottyError::BackupVerification {
         path: dest.to_path_buf(),
-        detail: format!("cannot read source file metadata for comparison: {}", e),
+        detail: err_msg!("cannot read source file metadata for comparison: {}", e),
     })?;
 
     let source_size = source_meta.len();
@@ -529,9 +530,10 @@ pub(crate) fn verify_backup_integrity(source: &Path, dest: &Path) -> Result<(), 
     if source_size != dest_size {
         return Err(DottyError::BackupVerification {
             path: dest.to_path_buf(),
-            detail: format!(
+            detail: err_msg!(
                 "size mismatch: source is {} bytes, backup is {} bytes",
-                source_size, dest_size
+                source_size,
+                dest_size
             ),
         });
     }

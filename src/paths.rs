@@ -1,6 +1,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+use crate::err_msg;
 use crate::error::DottyError;
 use dir_spec::state_home;
 use path_slash::PathExt;
@@ -88,7 +89,7 @@ pub fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
         if relative.as_os_str().is_empty() {
             return Err(DottyError::InvalidTargetPath {
                 path: "/".to_string(),
-                reason: "cannot map root path to repo".into(),
+                reason: err_msg!("cannot map root path to repo"),
             });
         }
         let result = relative.to_path_buf();
@@ -98,7 +99,7 @@ pub fn target_to_repo(target_path: &Path) -> Result<PathBuf, DottyError> {
 
     Err(DottyError::InvalidTargetPath {
         path: target_path.display().to_string(),
-        reason: "path does not start with home directory or \"/\"".into(),
+        reason: err_msg!("path does not start with home directory or \"/\""),
     })
 }
 
@@ -112,7 +113,7 @@ fn validate_no_dotdot(result: &Path, original: &Path) -> Result<(), DottyError> 
         if component.as_os_str() == ".." {
             return Err(DottyError::InvalidTargetPath {
                 path: original.display().to_string(),
-                reason: "resulting repo path contains '..' component".into(),
+                reason: err_msg!("resulting repo path contains '..' component"),
             });
         }
     }
@@ -135,9 +136,9 @@ pub fn home_dir() -> Result<PathBuf, DottyError> {
         }
     }
     std::env::home_dir().ok_or_else(|| {
-        DottyError::MissingHomeDirectory(
-            "HOME environment variable not set and unable to determine user home directory".into(),
-        )
+        DottyError::MissingHomeDirectory(err_msg!(
+            "HOME environment variable not set and unable to determine user home directory"
+        ))
     })
 }
 
