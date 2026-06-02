@@ -530,10 +530,172 @@ fn resolve_conflicts(
 mod tests {
     use super::*;
     use crate::symlink::create_symlink;
+    use proptest::prelude::*;
 
     /// Create a unique temporary directory that is automatically cleaned up on drop.
     fn test_dir() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    // ── Property tests for build_conflict_map ──
+
+    /// Generator for valid repo paths with proper tier structure.
+    fn repo_path() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "base/home/[.a-zA-Z0-9_@-]{2,20}".prop_map(|s| s.to_string()),
+            "macos/home/[.a-zA-Z0-9_@-]{2,20}".prop_map(|s| s.to_string()),
+            "linux/home/[.a-zA-Z0-9_@-]{2,20}".prop_map(|s| s.to_string()),
+            "macbook/home/[.a-zA-Z0-9_@-]{2,20}".prop_map(|s| s.to_string()),
+        ]
+    }
+
+    // Invariant: build_conflict_map is deterministic.
+    // Same input always produces the same output.
+    proptest! {
+        #[test]
+        fn proptest_build_conflict_map_deterministic(
+            files in proptest::collection::vec(repo_path(), 0..20),
+        ) {
+            crate::tests::with_test_home(|_home| {
+                let result1 = build_conflict_map(&files);
+                let result2 = build_conflict_map(&files);
+
+                assert_eq!(
+                    &result1, &result2,
+                    "build_conflict_map should be deterministic"
+                );
+            });
+        }
+    }
+
+    // Invariant: empty input produces empty map.
+    proptest::proptest! {
+        #[test]
+        fn proptest_build_conflict_map_empty(_ in Just(())) {
+            crate::tests::with_test_home(|_home| {
+                let empty: Vec<String> = vec![];
+                let map = build_conflict_map(&empty);
+
+                assert!(map.is_empty(), "empty input should produce empty map");
+            });
+        }
+    }
+
+    // Invariant: map size is at most the input size (deduplication by target).
+    proptest! {
+        #[test]
+        fn proptest_build_conflict_map_size_bound(
+            files in proptest::collection::vec(repo_path(), 0..20),
+        ) {
+            crate::tests::with_test_home(|_home| {
+                let map = build_conflict_map(&files);
+
+                assert!(
+                    map.len() <= files.len(),
+                    "map size ({}) should be <= input size ({})",
+                    map.len(), files.len()
+                );
+            });
+        }
+    }
+
+    // Invariant: all input repo paths appear in at least one value.
+    proptest! {
+        #[test]
+        fn proptest_build_conflict_map_preserves_paths(
+            files in proptest::collection::vec(repo_path(), 1..15),
+        ) {
+            crate::tests::with_test_home(|_home| {
+                let map = build_conflict_map(&files);
+
+                // Each input file should appear in at least one value in the map
+                for file in &files {
+                    let found = map.values().any(|paths| paths.contains(file));
+                    assert!(
+                        found,
+                        "input file {:?} should appear in map values",
+                        file
+                    );
+                }
+            });
+        }
+    }
+
+    // Invariant: files with the same target path are grouped together.
+    proptest! {
+        #[test]
+        fn proptest_build_conflict_map_groups_by_target(
+            target_file in "home/[.a-zA-Z0-9_@-]{2,20}".prop_map(|s| s.to_string()),
+        ) {
+            crate::tests::with_test_home(|_home| {
+                // Create files from different tiers that map to the same target
+                let base_file = format!("base/{}", target_file);
+                let macos_file = format!("macos/{}", target_file);
+                let files = vec![base_file.clone(), macos_file.clone()];
+
+                let map = build_conflict_map(&files);
+
+                // Both files should map to the same target
+                let target = crate::paths::repo_to_target(&std::path::PathBuf::from(&base_file)).unwrap();
+                let paths = map.get(&target);
+
+                assert!(paths.is_some(), "target should exist in map");
+                let paths = paths.unwrap();
+                assert!(paths.len() == 2, "both files should be grouped at target");
+                assert!(paths.contains(&base_file), "should contain base file");
+                assert!(paths.contains(&macos_file), "should contain macos file");
+            });
+        }
+    }
+
+    // Invariant: insertion order is preserved in the map.
+    proptest! {
+        #[test]
+        fn proptest_build_conflict_map_preserves_insertion_order(
+            files in proptest::collection::vec(repo_path(), 1..10),
+        ) {
+            crate::tests::with_test_home(|_home| {
+                let map = build_conflict_map(&files);
+
+                // Collect all paths from the map in order
+                let all_paths: Vec<String> = map.values().flatten().cloned().collect();
+
+                // Each file should appear at least once
+                for file in &files {
+                    assert!(
+                        all_paths.contains(file),
+                        "file {:?} should appear in ordered output",
+                        file
+                    );
+                }
+            });
+        }
+    }
+
+    // Invariant: deeply nested paths are handled correctly.
+    proptest! {
+        #[test]
+        fn proptest_build_conflict_map_deep_nesting(
+            depth in 1usize..8,
+        ) {
+            crate::tests::with_test_home(|_home| {
+                let components: Vec<String> = (0..depth)
+                    .map(|i| format!("file_{}", i))
+                    .collect();
+                let file_path = components.join("/");
+                let repo_file = format!("base/home/{}", file_path);
+
+                let files = vec![repo_file.clone()];
+                let map = build_conflict_map(&files);
+
+                // Map should have exactly one entry
+                assert!(map.len() == 1, "should have exactly one entry");
+
+                // The single value should contain our file
+                let all_values: Vec<String> = map.values().flatten().cloned().collect();
+                assert!(all_values.contains(&repo_file));
+            });
+        }
     }
 
     #[test]
