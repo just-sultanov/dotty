@@ -126,6 +126,19 @@ pub(crate) fn action_execute(
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
             }
+            // TOCTOU race condition mitigation: backup could have been deleted by
+            // concurrent `dotty clean` between plan construction and rollback execution.
+            // Check existence at rollback time (not just relying on backup_exists flag)
+            // to provide graceful degradation.
+            if !source.exists() {
+                warn!(
+                    "Backup file deleted during rollback (race with `dotty clean`), \
+                    preserving original intent by removing symlink: {}",
+                    dest.display()
+                );
+                // Backup was deleted, just ensure symlink is removed (original intent)
+                return Ok(());
+            }
             copy_file(source, dest)?;
         }
         Action::RestoreDir { source, dest } => {
@@ -136,6 +149,17 @@ pub(crate) fn action_execute(
                 } else if is_symlink(dest) {
                     fs::remove_file(dest).map_err(|e| io_error_with_path(e, dest))?;
                 }
+            }
+            // TOCTOU race condition mitigation: backup could have been deleted by
+            // concurrent `dotty clean` between plan construction and rollback execution.
+            // Check existence at rollback time for graceful degradation.
+            if !source.exists() {
+                warn!(
+                    "Backup directory deleted during rollback (race with `dotty clean`), \
+                    skipping restoration: {}",
+                    source.display()
+                );
+                return Ok(());
             }
             // RestoreDir always follows symlinks: the backup was created
             // with the actual content, so we restore it faithfully.

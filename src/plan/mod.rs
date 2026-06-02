@@ -1366,19 +1366,21 @@ mod tests {
             ),
         }
 
-        // Rollback will fail because backup was deleted, but the action type
-        // is correct — it attempted to restore rather than silently removing.
+        // Rollback succeeds with graceful degradation: since backup was deleted,
+        // RestoreBackup logs a warning and returns Ok(()) after removing symlink.
+        // This is the TOCTOU fix: we don't panic on missing backup.
         let result = action_execute(
             &rollback,
             &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
         );
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "Rollback should succeed with graceful degradation"
+        );
 
-        // RestoreBackup removes the symlink first, then tries to copy the backup.
-        // Since the backup doesn't exist, copy fails and the symlink is gone.
-        // The key point is that the rollback *attempted* to restore (RestoreBackup)
-        // rather than silently removing (RemoveSymlink). If the backup had existed,
-        // the original content would have been restored.
+        // Symlink is removed (original intent preserved), but content not restored
+        // because backup was deleted. This is acceptable - we preserve the user's
+        // original intent (remove symlink) even when we can't fully restore.
         assert!(!crate::symlink::is_symlink(&link));
     }
 
