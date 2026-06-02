@@ -124,8 +124,6 @@ fn recover_flag_skips_pending_plan_prompt() {
     let out = env.run(&["--recover", "status"]);
 
     // Command should succeed (status doesn't need a pending plan)
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let stdout = String::from_utf8_lossy(&out.stdout);
 
     // The pending plan should still exist (--recover skips it, doesn't clear it)
     assert!(
@@ -135,10 +133,10 @@ fn recover_flag_skips_pending_plan_prompt() {
 
     // Should not show the recovery prompt text
     assert!(
-        !stdout.contains("pending plan") && !stderr.contains("pending plan"),
+        !out.stdout.contains("pending plan") && !out.stderr.contains("pending plan"),
         "--recover should skip the pending plan prompt. stdout: {}, stderr: {}",
-        stdout,
-        stderr
+        out.stdout,
+        out.stderr
     );
 }
 
@@ -188,23 +186,20 @@ fn rollback_removes_created_directories() {
     // Run dotty with --recovery-action rollback to handle the pending plan
     let out = env.run(&["--recovery-action", "rollback", "status"]);
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
     // Verify rollback happened
     assert!(
         !dir1.exists() || !dir2.exists(),
         "at least one directory should be removed after rollback. stdout: {}, stderr: {}",
-        stdout,
-        stderr
+        out.stdout,
+        out.stderr
     );
 
     // Pending plan should be cleared after rollback
     assert!(
         !env.state.join("pending_plan.json").exists(),
         "pending plan should be cleared after rollback. stdout: {}, stderr: {}",
-        stdout,
-        stderr
+        out.stdout,
+        out.stderr
     );
 }
 
@@ -239,23 +234,20 @@ fn discard_removes_pending_plan_without_rollback() {
     // Run dotty with --recovery-action discard to handle the pending plan
     let out = env.run(&["--recovery-action", "discard", "status"]);
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
     // Pending plan should be cleared
     assert!(
         !env.state.join("pending_plan.json").exists(),
         "pending plan should be cleared after discard. stdout: {}, stderr: {}",
-        stdout,
-        stderr
+        out.stdout,
+        out.stderr
     );
 
     // Directory should NOT be removed (discard doesn't rollback)
     assert!(
         dir.is_dir(),
         "directory should still exist after discard (no rollback). stdout: {}, stderr: {}",
-        stdout,
-        stderr
+        out.stdout,
+        out.stderr
     );
 }
 
@@ -293,18 +285,15 @@ fn stale_pending_plan_detected_when_repo_deleted() {
     // Run dotty with --recovery-action discard to handle the stale plan
     let out = env.run(&["--recovery-action", "discard", "status"]);
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
     // Should detect the stale plan
-    let combined = format!("{} {}", stdout, stderr);
+    let combined = format!("{} {}", out.stdout, out.stderr);
     assert!(
         combined.contains("invalid")
             || combined.contains("no longer exists")
             || combined.contains("stale"),
         "should detect stale pending plan. stdout: {}, stderr: {}",
-        stdout,
-        stderr
+        out.stdout,
+        out.stderr
     );
 }
 
@@ -353,12 +342,12 @@ fn pending_plan_with_mixed_actions_parses_correctly() {
 
     // Run with --recover to skip the prompt, verify no parse errors
     let out = env.run(&["--recover", "status"]);
-
-    let stderr = String::from_utf8_lossy(&out.stderr);
     // Should not have JSON parse errors
     assert!(
-        !stderr.contains("serde") && !stderr.contains("invalid type") && !stderr.contains("parse"),
+        !out.stderr.contains("serde")
+            && !out.stderr.contains("invalid type")
+            && !out.stderr.contains("parse"),
         "pending plan with mixed actions should parse without errors. stderr: {}",
-        stderr,
+        out.stderr,
     );
 }

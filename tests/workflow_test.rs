@@ -60,17 +60,16 @@ fn full_workflow_init_add_apply_status_remove() {
 
     // Step 4: Check status
     let out = env.run_ok(&["status"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("testbox"),
+        out.stdout.contains("testbox"),
         "status should show machine name: {}",
-        stdout
+        out.stdout
     );
     assert!(
-        stdout.contains(env.repo.to_str().unwrap()),
+        out.stdout.contains(env.repo.to_str().unwrap()),
         "status should show repo path: {}",
-        stdout
+        out.stdout
     );
 
     // Step 5: Remove the file
@@ -197,12 +196,11 @@ fn crash_recovery_add_idempotency() {
 
     // Running apply should detect and fix the broken symlink
     // (or at least not crash)
-    let out = env.run(&["apply"]);
+    let _out = env.run(&["apply"]);
 
     // Apply should succeed (it will detect the broken symlink)
     // The exact behavior depends on implementation, but it shouldn't crash
     // For now, we just verify it doesn't panic
-    let _ = String::from_utf8_lossy(&out.stderr);
 
     // After apply, the symlink should either be fixed or reported as broken
     // This test mainly ensures no crash occurs
@@ -279,18 +277,14 @@ fn permission_denied_read_only_target() {
     // The key is that it should fail gracefully with a clear error message
     let out = env.run(&["add", target.to_str().unwrap(), "--commit", "add vimrc"]);
 
-    // We expect this to either succeed (if we have write permissions)
-    // or fail with a clear permission-denied error
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
     // If it failed, verify the error message is clear
-    if !out.status.success() {
+    if !out.success() {
         assert!(
-            stderr.contains("permission")
-                || stderr.contains("denied")
-                || stderr.contains("readonly"),
+            out.stderr.contains("permission")
+                || out.stderr.contains("denied")
+                || out.stderr.contains("readonly"),
             "expected permission-related error: {}",
-            stderr
+            out.stderr
         );
     }
 }
@@ -336,23 +330,22 @@ fn permission_denied_during_apply() {
 
     // Try to apply - should fail gracefully
     let out = env.run(&["apply"]);
-    let stderr = String::from_utf8_lossy(&out.stderr);
 
     // Should have a clear error message
-    if !out.status.success() {
+    if !out.success() {
         assert!(
-            stderr.contains("permission")
-                || stderr.contains("denied")
-                || stderr.contains("readonly"),
+            out.stderr.contains("permission")
+                || out.stderr.contains("denied")
+                || out.stderr.contains("readonly"),
             "expected permission-related error: {}",
-            stderr
+            out.stderr
         );
     }
 }
 
 // ============================================================================
 // Cross-Tier Workflow Tests
-// ============================================================================
+// ========================================================================
 
 /// Tests the workflow with files at different tier levels (base, platform, machine).
 #[test]
@@ -406,12 +399,11 @@ fn cross_tier_workflow() {
 
     // Status should show all tiers
     let out = env.run_ok(&["status"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("mybox"),
+        out.stdout.contains("mybox"),
         "status should show machine: {}",
-        stdout
+        out.stdout
     );
 }
 

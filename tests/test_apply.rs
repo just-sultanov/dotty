@@ -90,11 +90,11 @@ fn apply_fails_without_repo() {
 
     // No init — should fail
     let out = env.run_err(&["apply"]);
-    let stderr = String::from_utf8_lossy(&out.stderr);
+
     assert!(
-        stderr.contains("no dotty repository found"),
+        out.stderr.contains("no dotty repository found"),
         "expected 'no dotty repository found' error:\\n{}",
-        stderr
+        out.stderr
     );
 }
 
@@ -482,13 +482,13 @@ fn apply_reports_config_write_failure_to_stderr() {
     // With atomic writes, write_config needs to create a temp file in the
     // state directory, which fails when the directory is unwritable.
     let out = env.run(&["apply"]);
-    let stderr = String::from_utf8_lossy(&out.stderr);
+
     // The apply fails because save_pending_plan cannot write to the state dir.
     // This is expected — the state directory must be writable for dotty to operate.
     assert!(
-        !out.status.success() || stderr.contains("failed to write config"),
+        !out.status.success() || out.stderr.contains("failed to write config"),
         "apply should fail or report config write error when state dir is unwritable:\nstderr: {}\nstdout: {}",
-        stderr,
-        String::from_utf8_lossy(&out.stdout)
+        out.stderr,
+        out.stdout
     );
 }

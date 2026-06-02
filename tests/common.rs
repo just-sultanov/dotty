@@ -3,9 +3,73 @@
 //!
 //! Each test gets its own isolated temp directory for both the repo
 //! (`DOTTY_HOME`) and the state (`DOTTY_STATE_HOME`).
+//!
+//! Test output is automatically captured to reduce noise during test runs.
+//! Use `TestOutput::stdout_contains()` and `stderr_contains()` to assert on output.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Captured output from a test command.
+///
+/// Provides convenient assertion methods for checking stdout/stderr content.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct TestOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub status: std::process::ExitStatus,
+}
+
+#[allow(dead_code)]
+impl TestOutput {
+    /// Check if the command succeeded (exit code 0).
+    pub fn success(&self) -> bool {
+        self.status.success()
+    }
+
+    /// Assert that stdout contains the given needle.
+    ///
+    /// Returns self for fluent chaining.
+    pub fn stdout_contains(&self, needle: &str) -> &Self {
+        assert!(
+            self.stdout.contains(needle),
+            "stdout doesn't contain '{}': {}",
+            needle,
+            self.stdout
+        );
+        self
+    }
+
+    /// Assert that stderr contains the given needle.
+    ///
+    /// Returns self for fluent chaining.
+    pub fn stderr_contains(&self, needle: &str) -> &Self {
+        assert!(
+            self.stderr.contains(needle),
+            "stderr doesn't contain '{}': {}",
+            needle,
+            self.stderr
+        );
+        self
+    }
+
+    /// Assert that stdout contains the given needle (alias for stdout_contains).
+    pub fn contains(&self, needle: &str) -> &Self {
+        self.stdout_contains(needle)
+    }
+
+    /// Get stdout as a lossy string slice.
+    pub fn stdout_lossy(&self) -> std::string::String {
+        self.stdout.clone()
+    }
+
+    /// Get stderr as a lossy string slice.
+    pub fn stderr_lossy(&self) -> std::string::String {
+        self.stderr.clone()
+    }
+}
 
 /// A handle that owns a set of temp directories (repo + state + home) and
 /// cleans them up on drop.
@@ -55,32 +119,61 @@ impl TestEnv {
     ///
     /// `HOME` is set to the test `home` directory so that `repo_to_target()`
     /// maps `base/home/...` → `<test-home>/...` instead of the real `~`.
-    pub fn run(&self, args: &[&str]) -> std::process::Output {
-        Command::new(Self::bin())
+    ///
+    /// Output is captured to reduce noise during test runs.
+    pub fn run(&self, args: &[&str]) -> TestOutput {
+        let mut child = Command::new(Self::bin())
             .env("DOTTY_HOME", &self.repo)
             .env("DOTTY_STATE_HOME", &self.state)
             .env("HOME", &self.home)
             .args(args)
-            .output()
-            .expect("failed to spawn dotty")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn dotty");
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut stdout)
+            .unwrap();
+
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut stderr)
+            .unwrap();
+
+        let status = child.wait().unwrap();
+
+        TestOutput {
+            stdout,
+            stderr,
+            status,
+        }
     }
 
     /// Run `dotty` and assert it succeeded (exit code 0).
-    pub fn run_ok(&self, args: &[&str]) -> std::process::Output {
+    pub fn run_ok(&self, args: &[&str]) -> TestOutput {
         let out = self.run(args);
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            panic!(
-                "dotty {:?} failed (exit {})\nstdout: {}\nstderr: {}",
-                args, out.status, stdout, stderr,
-            );
-        }
+        assert!(
+            out.status.success(),
+            "dotty {:?} failed (exit {})\nstdout: {}\nstderr: {}",
+            args,
+            out.status.code().unwrap_or(-1),
+            out.stdout,
+            out.stderr,
+        );
         out
     }
 
     /// Run `dotty` and assert it failed (non-zero exit code).
-    pub fn run_err(&self, args: &[&str]) -> std::process::Output {
+    pub fn run_err(&self, args: &[&str]) -> TestOutput {
         let out = self.run(args);
         assert!(
             !out.status.success(),

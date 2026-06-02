@@ -181,11 +181,10 @@ fn remove_unmanaged_path_fails() {
     let unmanaged = env.create_file(".unmanaged", "not tracked");
 
     let out = env.run_err(&["remove", unmanaged.to_str().unwrap()]);
-    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("Path not managed by dotty"),
+        out.stderr.contains("Path not managed by dotty"),
         "expected 'Path not managed by dotty' error:\n{}",
-        stderr
+        out.stderr
     );
 }
 
@@ -208,17 +207,16 @@ fn status_shows_machine_and_repo() {
     env.git_config_identity();
 
     let out = env.run_ok(&["status"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("testbox"),
+        out.stdout.contains("testbox"),
         "machine name not shown:\n{}",
-        stdout
+        out.stdout
     );
     assert!(
-        stdout.contains(env.repo.to_str().unwrap()),
+        out.stdout.contains(env.repo.to_str().unwrap()),
         "repo path not shown:\n{}",
-        stdout
+        out.stdout
     );
 }
 
@@ -257,13 +255,12 @@ fn status_shows_broken_symlinks() {
     assert!(!repo_file.exists(), "repo file should be deleted");
 
     let out = env.run_ok(&["status"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
 
     // Should report broken symlinks
     assert!(
-        !stdout.contains("Broken:    0"),
+        !out.stdout.contains("Broken:    0"),
         "broken symlinks not reported:\n{}",
-        stdout
+        out.stdout
     );
 }
 
@@ -294,13 +291,12 @@ fn status_shows_git_dirty() {
     std::fs::write(&repo_file, "set number\nset relativenumber").unwrap();
 
     let out = env.run_ok(&["status"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
 
     // Should show dirty status (not "clean")
     assert!(
-        !stdout.contains("Git:       clean"),
+        !out.stdout.contains("Git:       clean"),
         "git dirty status not shown:\n{}",
-        stdout
+        out.stdout
     );
 }
 
@@ -341,23 +337,22 @@ fn status_shows_inactive_tiers() {
         .unwrap();
 
     let out = env.run_ok(&["status"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("Inactive:"),
+        out.stdout.contains("Inactive:"),
         "inactive tiers not shown:\n{}",
-        stdout
+        out.stdout
     );
     assert!(
-        !stdout.contains("Inactive:  0"),
+        !out.stdout.contains("Inactive:  0"),
         "{} tier should be reported as inactive:\n{}",
         inactive_tier,
-        stdout
+        out.stdout
     );
     assert!(
-        stdout.contains(inactive_tier),
+        out.stdout.contains(inactive_tier),
         "inactive tier name not shown:\n{}",
-        stdout
+        out.stdout
     );
 }
 
@@ -373,12 +368,11 @@ fn clean_no_backups() {
     env.git_config_identity();
 
     let out = env.run_ok(&["clean"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("No backups"),
+        out.stdout.contains("No backups"),
         "expected 'No backups' message:\n{}",
-        stdout
+        out.stdout
     );
 }
 
@@ -404,13 +398,12 @@ fn clean_with_backups() {
 
     // Clean with --keep 1 (keep the most recent)
     let out = env.run_ok(&["clean", "--keep", "1", "--yes"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
 
     // Should have removed 2 of 2 targeted backups
     assert!(
-        stdout.contains("Removed 2 of 2"),
+        out.stdout.contains("Removed 2 of 2"),
         "expected 'Removed 2 of 2' message:\n{}",
-        stdout
+        out.stdout
     );
 
     // Verify only the most recent backup remains
@@ -437,12 +430,11 @@ fn clean_before_date() {
 
     // --before 2024-07-01 should target the first two
     let out = env.run_ok(&["clean", "--before", "2024-07-01", "--yes"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("Removed 2 of 2"),
+        out.stdout.contains("Removed 2 of 2"),
         "expected 'Removed 2 of 2' message:\n{}",
-        stdout
+        out.stdout
     );
 
     // Verify only the most recent backup remains
