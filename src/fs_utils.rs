@@ -4,7 +4,12 @@ use std::path::{Path, PathBuf};
 use crate::error::DottyError;
 
 /// Maximum recursion depth for directory traversal.
-/// Prevents stack overflow and excessive I/O on deeply nested or symlink-heavy trees.
+///
+/// Prevents stack overflow and excessive I/O on deeply nested or symlink-heavy
+/// trees. Chosen based on:
+/// - Typical dotfile repos have depth 1-5 (e.g., base/vim/backup)
+/// - Deep nesting often indicates issues (broken symlinks, misconfigured archives)
+/// - 50 allows for pathological cases while preventing infinite traversal
 const MAX_WALK_DEPTH: u32 = 50;
 
 /// Walk a directory and collect all file paths using an iterative approach.

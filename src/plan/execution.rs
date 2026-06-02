@@ -281,9 +281,16 @@ pub(crate) fn execute_plan(
         crate::plan::save_pending_plan(plan, &repo_state.state_path)?;
     }
 
+    /// Minimum number of actions to use a progress bar.
+    ///
+    /// For small plans (< 20 actions), simple "action ... ✓" output is faster
+    /// and less noisy. Progress bars add overhead and are more appropriate
+    /// for larger plans where they provide useful visual feedback.
+    const PLAN_PROGRESS_BAR_THRESHOLD: usize = 20;
+
     let mut completed: Vec<usize> = Vec::new();
     let check = crate::symbols::check();
-    let use_progress_bar = plan.actions.len() > 20;
+    let use_progress_bar = plan.actions.len() > PLAN_PROGRESS_BAR_THRESHOLD;
     let mut pb: Option<ProgressBar> = if use_progress_bar {
         Some(ProgressBar::new(plan.actions.len() as u64))
     } else {
@@ -564,6 +571,12 @@ pub(crate) fn verify_backup_integrity(source: &Path, dest: &Path) -> Result<(), 
 
     // SHA-256 verification for files > 1KB (performance tradeoff)
     // Small files use size-only check; larger files get cryptographic verification
+    /// Files > 1KB get SHA-256 verification; smaller files use size check only.
+    /// 1KB threshold balances security for critical configs (SSH keys, GPG) against
+    /// performance for many small dotfiles. Chosen based on typical dotfile sizes:
+    /// - SSH keys: 1-4KB
+    /// - GPG keys: 2-8KB
+    /// - vimrc: <500B typically
     const HASH_VERIFICATION_THRESHOLD: u64 = 1024; // 1KB
     if source_size > HASH_VERIFICATION_THRESHOLD {
         let source_hash = compute_file_hash(source)?;

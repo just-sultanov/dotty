@@ -2,8 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{error, warn};
 
-/// Maximum number of symlink hops to follow before declaring a cycle.
-/// Set to 15 as typical dotfiles setups have 0-2 hops; this is generous.
+/// Maximum number of symlink hops allowed during resolution.
+///
+/// This limit prevents infinite loops in case of circular symlinks that
+/// slipped through detection. Linux typically allows 40 hops; we use 15
+/// as a conservative limit that catches most issues while allowing
+/// reasonable symlink chains.
+///
+/// Real-world use cases rarely exceed 3-4 hops:
+/// - base -> platform -> machine -> actual file
 const MAX_SYMLINK_HOPS: usize = 15;
 
 /// Check if a path is a symlink (without following it).

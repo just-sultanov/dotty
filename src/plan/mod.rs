@@ -28,6 +28,11 @@ pub(crate) use persistence::{clear_pending_plan, load_pending_plan, save_pending
 pub(crate) use persistence::PendingPlan;
 
 /// Maximum number of paths to show in `GitAdd` action display.
+///
+/// Limits the verbosity of the action string when many files are staged
+/// at once. Shows first N paths followed by "..." if there are more.
+/// Chosen to balance readability with informative output for typical
+/// dotfile additions (usually 1-3 files per operation).
 const GIT_ADD_MAX_SHOWN: usize = 3;
 
 // ---------------------------------------------------------------------------
