@@ -167,9 +167,13 @@ pub enum Commands {
     },
 
     /// Show repository status
+    #[command(after_help = "Examples:\n  dotty status\n  dotty status --verbose")]
     Status,
 
     /// Remove old backups from state directory
+    #[command(
+        after_help = "Examples:\n  dotty clean\n  dotty clean --keep 5\n  dotty clean --before 2024-01-01"
+    )]
     Clean {
         /// Number of recent backups to keep
         #[arg(long)]
