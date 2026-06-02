@@ -53,6 +53,44 @@ macro_rules! err_msg {
 
 /// Top-level error type for dotty.
 ///
+/// # Design Principles
+///
+/// Error handling follows these conventions:
+///
+/// - **Command entry points**: Return `Result<(), DottyError>` — commands either
+///   succeed or fail, with no computed value to return on success.
+/// - **Pure functions**: Return `Result<T, DottyError>` — functions that compute
+///   a value return that value on success, with the type `T` matching the
+///   computed result.
+/// - **Helper functions**: Return `Result<(), DottyError>` — unless they compute
+///   a value, in which case they follow the pure function pattern.
+/// - **Error propagation**: Use the `?` operator consistently for propagating
+///   errors up the call stack.
+/// - **Error context**: Add meaningful error context at each level using
+///   the `err_msg!` macro for consistent formatting.
+///
+/// # Examples
+///
+/// ```rust
+/// // Command entry point — returns unit on success
+/// pub fn run(args: Args) -> Result<(), DottyError> {
+///     // ...
+///     Ok(())
+/// }
+///
+/// // Pure function — returns computed value
+/// fn build_plan(input: &Input) -> Result<Plan, DottyError> {
+///     // ...
+///     Ok(plan)
+/// }
+///
+/// // Helper function — returns unit on success
+/// fn validate_path(path: &Path) -> Result<(), DottyError> {
+///     // ...
+///     Ok(())
+/// }
+/// ```
+///
 /// Use `thiserror` for domain-specific errors and `anyhow` for the error chain
 /// in `main()` and command dispatch.
 #[derive(Error, Debug)]
