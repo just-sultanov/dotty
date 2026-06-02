@@ -6,9 +6,15 @@ use crate::paths::{resolve_repo_path, resolve_state_path};
 
 /// Encapsulates repository state and precondition validation.
 ///
+/// This struct is `Send + Sync` and can be safely shared across threads.
+/// All fields are either `PathBuf`, `bool`, or `Config`, which are
+/// thread-safe types. This enables potential parallelization of repository
+/// operations in the future.
+///
 /// Centralizes the common setup logic shared by most commands:
 /// resolving the repo and state paths, reading the config, and
 /// checking whether the repository is a git repository.
+#[derive(Clone)]
 pub(crate) struct RepoState {
     /// Absolute path to the dotty repository root.
     pub repo_path: PathBuf,
@@ -27,6 +33,19 @@ pub(crate) struct RepoState {
     /// the user manually changes git config during a session.
     pub git_identity_valid: bool,
 }
+
+// Explicit thread-safety bounds.
+//
+// Safe because all fields are inherently `Send + Sync`:
+// - `PathBuf`: `Send + Sync`
+// - `bool`: `Send + Sync`
+// - `Config`: derives `Clone`, contains only `Send + Sync` types
+//
+// These impls are `unsafe` because we're asserting properties that
+// the compiler cannot automatically verify, but they're sound
+// because we're only asserting what the fields already guarantee.
+unsafe impl Send for RepoState {}
+unsafe impl Sync for RepoState {}
 
 impl RepoState {
     /// Create a new `RepoState` by resolving paths and reading config.
@@ -129,5 +148,24 @@ impl RepoState {
             is_git_repo: true,
             git_identity_valid: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that `RepoState` is `Send`.
+    #[test]
+    fn test_repstate_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<RepoState>();
+    }
+
+    /// Verify that `RepoState` is `Sync`.
+    #[test]
+    fn test_repstate_is_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<RepoState>();
     }
 }
