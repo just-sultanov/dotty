@@ -211,10 +211,10 @@ pub(crate) fn build_add_plan(
     for target_file in &input.files_to_add {
         // Compute repo-relative path (without scope prefix)
         let rel_path = target_to_repo(target_file)?;
-        let repo_file = input.repo_path.join(&input.scope).join(&rel_path);
+        let repo_absolute_path = input.repo_path.join(&input.scope).join(&rel_path);
 
         // Create parent directories in repo
-        if let Some(parent) = repo_file.parent() {
+        if let Some(parent) = repo_absolute_path.parent() {
             plan.add(Action::CreateDir {
                 path: parent.to_path_buf(),
             });
@@ -236,33 +236,35 @@ pub(crate) fn build_add_plan(
         // Copy file to repo (dereference symlinks)
         plan.add(Action::CopyFile {
             source: target_file.clone(),
-            dest: repo_file.clone(),
+            dest: repo_absolute_path.clone(),
         });
 
         // Create symlink at target location pointing to repo file
         plan.add(Action::CreateSymlink {
-            target: repo_file.clone(),
+            target: repo_absolute_path.clone(),
             link: target_file.clone(),
             backup_path: None,
             backup_exists: false,
         });
 
         // Track path for git add
-        if let Ok(rel) = repo_file.strip_prefix(&input.repo_path) {
+        if let Ok(rel) = repo_absolute_path.strip_prefix(&input.repo_path) {
             git_add_paths.push(rel.to_path_buf());
         }
 
         // Update managed map (normalize separators to `/` for cross-platform keys and values)
-        let repo_rel = normalize_path(repo_file.strip_prefix(&input.repo_path).map_err(|_| {
-            DottyError::InvalidRepoPath {
-                path: repo_file.to_string_lossy().to_string(),
-                reason: format!("not inside the repository at {}", input.repo_path.display()),
-            }
-        })?);
+        let repo_relative_path = normalize_path(
+            repo_absolute_path
+                .strip_prefix(&input.repo_path)
+                .map_err(|_| DottyError::InvalidRepoPath {
+                    path: repo_absolute_path.to_string_lossy().to_string(),
+                    reason: format!("not inside the repository at {}", input.repo_path.display()),
+                })?,
+        );
         // Normalize the value too: format_target_display may produce backslashes on Windows,
         // which would cause key-value mismatches in orphan detection and status display.
         let target_rel = normalize_path(Path::new(&format_target_display(target_file)));
-        config.managed.insert(repo_rel, target_rel);
+        config.managed.insert(repo_relative_path, target_rel);
     }
 
     // Git add (stage the copied files)
@@ -447,10 +449,12 @@ fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> {
 fn build_conflict_map(existing_files: &[String]) -> indexmap::IndexMap<PathBuf, Vec<String>> {
     let mut map: indexmap::IndexMap<PathBuf, Vec<String>> = indexmap::IndexMap::new();
 
-    for repo_rel in existing_files {
-        let repo_path = PathBuf::from(repo_rel);
+    for repo_relative_path in existing_files {
+        let repo_path = PathBuf::from(repo_relative_path);
         if let Ok(target) = repo_to_target(&repo_path) {
-            map.entry(target).or_default().push(repo_rel.clone());
+            map.entry(target)
+                .or_default()
+                .push(repo_relative_path.clone());
         }
     }
 

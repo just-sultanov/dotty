@@ -43,7 +43,7 @@ pub(crate) struct ApplyPlanInput {
 pub(crate) struct ApplyPlanOutput {
     pub plan: Plan,
     pub file_results: Vec<FileResult>,
-    /// Orphan entries: (repo_rel, target_path_string).
+    /// Orphan entries: (repo_relative_path, target_path_string).
     pub orphans: Vec<(String, String)>,
     /// Removal actions for detected orphans. These are NOT added to `plan`
     /// by default — the caller (dispatch) decides whether to include them
@@ -85,15 +85,15 @@ pub(crate) fn build_apply_plan(
     let mut created_parents = IndexSet::new();
 
     // Process each merged file
-    for (target_path, (tier, repo_rel)) in &input.merged {
-        let repo_file = input.repo_path.join(repo_rel);
+    for (target_path, (tier, repo_relative_path)) in &input.merged {
+        let repo_absolute_path = input.repo_path.join(repo_relative_path);
         let target = target_path.to_path_buf();
 
         // Compute overrides early so they can be used in any branch
         let overrides = input.override_map.get(target_path).cloned();
 
         // Check target state
-        let state = match inspect_target(&target, &repo_file) {
+        let state = match inspect_target(&target, &repo_absolute_path) {
             TargetState::Correct => {
                 file_results.push(FileResult {
                     target: target.clone(),
@@ -113,7 +113,7 @@ pub(crate) fn build_apply_plan(
                     created_parents.insert(parent.to_path_buf());
                 }
                 plan.add(Action::CreateSymlink {
-                    target: repo_file.clone(),
+                    target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: None,
                     backup_exists: false,
@@ -125,7 +125,7 @@ pub(crate) fn build_apply_plan(
                     created_parents.insert(parent.to_path_buf());
                 }
                 plan.add(Action::CreateSymlink {
-                    target: repo_file.clone(),
+                    target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: None,
                     backup_exists: false,
@@ -150,7 +150,7 @@ pub(crate) fn build_apply_plan(
                     dest: backup_dest.clone(),
                 });
                 plan.add(Action::CreateSymlink {
-                    target: repo_file.clone(),
+                    target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: Some(backup_dest.clone()),
                     backup_exists: true,
@@ -192,7 +192,7 @@ pub(crate) fn build_apply_plan(
                     follow_symlinks: input.follow_symlinks,
                 });
                 plan.add(Action::CreateSymlink {
-                    target: repo_file.clone(),
+                    target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: Some(backup_dest.clone()),
                     backup_exists: true,
@@ -200,7 +200,7 @@ pub(crate) fn build_apply_plan(
                 warn!(
                     "replacing directory {} with symlink → {}",
                     dir_path,
-                    repo_file.display()
+                    repo_absolute_path.display()
                 );
                 TargetState::NeedsBackupDir(dir_path)
             }
@@ -246,9 +246,9 @@ mod tests {
     fn test_inspect_target_missing() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("nonexistent.txt");
-        let repo_file = PathBuf::from("/tmp/dotty_repo_file.txt");
+        let repo_absolute_path = PathBuf::from("/tmp/dotty_repo_file.txt");
         assert_eq!(
-            inspect_target(&target, &repo_file),
+            inspect_target(&target, &repo_absolute_path),
             TargetState::NeedsSymlink
         );
     }
@@ -257,13 +257,13 @@ mod tests {
     fn test_inspect_target_circular_symlink() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("circular_link");
-        let repo_file = PathBuf::from("/tmp/repo.txt");
+        let repo_absolute_path = PathBuf::from("/tmp/repo.txt");
 
         create_symlink(&target, &target).unwrap();
         assert!(crate::symlink::is_symlink(&target));
 
         assert_eq!(
-            inspect_target(&target, &repo_file),
+            inspect_target(&target, &repo_absolute_path),
             TargetState::CircularSymlink
         );
     }
@@ -273,13 +273,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a");
         let b = dir.path().join("b");
-        let repo_file = PathBuf::from("/tmp/repo.txt");
+        let repo_absolute_path = PathBuf::from("/tmp/repo.txt");
 
         create_symlink(&b, &a).unwrap();
         create_symlink(&a, &b).unwrap();
 
-        assert_eq!(inspect_target(&a, &repo_file), TargetState::CircularSymlink);
-        assert_eq!(inspect_target(&b, &repo_file), TargetState::CircularSymlink);
+        assert_eq!(
+            inspect_target(&a, &repo_absolute_path),
+            TargetState::CircularSymlink
+        );
+        assert_eq!(
+            inspect_target(&b, &repo_absolute_path),
+            TargetState::CircularSymlink
+        );
     }
 
     #[test]
@@ -287,10 +293,10 @@ mod tests {
         crate::tests::with_test_home(|home| {
             let target = home.join("file.txt");
             std::fs::write(&target, "content").unwrap();
-            let repo_file = PathBuf::from("/tmp/repo.txt");
+            let repo_absolute_path = PathBuf::from("/tmp/repo.txt");
 
             assert_eq!(
-                inspect_target(&target, &repo_file),
+                inspect_target(&target, &repo_absolute_path),
                 TargetState::NeedsBackup
             );
         });
@@ -301,9 +307,9 @@ mod tests {
         crate::tests::with_test_home(|home| {
             let target = home.join("config_dir");
             std::fs::create_dir(&target).unwrap();
-            let repo_file = PathBuf::from("/tmp/repo.txt");
+            let repo_absolute_path = PathBuf::from("/tmp/repo.txt");
 
-            let state = inspect_target(&target, &repo_file);
+            let state = inspect_target(&target, &repo_absolute_path);
             assert!(
                 matches!(state, TargetState::NeedsBackupDir(_)),
                 "expected NeedsBackupDir, got {:?}",
@@ -321,8 +327,8 @@ mod tests {
         let base = dir.path();
         let sub = base.join("repo");
         std::fs::create_dir_all(&sub).unwrap();
-        let repo_file = sub.join("file.txt");
-        std::fs::write(&repo_file, "content").unwrap();
+        let repo_absolute_path = sub.join("file.txt");
+        std::fs::write(&repo_absolute_path, "content").unwrap();
 
         let target_dir = base.join("home");
         std::fs::create_dir_all(&target_dir).unwrap();
@@ -331,7 +337,10 @@ mod tests {
         let link_target = base.join("repo").join("..").join("repo").join("file.txt");
         create_symlink(&link_target, &target).unwrap();
 
-        assert_eq!(inspect_target(&target, &repo_file), TargetState::Correct);
+        assert_eq!(
+            inspect_target(&target, &repo_absolute_path),
+            TargetState::Correct
+        );
     }
 
     #[test]
@@ -364,10 +373,10 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
-        create_symlink(&repo_file, &target).unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
+        create_symlink(&repo_absolute_path, &target).unwrap();
 
         let mut merged = IndexMap::new();
         merged.insert(
@@ -411,9 +420,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
 
         let mut merged = IndexMap::new();
         merged.insert(
@@ -456,9 +465,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
         create_symlink(&target, &target).unwrap();
 
         let mut merged = IndexMap::new();
@@ -502,9 +511,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "new content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "new content").unwrap();
         std::fs::write(&target, "old content").unwrap();
 
         let mut merged = IndexMap::new();
@@ -548,9 +557,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join("config_dir");
-        let repo_file = repo.join("base/home/.config_dir");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "new content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.config_dir");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "new content").unwrap();
         // Create a real directory at the target location
         std::fs::create_dir(&target).unwrap();
         std::fs::write(target.join("inner.txt"), "inner").unwrap();
@@ -598,9 +607,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join("config_dir");
-        let repo_file = repo.join("base/home/.config_dir");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "new content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.config_dir");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "new content").unwrap();
         // Create a real directory at the target location
         std::fs::create_dir(&target).unwrap();
         std::fs::write(target.join("inner.txt"), "inner").unwrap();
@@ -662,7 +671,7 @@ mod tests {
 
     /// Tests orphan detection: files in merged not in config.managed.
     /// tracked_set is built from config.managed keys to ensure consistent
-    /// key format (repo_rel strings) across both sources.
+    /// key format (repo_relative_path strings) across both sources.
     #[test]
     fn test_build_apply_plan_orphan_detection() {
         let dir = tempfile::tempdir().unwrap();
@@ -675,16 +684,16 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
-        create_symlink(&repo_file, &target).unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
+        create_symlink(&repo_absolute_path, &target).unwrap();
 
         let target_old = home.join(".old");
-        let repo_file_old = repo.join("base/home/.old");
-        std::fs::create_dir_all(repo_file_old.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file_old, "old content").unwrap();
-        create_symlink(&repo_file_old, &target_old).unwrap();
+        let repo_absolute_path_old = repo.join("base/home/.old");
+        std::fs::create_dir_all(repo_absolute_path_old.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path_old, "old content").unwrap();
+        create_symlink(&repo_absolute_path_old, &target_old).unwrap();
 
         let mut merged = IndexMap::new();
         merged.insert(
@@ -743,10 +752,10 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "base content").unwrap();
-        create_symlink(&repo_file, &target).unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "base content").unwrap();
+        create_symlink(&repo_absolute_path, &target).unwrap();
 
         let mut merged = IndexMap::new();
         merged.insert(
@@ -843,10 +852,11 @@ mod tests {
 
             // Step 3: build_apply_plan with override_map
             let mut config = Config::new();
-            for (target, (tier, repo_rel)) in merged.iter() {
-                config
-                    .managed
-                    .insert(repo_rel.clone(), target.to_string_lossy().to_string());
+            for (target, (tier, repo_relative_path)) in merged.iter() {
+                config.managed.insert(
+                    repo_relative_path.clone(),
+                    target.to_string_lossy().to_string(),
+                );
                 let _ = tier; // used for orphan detection alignment
             }
 
@@ -975,10 +985,11 @@ mod tests {
 
             // Step 3: build_apply_plan with empty override_map
             let mut config = Config::new();
-            for (target, (tier, repo_rel)) in merged.iter() {
-                config
-                    .managed
-                    .insert(repo_rel.clone(), target.to_string_lossy().to_string());
+            for (target, (tier, repo_relative_path)) in merged.iter() {
+                config.managed.insert(
+                    repo_relative_path.clone(),
+                    target.to_string_lossy().to_string(),
+                );
                 let _ = tier; // used for orphan detection alignment
             }
 
@@ -1023,10 +1034,10 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".old_symlink");
-        let repo_file = repo.join("base/home/.old_symlink");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "old content").unwrap();
-        create_symlink(&repo_file, &target).unwrap();
+        let repo_absolute_path = repo.join("base/home/.old_symlink");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "old content").unwrap();
+        create_symlink(&repo_absolute_path, &target).unwrap();
 
         let mut merged = IndexMap::new();
         merged.insert(
@@ -1076,9 +1087,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".old_file");
-        let repo_file = repo.join("base/home/.old_file");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "old content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.old_file");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "old content").unwrap();
         // Create as a regular file (not a symlink)
         std::fs::write(&target, "stale content").unwrap();
 
@@ -1137,9 +1148,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".already_gone");
-        let repo_file = repo.join("base/home/.already_gone");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "old content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.already_gone");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "old content").unwrap();
         // Do NOT create the target file — it's already been removed
 
         let mut merged = IndexMap::new();
@@ -1197,27 +1208,27 @@ mod tests {
         std::fs::create_dir_all(&common_parent).unwrap();
 
         let target1 = common_parent.join("init.lua");
-        let repo_file1 = repo.join("base/home/.config/nvim/init.lua");
-        std::fs::create_dir_all(repo_file1.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file1, "init").unwrap();
+        let repo_absolute_path1 = repo.join("base/home/.config/nvim/init.lua");
+        std::fs::create_dir_all(repo_absolute_path1.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path1, "init").unwrap();
 
         let target2 = common_parent.join("plugins.lua");
-        let repo_file2 = repo.join("base/home/.config/nvim/plugins.lua");
-        std::fs::create_dir_all(repo_file2.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file2, "plugins").unwrap();
+        let repo_absolute_path2 = repo.join("base/home/.config/nvim/plugins.lua");
+        std::fs::create_dir_all(repo_absolute_path2.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path2, "plugins").unwrap();
 
         let target3 = common_parent.join("lua/settings.lua");
-        let repo_file3 = repo.join("base/home/.config/nvim/lua/settings.lua");
-        std::fs::create_dir_all(repo_file3.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file3, "settings").unwrap();
+        let repo_absolute_path3 = repo.join("base/home/.config/nvim/lua/settings.lua");
+        std::fs::create_dir_all(repo_absolute_path3.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path3, "settings").unwrap();
 
         // Create 1 file in a different parent directory
         let other_parent = home.join(".config/skhd");
         std::fs::create_dir_all(&other_parent).unwrap();
         let target4 = other_parent.join("skhdrc");
-        let repo_file4 = repo.join("base/home/.config/skhd/skhdrc");
-        std::fs::create_dir_all(repo_file4.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file4, "skhd").unwrap();
+        let repo_absolute_path4 = repo.join("base/home/.config/skhd/skhdrc");
+        std::fs::create_dir_all(repo_absolute_path4.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path4, "skhd").unwrap();
 
         let mut merged = IndexMap::new();
         merged.insert(
@@ -1318,23 +1329,23 @@ mod tests {
         let parent_a = home.join(".config/a");
         std::fs::create_dir_all(&parent_a).unwrap();
         let target_a = parent_a.join("file.txt");
-        let repo_file_a = repo.join("base/home/.config/a/file.txt");
-        std::fs::create_dir_all(repo_file_a.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file_a, "a").unwrap();
+        let repo_absolute_path_a = repo.join("base/home/.config/a/file.txt");
+        std::fs::create_dir_all(repo_absolute_path_a.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path_a, "a").unwrap();
 
         let parent_b = home.join(".config/b");
         std::fs::create_dir_all(&parent_b).unwrap();
         let target_b = parent_b.join("file.txt");
-        let repo_file_b = repo.join("base/home/.config/b/file.txt");
-        std::fs::create_dir_all(repo_file_b.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file_b, "b").unwrap();
+        let repo_absolute_path_b = repo.join("base/home/.config/b/file.txt");
+        std::fs::create_dir_all(repo_absolute_path_b.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path_b, "b").unwrap();
 
         let parent_c = home.join(".config/c");
         std::fs::create_dir_all(&parent_c).unwrap();
         let target_c = parent_c.join("file.txt");
-        let repo_file_c = repo.join("base/home/.config/c/file.txt");
-        std::fs::create_dir_all(repo_file_c.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file_c, "c").unwrap();
+        let repo_absolute_path_c = repo.join("base/home/.config/c/file.txt");
+        std::fs::create_dir_all(repo_absolute_path_c.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path_c, "c").unwrap();
 
         let mut merged = IndexMap::new();
         merged.insert(

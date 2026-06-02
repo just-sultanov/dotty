@@ -58,8 +58,8 @@ pub fn run() -> Result<()> {
         println!("Broken:    0");
     } else {
         println!("Broken:    {}", broken.len());
-        for (target, repo_rel, reason) in &broken {
-            println!("  {} → {} ({})", target, repo_rel, reason);
+        for (target, repo_relative_path, reason) in &broken {
+            println!("  {} → {} ({})", target, repo_relative_path, reason);
         }
     }
 
@@ -96,8 +96,11 @@ pub fn run() -> Result<()> {
         println!("Inactive:  0");
     } else {
         println!("Inactive:  {}", inactive.len());
-        for (target, tier, repo_rel) in &inactive {
-            println!("  {} (tier: {}, file: {})", target, tier, repo_rel);
+        for (target, tier, repo_relative_path) in &inactive {
+            println!(
+                "  {} (tier: {}, file: {})",
+                target, tier, repo_relative_path
+            );
         }
     }
 
@@ -166,17 +169,17 @@ fn git_status_summary(repo_path: &Path) -> Result<String, DottyError> {
 
 /// Find broken symlinks from the managed map.
 ///
-/// Returns a list of (target_path, repo_rel_path, reason).
+/// Returns a list of (target_path, repo_relative_path, reason).
 fn find_broken_symlinks(repo_path: &Path, config: &Config) -> Vec<(String, String, String)> {
     let mut broken = Vec::new();
 
-    for (repo_rel, target_ref) in &config.managed {
+    for (repo_relative_path, target_ref) in &config.managed {
         let target = match expand_tilde(target_ref) {
             Ok(t) => t,
             Err(_) => {
                 broken.push((
                     target_ref.clone(),
-                    repo_rel.clone(),
+                    repo_relative_path.clone(),
                     "invalid target path".to_string(),
                 ));
                 continue;
@@ -189,9 +192,13 @@ fn find_broken_symlinks(repo_path: &Path, config: &Config) -> Vec<(String, Strin
         }
 
         // Check if the symlink target (repo file) exists
-        let repo_file = repo_path.join(repo_rel);
-        if !repo_file.exists() {
-            broken.push((target_ref.clone(), repo_rel.clone(), "missing".to_string()));
+        let repo_absolute_path = repo_path.join(repo_relative_path);
+        if !repo_absolute_path.exists() {
+            broken.push((
+                target_ref.clone(),
+                repo_relative_path.clone(),
+                "missing".to_string(),
+            ));
         }
     }
 
@@ -269,7 +276,7 @@ fn find_tier_conflicts(
             .unwrap();
 
         // Report each override
-        for (tier, _repo_rel) in entries {
+        for (tier, _repo_relative_path) in entries {
             if tier_priority(tier) < highest {
                 // Find what overrides this
                 let overriding = entries
@@ -294,7 +301,7 @@ fn tier_priority(tier: &str) -> u32 {
 
 /// Find files in inactive tiers (platforms/machines not active on this system).
 ///
-/// Returns a list of (target_path, tier_name, repo_rel_path).
+/// Returns a list of (target_path, tier_name, repo_relative_path).
 fn find_inactive_tiers(
     repo_path: &Path,
     machine: &Option<String>,

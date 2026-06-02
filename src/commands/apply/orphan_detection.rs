@@ -6,7 +6,7 @@
 //! into the apply plan.
 //!
 //! The detection uses `config.managed` keys as the source of truth for
-//! currently tracked files, ensuring consistent key format (repo_rel
+//! currently tracked files, ensuring consistent key format (repo_relative_path
 //! strings) across both sources and avoiding mismatches from tuple
 //! extraction in `merged.values()`.
 
@@ -27,7 +27,7 @@ pub(crate) struct OrphanDetectionInput<'a> {
 
 /// Output of orphan detection.
 pub(crate) struct OrphanDetectionOutput {
-    /// Detected orphans as (repo_rel, target_path_string) pairs.
+    /// Detected orphans as (repo_relative_path, target_path_string) pairs.
     pub orphans: Vec<(String, String)>,
     /// Removal actions to add to the apply plan.
     pub removal_actions: Vec<Action>,
@@ -35,26 +35,29 @@ pub(crate) struct OrphanDetectionOutput {
 
 /// Detect orphan managed entries and produce removal actions.
 ///
-/// Orphans are files whose `repo_rel` appears in `merged` but not in
+/// Orphans are files whose `repo_relative_path` appears in `merged` but not in
 /// `config.managed`. For each orphan, the function determines the correct
 /// removal action (RemoveSymlink, RemoveFile) based on the file type on disk.
 pub(crate) fn detect_orphans_and_build_removals(
     input: &OrphanDetectionInput,
 ) -> OrphanDetectionOutput {
     // Build tracked_set from config.managed keys to ensure consistent
-    // key format (repo_rel strings) across both sources.
+    // key format (repo_relative_path strings) across both sources.
     let tracked_set: HashSet<&String> = input.config.managed.keys().collect();
     let mut orphans: Vec<(String, String)> = Vec::new();
 
-    for (_target_path, (_tier, repo_rel)) in input.merged {
-        if !tracked_set.contains(repo_rel) {
-            orphans.push((repo_rel.clone(), _target_path.to_string_lossy().to_string()));
+    for (_target_path, (_tier, repo_relative_path)) in input.merged {
+        if !tracked_set.contains(repo_relative_path) {
+            orphans.push((
+                repo_relative_path.clone(),
+                _target_path.to_string_lossy().to_string(),
+            ));
         }
     }
 
     // Build removal actions for each orphan target.
     let mut removal_actions: Vec<Action> = Vec::new();
-    for (_repo_rel, target_rel) in &orphans {
+    for (_repo_relative_path, target_rel) in &orphans {
         let target = match expand_tilde(target_rel) {
             Ok(t) => t,
             Err(e) => {
@@ -160,10 +163,10 @@ mod tests {
         let home = dir.path().to_path_buf();
 
         let target = home.join(".old_symlink");
-        let repo_file = PathBuf::from("/tmp/repo/.old");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "old content").unwrap();
-        create_symlink(&repo_file, &target).unwrap();
+        let repo_absolute_path = PathBuf::from("/tmp/repo/.old");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "old content").unwrap();
+        create_symlink(&repo_absolute_path, &target).unwrap();
 
         let mut merged = IndexMap::new();
         merged.insert(

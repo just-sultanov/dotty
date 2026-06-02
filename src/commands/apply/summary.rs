@@ -21,7 +21,7 @@ pub(crate) fn print_per_file_summary(
 
     // Print orphan removals first
     if !orphans.is_empty() {
-        for (_repo_rel, target_rel) in orphans {
+        for (_repo_relative_path, target_rel) in orphans {
             println!("  {}{} orphan removed", prefix, target_rel);
         }
     }

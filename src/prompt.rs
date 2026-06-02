@@ -112,7 +112,7 @@ pub(crate) fn prompt_machine_selection(known_machines: &[String]) -> Result<Stri
 
 /// Prompt the user to confirm orphan removal.
 ///
-/// Lists each orphan's repo_rel and target path, then asks for confirmation.
+/// Lists each orphan's repo_relative_path and target path, then asks for confirmation.
 ///
 /// Returns:
 /// - `true` if the user confirms (proceed with removal)
@@ -128,8 +128,8 @@ pub(crate) fn prompt_orphan_removal(orphans: &[(String, String)]) -> Result<bool
             "non-interactive context: skipping orphan removal for {} orphan(s)",
             orphans.len()
         );
-        for (repo_rel, target) in orphans {
-            warn!("orphan: {} → {}", repo_rel, target);
+        for (repo_relative_path, target) in orphans {
+            warn!("orphan: {} → {}", repo_relative_path, target);
         }
         return Ok(false);
     }
@@ -137,8 +137,8 @@ pub(crate) fn prompt_orphan_removal(orphans: &[(String, String)]) -> Result<bool
     // Build a human-readable list of orphans
     let mut list =
         String::from("The following files have no tracked source and will be removed:\n");
-    for (repo_rel, target) in orphans {
-        list.push_str(&format!("  - {} → {}\n", repo_rel, target));
+    for (repo_relative_path, target) in orphans {
+        list.push_str(&format!("  - {} → {}\n", repo_relative_path, target));
     }
 
     let prompt = format!("{}\nRemove these {} orphan(s)?", list, orphans.len());

@@ -87,8 +87,8 @@ pub fn run(
             continue;
         }
 
-        for repo_rel in repo_files {
-            managed_pairs.push((target_file.clone(), repo_rel));
+        for repo_relative_path in repo_files {
+            managed_pairs.push((target_file.clone(), repo_relative_path));
         }
     }
 
@@ -126,7 +126,7 @@ pub fn run(
 
     // Deduplicate by repo path
     let mut seen = HashSet::new();
-    managed_pairs.retain(|(_, repo_rel)| seen.insert(repo_rel.clone()));
+    managed_pairs.retain(|(_, repo_relative_path)| seen.insert(repo_relative_path.clone()));
 
     // Read current config (to update managed map)
     let config = repo.config.clone();
@@ -239,12 +239,12 @@ pub(crate) struct RemovePlanOutput {
 /// See: medium-add-remove-backup
 pub(crate) fn build_restore_file_phase(input: &RemovePlanInput) -> Vec<Action> {
     let mut actions = Vec::new();
-    for (target_file, repo_rel) in &input.managed_pairs {
-        if input.skipped.contains(repo_rel) {
+    for (target_file, repo_relative_path) in &input.managed_pairs {
+        if input.skipped.contains(repo_relative_path) {
             continue;
         }
-        let repo_file = input.repo_path.join(repo_rel);
-        if repo_file.exists() {
+        let repo_absolute_path = input.repo_path.join(repo_relative_path);
+        if repo_absolute_path.exists() {
             // Backup user modifications before overwriting with repo version.
             // Only backup regular files (not symlinks — those are handled in Phase 2).
             if target_file.exists() && !is_symlink(target_file) {
@@ -270,7 +270,7 @@ pub(crate) fn build_restore_file_phase(input: &RemovePlanInput) -> Vec<Action> {
                 continue;
             }
             actions.push(Action::CopyFile {
-                source: repo_file,
+                source: repo_absolute_path,
                 dest: target_file.clone(),
             });
         }
@@ -297,8 +297,8 @@ pub(crate) fn build_restore_file_phase(input: &RemovePlanInput) -> Vec<Action> {
 /// can restore the original symlink target if needed.
 pub(crate) fn build_remove_symlink_phase(input: &RemovePlanInput) -> Vec<Action> {
     let mut actions = Vec::new();
-    for (target_file, repo_rel) in &input.managed_pairs {
-        if input.skipped.contains(repo_rel) {
+    for (target_file, repo_relative_path) in &input.managed_pairs {
+        if input.skipped.contains(repo_relative_path) {
             continue;
         }
         if is_symlink(target_file) {
@@ -334,14 +334,16 @@ pub(crate) fn build_repo_cleanup_phase(
 ) -> (Vec<Action>, Vec<PathBuf>) {
     let mut actions = Vec::new();
     let mut git_rm_paths = Vec::new();
-    for (_target_file, repo_rel) in &input.managed_pairs {
-        if input.skipped.contains(repo_rel) {
+    for (_target_file, repo_relative_path) in &input.managed_pairs {
+        if input.skipped.contains(repo_relative_path) {
             continue;
         }
-        let repo_file = input.repo_path.join(repo_rel);
-        actions.push(Action::RemoveFile { path: repo_file });
-        config.managed.shift_remove(repo_rel);
-        git_rm_paths.push(PathBuf::from(repo_rel));
+        let repo_absolute_path = input.repo_path.join(repo_relative_path);
+        actions.push(Action::RemoveFile {
+            path: repo_absolute_path,
+        });
+        config.managed.shift_remove(repo_relative_path);
+        git_rm_paths.push(PathBuf::from(repo_relative_path));
     }
     (actions, git_rm_paths)
 }
@@ -411,16 +413,16 @@ fn resolve_remove_skipped(
 ) -> Result<HashSet<String>, DottyError> {
     let mut skipped = HashSet::new();
 
-    for (target_file, repo_rel) in managed_pairs {
-        let repo_file = repo_path.join(repo_rel);
+    for (target_file, repo_relative_path) in managed_pairs {
+        let repo_absolute_path = repo_path.join(repo_relative_path);
 
-        if repo_file.exists() && target_file.exists() && !is_symlink(target_file) {
+        if repo_absolute_path.exists() && target_file.exists() && !is_symlink(target_file) {
             let ok = prompt_confirm(&format!(
                 "Override existing file at {}?",
                 target_file.display()
             ))?;
             if !ok {
-                skipped.insert(repo_rel.clone());
+                skipped.insert(repo_relative_path.clone());
             }
         }
     }
@@ -546,9 +548,9 @@ mod tests {
         let target = home.join(".vimrc");
         std::fs::write(&target, "content").unwrap();
 
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
 
         let mut config = Config::new();
         config
@@ -581,10 +583,10 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
-        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
+        crate::symlink::create_symlink(&repo_absolute_path, &target).unwrap();
 
         let mut config = Config::new();
         config
@@ -654,9 +656,9 @@ mod tests {
         let target = home.join(".vimrc");
         std::fs::write(&target, "content").unwrap();
 
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
 
         let mut config = Config::new();
         config
@@ -697,10 +699,10 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "repo content").unwrap();
-        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "repo content").unwrap();
+        crate::symlink::create_symlink(&repo_absolute_path, &target).unwrap();
 
         let mut config = Config::new();
         config
@@ -753,10 +755,10 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "repo content").unwrap();
-        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "repo content").unwrap();
+        crate::symlink::create_symlink(&repo_absolute_path, &target).unwrap();
 
         let mut config = Config::new();
         config
@@ -792,9 +794,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
 
         let state = base.join("state");
         std::fs::create_dir_all(&state).unwrap();
@@ -812,7 +814,7 @@ mod tests {
         assert_eq!(actions.len(), 1);
         match &actions[0] {
             Action::CopyFile { source, dest } => {
-                assert_eq!(source, &repo_file);
+                assert_eq!(source, &repo_absolute_path);
                 assert_eq!(dest, &target);
             }
             other => panic!("expected CopyFile, got: {:?}", other),
@@ -856,9 +858,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
 
         let mut skipped = HashSet::new();
         skipped.insert("base/home/.vimrc".to_string());
@@ -888,10 +890,10 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
-        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
+        crate::symlink::create_symlink(&repo_absolute_path, &target).unwrap();
 
         let state = base.join("state");
         std::fs::create_dir_all(&state).unwrap();
@@ -950,10 +952,10 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
-        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
+        crate::symlink::create_symlink(&repo_absolute_path, &target).unwrap();
 
         let mut skipped = HashSet::new();
         skipped.insert("base/home/.vimrc".to_string());
@@ -983,9 +985,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
 
         let mut config = Config::new();
         config
@@ -1006,7 +1008,7 @@ mod tests {
 
         assert_eq!(actions.len(), 1);
         match &actions[0] {
-            Action::RemoveFile { path } => assert_eq!(path, &repo_file),
+            Action::RemoveFile { path } => assert_eq!(path, &repo_absolute_path),
             other => panic!("expected RemoveFile, got: {:?}", other),
         }
         assert_eq!(git_paths, vec![PathBuf::from("base/home/.vimrc")]);
@@ -1023,9 +1025,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
 
         let mut config = Config::new();
         config
@@ -1119,9 +1121,9 @@ mod tests {
         let target = home.join(".vimrc");
         std::fs::write(&target, "user modified content").unwrap();
 
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "repo content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "repo content").unwrap();
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
@@ -1149,7 +1151,7 @@ mod tests {
         // Second action should be CopyFile
         match &actions[1] {
             Action::CopyFile { source, dest } => {
-                assert_eq!(source, &repo_file);
+                assert_eq!(source, &repo_absolute_path);
                 assert_eq!(dest, &target);
             }
             other => panic!("expected CopyFile, got: {:?}", other),
@@ -1169,10 +1171,10 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
 
         let target = home.join(".vimrc");
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "repo content").unwrap();
-        crate::symlink::create_symlink(&repo_file, &target).unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "repo content").unwrap();
+        crate::symlink::create_symlink(&repo_absolute_path, &target).unwrap();
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
@@ -1187,7 +1189,7 @@ mod tests {
         assert_eq!(actions.len(), 1);
         match &actions[0] {
             Action::CopyFile { source, dest } => {
-                assert_eq!(source, &repo_file);
+                assert_eq!(source, &repo_absolute_path);
                 assert_eq!(dest, &target);
             }
             other => panic!("expected CopyFile, got: {:?}", other),
@@ -1209,9 +1211,9 @@ mod tests {
         let target = home.join(".vimrc");
         // Target does NOT exist
 
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "repo content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "repo content").unwrap();
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
@@ -1226,7 +1228,7 @@ mod tests {
         assert_eq!(actions.len(), 1);
         match &actions[0] {
             Action::CopyFile { source, dest } => {
-                assert_eq!(source, &repo_file);
+                assert_eq!(source, &repo_absolute_path);
                 assert_eq!(dest, &target);
             }
             other => panic!("expected CopyFile, got: {:?}", other),
@@ -1255,9 +1257,9 @@ mod tests {
         crate::symlink::create_symlink(&target_dir, &symlink).unwrap();
 
         // Create a repo file
-        let repo_file = repo.join("base/home/link_to_dir/file.txt");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "repo content").unwrap();
+        let repo_absolute_path = repo.join("base/home/link_to_dir/file.txt");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "repo content").unwrap();
 
         let state = base.join("state");
         std::fs::create_dir_all(&state).unwrap();
@@ -1303,9 +1305,9 @@ mod tests {
         crate::symlink::create_symlink(&target_dir, &symlink).unwrap();
 
         // Create a repo file
-        let repo_file = repo.join("base/home/link_to_dir/file.txt");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "repo content").unwrap();
+        let repo_absolute_path = repo.join("base/home/link_to_dir/file.txt");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "repo content").unwrap();
 
         let mut config = Config::new();
         config.managed.insert(
@@ -1367,9 +1369,9 @@ mod tests {
         let target = home.join(".vimrc");
         std::fs::write(&target, "user content").unwrap();
 
-        let repo_file = repo.join("base/home/.vimrc");
-        std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
-        std::fs::write(&repo_file, "repo content").unwrap();
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "repo content").unwrap();
 
         let mut skipped = HashSet::new();
         skipped.insert("base/home/.vimrc".to_string());
