@@ -50,6 +50,8 @@ fn init_into_empty_non_git_dir_succeeds() {
     assert!(env2.repo.exists());
     assert!(!env2.repo.join(".git").exists());
     assert!(env2.repo.read_dir().unwrap().next().is_none());
+    // Cleanup
+    std::fs::remove_dir_all(&env2.repo).ok();
 }
 
 #[test]
@@ -97,6 +99,19 @@ fn init_rejects_invalid_machine_names() {
 
     // Starts with dot
     env.run_err(&["init", "--machine", ".hidden"]);
+
+    // Contains backslash (Windows path traversal)
+    env.run_err(&["init", "--machine", "foo\\bar"]);
+
+    // URL-encoded '..' (path traversal attempt)
+    env.run_err(&["init", "--machine", "my%2e%2emachine"]);
+
+    // Contains space (not allowed)
+    env.run_err(&["init", "--machine", "my machine"]);
+
+    // Contains special characters
+    env.run_err(&["init", "--machine", "my@machine"]);
+    env.run_err(&["init", "--machine", "my.machine"]);
 }
 
 #[test]
@@ -148,6 +163,9 @@ fn config_machine_rejects_invalid_names() {
     env.run_err(&["config", "machine", "base"]);
     env.run_err(&["config", "machine", "linux"]);
     env.run_err(&["config", "machine", "a/b"]);
+    env.run_err(&["config", "machine", "a\\b"]);
+    env.run_err(&["config", "machine", "a..b"]);
+    env.run_err(&["config", "machine", "a%2eb"]);
 }
 
 #[test]
@@ -160,4 +178,32 @@ fn config_machine_without_init_fails() {
     env.run_ok(&["config", "machine", "testbox"]);
     let config = env.read_config();
     assert!(config.contains("testbox"));
+}
+
+#[test]
+fn init_accepts_valid_machine_names() {
+    let env = TestEnv::new();
+
+    // Alphanumeric only
+    env.run_ok(&["init", "--machine", "macbook"]);
+
+    // Reset for next test
+    std::fs::remove_dir_all(&env.repo).unwrap();
+    std::fs::create_dir_all(&env.repo).unwrap();
+    env.run_ok(&["init", "--machine", "testbox"]);
+
+    // Hyphens allowed
+    std::fs::remove_dir_all(&env.repo).unwrap();
+    std::fs::create_dir_all(&env.repo).unwrap();
+    env.run_ok(&["init", "--machine", "my-laptop"]);
+
+    // Underscores allowed
+    std::fs::remove_dir_all(&env.repo).unwrap();
+    std::fs::create_dir_all(&env.repo).unwrap();
+    env.run_ok(&["init", "--machine", "my_laptop"]);
+
+    // Combination allowed
+    std::fs::remove_dir_all(&env.repo).unwrap();
+    std::fs::create_dir_all(&env.repo).unwrap();
+    env.run_ok(&["init", "--machine", "work-station_01"]);
 }

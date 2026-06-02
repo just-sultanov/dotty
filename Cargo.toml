@@ -28,6 +28,7 @@ symlink-rs = "1.0.0"
 path-slash = "0.2"
 indicatif = "0.17"
 sha2 = "0.10"
+percent-encoding = "2"
 
 [dev-dependencies]
 insta = "1"
