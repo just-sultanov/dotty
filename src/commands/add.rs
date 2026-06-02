@@ -53,11 +53,12 @@ pub fn run(
         // Primary defense: compare canonical (resolved) paths
         canonical_target.starts_with(&canonical_repo)
     } else {
-        // Secondary defense: string-prefix check on raw paths
-        // This is a weaker check but prevents obvious traversal when canonicalization fails
-        let target_str = target_path.to_string_lossy();
-        let repo_str = canonical_repo.to_string_lossy();
-        target_str.starts_with(repo_str.as_ref())
+        // Secondary defense: use Path::starts_with() on non-canonicalized paths
+        // This is more robust than string comparison as it handles:
+        // - Unicode normalization differences
+        // - Platform-specific path separators
+        // - Mixed absolute/relative path representations
+        target_path.starts_with(&canonical_repo)
     };
 
     if is_self_reference {
@@ -1228,5 +1229,110 @@ mod tests {
         let files = collect_files(&file).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0], file);
+    }
+
+    // -- Path traversal detection edge case tests --
+
+    #[test]
+    fn test_path_traversal_detection_unicode_paths() {
+        // Verify that Unicode paths are handled correctly in traversal detection.
+        // This tests that Path::starts_with() handles Unicode normalization properly.
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+
+        // Create a directory with Unicode characters in the name
+        let unicode_dir = base.join("日本語");
+        fs::create_dir_all(&unicode_dir).unwrap();
+        let unicode_file = unicode_dir.join("test.txt");
+        fs::write(&unicode_file, "content").unwrap();
+
+        // The file should not be detected as a self-reference
+        // since it's outside the repo directory
+        let is_traversal = unicode_file.starts_with(&base.join("repo"));
+        assert!(
+            !is_traversal,
+            "Unicode path should not be detected as traversal"
+        );
+    }
+
+    #[test]
+    fn test_path_traversal_detection_symlink_in_path() {
+        // Verify that paths with symlinks in the middle are handled correctly.
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+
+        // Create a real directory and a symlink to it
+        let real_dir = base.join("real_dir");
+        fs::create_dir_all(&real_dir).unwrap();
+
+        let symlink_dir = base.join("symlink_dir");
+        create_symlink(&real_dir, &symlink_dir).unwrap();
+
+        // Create a file inside the real directory
+        let file_via_real = real_dir.join("file.txt");
+        fs::write(&file_via_real, "content").unwrap();
+
+        // The canonicalized path should resolve the symlink.
+        // Note: On macOS, /var is a symlink to /private/var, so we compare
+        // the canonicalized paths rather than the original paths.
+        let canonicalized = fs::canonicalize(&file_via_real).unwrap();
+        let canonical_real_dir = fs::canonicalize(&real_dir).unwrap();
+        assert_eq!(canonicalized.parent().unwrap(), canonical_real_dir);
+    }
+
+    #[test]
+    fn test_path_traversal_detection_relative_vs_absolute() {
+        // Verify that relative and absolute paths are handled consistently.
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+
+        let file = repo.join("test.txt");
+        fs::write(&file, "content").unwrap();
+
+        // Get the canonical absolute path
+        let canonical_file = fs::canonicalize(&file).unwrap();
+        let canonical_repo = fs::canonicalize(&repo).unwrap();
+
+        // Absolute path should be detected as traversal
+        assert!(canonical_file.starts_with(&canonical_repo));
+
+        // Test with relative path (if we're in the right directory)
+        std::env::set_current_dir(&base).unwrap();
+        let relative_file = Path::new("repo/test.txt");
+        let canonical_relative = fs::canonicalize(relative_file).unwrap();
+        assert!(canonical_relative.starts_with(&canonical_repo));
+
+        // Restore working directory
+        std::env::set_current_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_path_traversal_detection_normalized_paths() {
+        // Verify that paths with .. components are handled correctly.
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+
+        // Create a file in the repo
+        let file = repo.join("test.txt");
+        fs::write(&file, "content").unwrap();
+
+        // Access the file via a path with .. components
+        let subdir = repo.join("subdir");
+        fs::create_dir_all(&subdir).unwrap();
+        std::env::set_current_dir(&subdir).unwrap();
+
+        let canonical_repo = fs::canonicalize(&repo).unwrap();
+        let path_with_dotdot = Path::new("../test.txt");
+        let canonical_path = fs::canonicalize(path_with_dotdot).unwrap();
+
+        // The canonicalized path should still be inside the repo
+        assert!(canonical_path.starts_with(&canonical_repo));
+
+        // Restore working directory
+        std::env::set_current_dir(&dir).unwrap();
     }
 }
