@@ -111,6 +111,8 @@ pub enum Commands {
         platform: Option<String>,
 
         /// Commit after adding (with message)
+        ///
+        /// Must be non-empty and cannot contain newlines or control characters.
         #[arg(long)]
         commit: Option<String>,
 
@@ -132,6 +134,8 @@ pub enum Commands {
         machine: Option<String>,
 
         /// Commit after removing (with message)
+        ///
+        /// Must be non-empty and cannot contain newlines or control characters.
         #[arg(long)]
         commit: Option<String>,
 

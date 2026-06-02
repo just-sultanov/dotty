@@ -98,10 +98,51 @@ pub(crate) fn git_add(dir: &Path, paths: &[PathBuf]) -> Result<(), DottyError> {
     Ok(())
 }
 
+/// Validate a commit message for safety and usability.
+///
+/// Checks:
+/// - Non-empty: Message must contain at least one non-whitespace character
+/// - No control characters: Reject ASCII 0-31 (except tab, which is rarely used in commit messages)
+/// - No newline characters: Prevent multi-line commits via `--commit` flag
+///
+/// Returns `Ok(())` if the message is valid, or `Err(DottyError::InvalidCommitMessage)` with
+/// a descriptive reason.
+pub(crate) fn validate_commit_message(message: &str) -> Result<(), DottyError> {
+    // Check for empty or whitespace-only messages
+    if message.trim().is_empty() {
+        return Err(DottyError::InvalidCommitMessage {
+            reason: "message cannot be empty or whitespace-only".to_string(),
+        });
+    }
+
+    // Check for control characters (ASCII 0-31, including newlines)
+    // We reject all control characters to prevent issues with git and shell parsing
+    for (pos, c) in message.chars().enumerate() {
+        let code = c as u32;
+        if code <= 31 {
+            // Map control character to a human-readable name
+            let char_name = match c {
+                '\n' => "newline (\n)".to_string(),
+                '\r' => "carriage return (\r)".to_string(),
+                '\t' => "tab (\t)".to_string(),
+                _ => format!("control character (ASCII {})", code),
+            };
+            return Err(DottyError::InvalidCommitMessage {
+                reason: format!("contains {} at position {}", char_name, pos),
+            });
+        }
+    }
+
+    Ok(())
+}
+
 /// Commit staged changes with the given message.
 ///
-/// Checks git identity (cached in `repo_state`) before attempting the commit.
+/// Validates the commit message and checks git identity (cached in `repo_state`)
+/// before attempting the commit.
 pub(crate) fn git_commit(repo_state: &mut RepoState, message: &str) -> Result<(), DottyError> {
+    // Validate commit message first
+    validate_commit_message(message)?;
     // Pre-flight: check cached identity, fail fast if missing.
     repo_state.validate_git_identity()?;
     git_run(&repo_state.repo_path, &["commit", "-m", message])?;
@@ -155,6 +196,93 @@ mod tests {
 
     use super::*;
     use crate::repo_state::RepoState;
+
+    #[test]
+    fn test_validate_commit_message_empty_rejected() {
+        let result = validate_commit_message("");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::InvalidCommitMessage { reason } => {
+                assert!(reason.contains("empty"));
+            }
+            _ => panic!("expected InvalidCommitMessage error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_commit_message_whitespace_only_rejected() {
+        let result = validate_commit_message("   ");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::InvalidCommitMessage { reason } => {
+                assert!(reason.contains("empty"));
+            }
+            _ => panic!("expected InvalidCommitMessage error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_commit_message_newline_rejected() {
+        let result = validate_commit_message("add file\nsecond line");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::InvalidCommitMessage { reason } => {
+                assert!(reason.contains("newline"));
+            }
+            _ => panic!("expected InvalidCommitMessage error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_commit_message_carriage_return_rejected() {
+        let result = validate_commit_message("add file\r");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::InvalidCommitMessage { reason } => {
+                assert!(reason.contains("carriage return"));
+            }
+            _ => panic!("expected InvalidCommitMessage error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_commit_message_control_char_rejected() {
+        // ASCII 0 (NULL character)
+        let msg = "add file\u{0000}";
+        let result = validate_commit_message(msg);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::InvalidCommitMessage { reason } => {
+                assert!(reason.contains("control character"));
+                assert!(reason.contains("ASCII 0"));
+            }
+            _ => panic!("expected InvalidCommitMessage error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_commit_message_valid_accepted() {
+        let result = validate_commit_message("add new feature");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_commit_message_with_spaces_accepted() {
+        let result = validate_commit_message("add new feature with description");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_commit_message_with_punctuation_accepted() {
+        let result = validate_commit_message("fix: resolve bug #123");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_commit_message_unicode_accepted() {
+        let result = validate_commit_message("add café configuration");
+        assert!(result.is_ok());
+    }
 
     /// Pre-flight check helper for tests: verify git identity.
     ///

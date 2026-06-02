@@ -152,6 +152,11 @@ pub(crate) enum DottyError {
     /// does not cleanly apply. Used when converting from anyhow::Error.
     #[error("command error: {0}")]
     CommandError(String),
+
+    #[error(
+        "invalid commit message: {reason}. Use a non-empty message without newlines or control characters."
+    )]
+    InvalidCommitMessage { reason: String },
 }
 
 #[cfg(test)]
