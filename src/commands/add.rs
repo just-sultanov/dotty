@@ -119,7 +119,7 @@ pub fn run(
     // Collects all files eagerly into a Vec before processing.
     let conflict_map = if repo.is_git_repo {
         match git::TrackedFiles::new(&repo_path) {
-            Ok(iterator) => build_conflict_map_streaming(iterator),
+            Ok(iterator) => build_conflict_map(iterator),
             Err(e) => {
                 warn!("failed to list tracked files: {e}");
                 indexmap::IndexMap::new()
@@ -452,15 +452,12 @@ fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> {
 /// Uses IndexMap to preserve insertion order for deterministic conflict display.
 ///
 /// This is the eager-evaluation version kept for backward compatibility with tests.
-/// Build conflict map from tracked files.
+/// Build a conflict map from tracked files.
 ///
-/// Processes files one at a time by consuming the iterator directly
-/// into the HashMap. The underlying data is collected eagerly by the
-/// caller, but the Iterator trait avoids intermediate allocations during
-/// conflict map construction.
-fn build_conflict_map_streaming(
-    files: git::TrackedFiles,
-) -> indexmap::IndexMap<PathBuf, Vec<String>> {
+/// Consumes the iterator and folds entries into an IndexMap keyed by
+/// target path. The tracked files are collected eagerly by the caller;
+/// this function avoids intermediate allocations during map construction.
+fn build_conflict_map(files: git::TrackedFiles) -> indexmap::IndexMap<PathBuf, Vec<String>> {
     files
         .into_iter()
         .fold(indexmap::IndexMap::new(), |mut map, repo_relative_path| {
@@ -559,7 +556,7 @@ mod tests {
     }
 
     /// Build conflict map from an iterator (used in tests).
-    /// This mirrors the production `build_conflict_map_streaming` logic.
+    /// This mirrors the production `build_conflict_map` logic.
     fn build_conflict_map_from_iter(
         files: impl Iterator<Item = String>,
     ) -> indexmap::IndexMap<PathBuf, Vec<String>> {
