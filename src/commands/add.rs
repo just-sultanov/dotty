@@ -222,17 +222,21 @@ pub(crate) fn build_add_plan(
         }
 
         // Backup original file if it exists at target
-        if target_file.exists() {
-            let backup_dest = if let Ok(relative) = target_file.strip_prefix(&input.home) {
+        let backup_path = if target_file.exists() {
+            let dest = if let Ok(relative) = target_file.strip_prefix(&input.home) {
                 backup_base.join(relative)
             } else {
                 backup_base.join(target_file.file_name().unwrap_or_default())
             };
             plan.add(Action::Backup {
                 source: target_file.clone(),
-                dest: backup_dest,
+                dest: dest.clone(),
             });
-        }
+            Some(dest)
+        } else {
+            None
+        };
+        let backup_exists = target_file.exists();
 
         // Copy file to repo (dereference symlinks)
         plan.add(Action::CopyFile {
@@ -244,8 +248,8 @@ pub(crate) fn build_add_plan(
         plan.add(Action::CreateSymlink {
             target: repo_absolute_path.clone(),
             link: target_file.clone(),
-            backup_path: None,
-            backup_exists: false,
+            backup_path,
+            backup_exists,
         });
 
         // Track path for git add
@@ -956,6 +960,115 @@ mod tests {
                     !matches!(action, Action::GitAdd { .. }),
                     "should not have GitAdd when has_git is false"
                 );
+            }
+        });
+    }
+
+    // -- CreateSymlink backup_path tests --
+
+    #[test]
+    fn test_build_add_plan_sets_backup_path_when_target_exists() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        fs::write(&target, "set nocompatible").unwrap();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "base".to_string(),
+                files_to_add: vec![target.clone()],
+                commit: None,
+                has_git: false,
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            let symlink_actions: Vec<&Action> = output
+                .plan
+                .actions
+                .iter()
+                .filter(|a| matches!(a, Action::CreateSymlink { .. }))
+                .collect();
+            assert_eq!(symlink_actions.len(), 1, "expected one CreateSymlink");
+            match symlink_actions[0] {
+                Action::CreateSymlink {
+                    backup_path,
+                    backup_exists,
+                    ..
+                } => {
+                    assert!(
+                        backup_path.is_some(),
+                        "backup_path should be Some when file exists"
+                    );
+                    assert!(
+                        backup_exists,
+                        "backup_exists should be true when file exists"
+                    );
+                }
+                _ => unreachable!(),
+            }
+        });
+    }
+
+    #[test]
+    fn test_build_add_plan_sets_no_backup_path_when_target_missing() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".nonexistent");
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "base".to_string(),
+                files_to_add: vec![target.clone()],
+                commit: None,
+                has_git: false,
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            let symlink_actions: Vec<&Action> = output
+                .plan
+                .actions
+                .iter()
+                .filter(|a| matches!(a, Action::CreateSymlink { .. }))
+                .collect();
+            assert_eq!(symlink_actions.len(), 1, "expected one CreateSymlink");
+            match symlink_actions[0] {
+                Action::CreateSymlink {
+                    backup_path,
+                    backup_exists,
+                    ..
+                } => {
+                    assert!(
+                        backup_path.is_none(),
+                        "backup_path should be None when no file exists"
+                    );
+                    assert!(
+                        !backup_exists,
+                        "backup_exists should be false when no file exists"
+                    );
+                }
+                _ => unreachable!(),
             }
         });
     }
