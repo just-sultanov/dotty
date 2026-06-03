@@ -504,7 +504,7 @@ pub(crate) fn copy_dir(
 
     // Walk the source directory and copy each file
     let mut files = Vec::new();
-    crate::fs_utils::walk_dir(source, &mut files, 0)?;
+    crate::fs_utils::walk_dir(source, &mut files)?;
 
     for file_path in &files {
         // Skip symlinked files when follow_symlinks is false.

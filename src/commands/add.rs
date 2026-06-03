@@ -428,7 +428,7 @@ fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> {
         // the is_file() check below (which also returns false), resulting in
         // a "path does not exist" error.
         if target_path.is_dir() {
-            walk_dir(target_path, &mut files, 0)?;
+            walk_dir(target_path, &mut files)?;
         } else if target_path.is_file() {
             // Symlink to file: collect the symlink path itself.
             files.push(target_path.to_path_buf());
@@ -442,7 +442,7 @@ fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> {
     } else if target_path.is_file() {
         files.push(target_path.to_path_buf());
     } else if target_path.is_dir() {
-        walk_dir(target_path, &mut files, 0)?;
+        walk_dir(target_path, &mut files)?;
     } else {
         return Err(DottyError::InvalidTargetPath {
             path: target_path.display().to_string(),

@@ -27,7 +27,11 @@ const MAX_WALK_DEPTH: u32 = 50;
 /// The iterative approach trades heap memory for stack safety: the work queue
 /// grows on the heap, which can handle far wider directory trees than the
 /// call stack can handle deep ones.
-pub fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>, depth: u32) -> Result<(), DottyError> {
+pub fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), DottyError> {
+    walk_dir_internal(dir, files, 0)
+}
+
+fn walk_dir_internal(dir: &Path, files: &mut Vec<PathBuf>, depth: u32) -> Result<(), DottyError> {
     if depth > MAX_WALK_DEPTH {
         return Ok(());
     }
@@ -116,7 +120,7 @@ mod tests {
         fs::write(path.join("a.txt"), "content").unwrap();
 
         let mut files = Vec::new();
-        walk_dir(&path, &mut files, 0).unwrap();
+        walk_dir(&path, &mut files).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].file_name().unwrap(), "a.txt");
     }
@@ -130,7 +134,7 @@ mod tests {
         fs::write(path.join("sub").join("b.txt"), "b").unwrap();
 
         let mut files = Vec::new();
-        walk_dir(&path, &mut files, 0).unwrap();
+        walk_dir(&path, &mut files).unwrap();
         assert_eq!(files.len(), 2);
     }
 
@@ -140,7 +144,7 @@ mod tests {
         let path = dir.path().to_path_buf();
 
         let mut files = Vec::new();
-        walk_dir(&path, &mut files, 0).unwrap();
+        walk_dir(&path, &mut files).unwrap();
         assert!(files.is_empty());
     }
 
@@ -219,7 +223,7 @@ mod tests {
         fs::write(current.join("deep.txt"), "deep").unwrap();
 
         let mut files = Vec::new();
-        walk_dir(dir.path(), &mut files, 0).unwrap();
+        walk_dir(dir.path(), &mut files).unwrap();
 
         // The deep file should NOT be collected because it's beyond the depth limit
         assert!(
@@ -244,7 +248,7 @@ mod tests {
         crate::symlink::create_symlink(&real_dir, &link_dir).unwrap();
 
         let mut files = Vec::new();
-        walk_dir(&scan_dir, &mut files, 0).unwrap();
+        walk_dir(&scan_dir, &mut files).unwrap();
 
         // The file inside the symlinked directory should NOT be collected
         assert!(
@@ -276,7 +280,7 @@ mod tests {
 
         // This must not panic or overflow the stack.
         let mut files = Vec::new();
-        walk_dir(&scan_dir, &mut files, 0).unwrap();
+        walk_dir(&scan_dir, &mut files).unwrap();
 
         // The deep file should NOT be collected (beyond depth 50)
         assert!(
@@ -305,7 +309,7 @@ mod tests {
         crate::symlink::create_symlink(&path.join("real.txt"), &link_file).unwrap();
 
         let mut files = Vec::new();
-        walk_dir(&path, &mut files, 0).unwrap();
+        walk_dir(&path, &mut files).unwrap();
 
         // Both the real file and the symlinked file should be collected
         assert_eq!(files.len(), 2);
