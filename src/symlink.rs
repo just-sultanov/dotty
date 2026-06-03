@@ -672,6 +672,10 @@ mod tests {
     // Creates a chain approaching the hop limit and verifies that
     // the warning is logged and the chain is treated as potentially circular.
     proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config {
+            failure_persistence: None,
+            .. proptest::test_runner::Config::default()
+        })]
         #[test]
         fn proptest_hop_limit_handling(
             extra_hops in 0usize..3,
