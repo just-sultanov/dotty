@@ -82,15 +82,32 @@ pub(crate) fn action_execute(
             if symlink::would_be_circular(target, link) {
                 return Err(DottyError::CircularSymlink { path: link.clone() });
             }
-            if fs::symlink_metadata(link).is_ok() {
-                if link.is_dir() && !crate::symlink::is_symlink(link) {
-                    fs::remove_dir_all(link).map_err(|e| io_error_with_path(e, link))?;
-                } else {
-                    fs::remove_file(link).map_err(|e| io_error_with_path(e, link))?;
-                }
+
+            // Create symlink at a temp path first to avoid data loss.
+            // If this fails, the original file at `link` is untouched.
+            let temp_name = format!(
+                ".{}_dotty_tmp",
+                link.file_name().unwrap_or_default().to_string_lossy()
+            );
+            let temp_path = link.with_file_name(temp_name);
+            if let Err(e) = crate::symlink::create_symlink(target, &temp_path) {
+                let _ = fs::remove_file(&temp_path);
+                return Err(io_error_with_path(e, link));
             }
-            crate::symlink::create_symlink(target, link)
-                .map_err(|e| io_error_with_path(e, link))?;
+
+            // For non-symlink directories, rename(2) cannot replace
+            // atomically on Unix (ENOTEMPTY). Remove the directory.
+            if fs::symlink_metadata(link).is_ok()
+                && link.is_dir()
+                && !crate::symlink::is_symlink(link)
+            {
+                fs::remove_dir_all(link).map_err(|e| io_error_with_path(e, link))?;
+            }
+
+            // Atomically place the symlink at the target location.
+            // For files and symlinks, rename unlinks the destination
+            // and replaces it in one atomic operation.
+            fs::rename(&temp_path, link).map_err(|e| io_error_with_path(e, link))?;
         }
         Action::RemoveFile { path } => {
             if !path.exists() {
@@ -1023,6 +1040,57 @@ mod tests {
                 .unwrap()
                 .file_type()
                 .is_symlink()
+        );
+    }
+
+    /// Test that original file survives when symlink creation fails.
+    ///
+    /// Creates a regular file at the link location, then makes the
+    /// parent directory read-only so that create_symlink (at the temp
+    /// path) fails. Asserts the original file is preserved intact.
+    #[cfg(unix)]
+    #[test]
+    fn test_create_symlink_preserves_original_on_failure() {
+        use std::fs::Permissions;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        let link = dir.path().join("link_file");
+
+        fs::write(&target, "target content").unwrap();
+        fs::write(&link, "original content").unwrap();
+
+        // Make parent read-only so create_symlink fails (cannot
+        // create new files in a dir without write permission).
+        fs::set_permissions(dir.path(), Permissions::from_mode(0o555)).unwrap();
+
+        let action = Action::CreateSymlink {
+            target: target.clone(),
+            link: link.clone(),
+            backup_path: None,
+            backup_exists: false,
+        };
+        let result = action_execute(
+            &action,
+            &mut RepoState::new_for_git(
+                std::path::PathBuf::from("."),
+                std::path::PathBuf::from("."),
+            ),
+        );
+
+        assert!(
+            result.is_err(),
+            "CreateSymlink should fail on read-only dir"
+        );
+        assert!(
+            link.exists(),
+            "Original file should survive symlink creation failure"
+        );
+        assert_eq!(
+            fs::read_to_string(&link).unwrap(),
+            "original content",
+            "Original file content should be unchanged"
         );
     }
 }
