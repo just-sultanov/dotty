@@ -29,6 +29,12 @@ impl Config {
 ///
 /// Returns a default (empty) config if the file doesn't exist.
 pub fn read_config(state_path: &std::path::Path) -> Result<Config, DottyError> {
+    let tmp_path = state_path.join("config.toml.tmp");
+    if tmp_path.exists() {
+        tracing::warn!("removing stale temp file: {}", tmp_path.display());
+        std::fs::remove_file(&tmp_path)?;
+    }
+
     let config_path = state_path.join("config.toml");
     if !config_path.exists() {
         return Ok(Config::new());
@@ -99,5 +105,19 @@ mod tests {
 
         let config_path = state_path.join("config.toml");
         assert!(config_path.exists());
+    }
+
+    #[test]
+    fn test_read_config_removes_stale_tmp() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_path = dir.path();
+
+        let tmp_path = state_path.join("config.toml.tmp");
+        std::fs::write(&tmp_path, b"garbage").unwrap();
+        assert!(tmp_path.exists());
+
+        let config = read_config(state_path).unwrap();
+        assert!(!tmp_path.exists());
+        assert!(config.machine.is_none());
     }
 }

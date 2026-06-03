@@ -1191,6 +1191,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_load_pending_plan_removes_stale_tmp() {
+        let (_dir, base) = setup();
+        let state = base.join("state");
+        std::fs::create_dir_all(&state).unwrap();
+
+        let tmp_path = state.join("pending_plan.json.tmp");
+        std::fs::write(&tmp_path, b"garbage").unwrap();
+        assert!(tmp_path.exists());
+
+        let loaded = load_pending_plan(&state).unwrap();
+        assert!(!tmp_path.exists());
+        assert!(loaded.is_none());
+    }
+
     // -- CreateSymlink rollback with backup restoration tests --
 
     /// Test that rolling back CreateSymlink restores the original file

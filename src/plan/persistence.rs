@@ -88,6 +88,12 @@ pub(crate) fn save_pending_plan(
 pub(crate) fn load_pending_plan(
     state_path: &Path,
 ) -> Result<Option<Plan>, crate::error::DottyError> {
+    let tmp_path = state_path.join("pending_plan.json.tmp");
+    if tmp_path.exists() {
+        tracing::warn!("removing stale temp file: {}", tmp_path.display());
+        fs::remove_file(&tmp_path)?;
+    }
+
     let path = pending_plan_path(state_path);
     if !path.exists() {
         return Ok(None);
