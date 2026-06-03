@@ -202,7 +202,7 @@ impl TestEnv {
     pub fn tracked_files(&self) -> Vec<String> {
         let out = Command::new("git")
             .current_dir(&self.repo)
-            .args(["ls-files"])
+            .args(["-c", "core.quotepath=false", "ls-files"])
             .output()
             .expect("git ls-files");
         String::from_utf8_lossy(&out.stdout)

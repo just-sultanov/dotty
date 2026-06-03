@@ -2,6 +2,7 @@
 
 mod common;
 use common::TestEnv;
+use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // add — special characters in filenames
@@ -52,11 +53,9 @@ fn add_file_with_unicode_name() {
     ]);
 
     let tracked = env.tracked_files();
-    // git ls-files may quote non-ASCII paths, so check for the file name
-    // appearing in some form (quoted or not)
     let has_file = tracked
         .iter()
-        .any(|f| f.contains("файл.txt") || f.contains("321") || f.contains(".txt"));
+        .any(|f| Path::new(f).file_name().and_then(|n| n.to_str()) == Some("файл.txt"));
     assert!(
         has_file,
         "file with unicode name not tracked: {:?}",
