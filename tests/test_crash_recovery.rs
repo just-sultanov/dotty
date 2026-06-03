@@ -286,11 +286,8 @@ fn stale_pending_plan_detected_when_repo_deleted() {
     let out = env.run(&["--recovery-action", "discard", "status"]);
 
     // Should detect the stale plan
-    let combined = format!("{} {}", out.stdout, out.stderr);
     assert!(
-        combined.contains("invalid")
-            || combined.contains("no longer exists")
-            || combined.contains("stale"),
+        out.stderr.contains("Pending plan is invalid"),
         "should detect stale pending plan. stdout: {}, stderr: {}",
         out.stdout,
         out.stderr
