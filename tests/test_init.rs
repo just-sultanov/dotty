@@ -182,28 +182,15 @@ fn config_machine_without_init_fails() {
 
 #[test]
 fn init_accepts_valid_machine_names() {
-    let env = TestEnv::new();
-
     // Alphanumeric only
-    env.run_ok(&["init", "--machine", "macbook"]);
-
-    // Reset for next test
-    std::fs::remove_dir_all(&env.repo).unwrap();
-    std::fs::create_dir_all(&env.repo).unwrap();
-    env.run_ok(&["init", "--machine", "testbox"]);
+    TestEnv::new().run_ok(&["init", "--machine", "macbook"]);
 
     // Hyphens allowed
-    std::fs::remove_dir_all(&env.repo).unwrap();
-    std::fs::create_dir_all(&env.repo).unwrap();
-    env.run_ok(&["init", "--machine", "my-laptop"]);
+    TestEnv::new().run_ok(&["init", "--machine", "my-laptop"]);
 
     // Underscores allowed
-    std::fs::remove_dir_all(&env.repo).unwrap();
-    std::fs::create_dir_all(&env.repo).unwrap();
-    env.run_ok(&["init", "--machine", "my_laptop"]);
+    TestEnv::new().run_ok(&["init", "--machine", "my_laptop"]);
 
     // Combination allowed
-    std::fs::remove_dir_all(&env.repo).unwrap();
-    std::fs::create_dir_all(&env.repo).unwrap();
-    env.run_ok(&["init", "--machine", "work-station_01"]);
+    TestEnv::new().run_ok(&["init", "--machine", "work-station_01"]);
 }
