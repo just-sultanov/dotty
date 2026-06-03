@@ -74,23 +74,30 @@ pub fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>, depth: u32) -> Result<(), 
     Ok(())
 }
 
-/// Calculate the total size of a directory recursively in bytes.
+/// Calculate the total size of a directory iteratively in bytes.
+///
+/// Uses an explicit `Vec<PathBuf>` work stack instead of recursion to prevent
+/// stack overflow on deeply nested directory trees. This is consistent with
+/// the iterative approach used in [`walk_dir`].
 pub fn calculate_dir_size(dir: &Path) -> u64 {
     let mut total = 0u64;
+    let mut stack: Vec<PathBuf> = vec![dir.to_path_buf()];
 
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return 0,
-    };
+    while let Some(current) = stack.pop() {
+        let entries = match fs::read_dir(&current) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() {
-            if let Ok(meta) = fs::metadata(&path) {
-                total += meta.len();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Ok(meta) = fs::metadata(&path) {
+                    total += meta.len();
+                }
+            } else if path.is_dir() {
+                stack.push(path);
             }
-        } else if path.is_dir() {
-            total += calculate_dir_size(&path);
         }
     }
 
@@ -155,6 +162,42 @@ mod tests {
 
         let size = calculate_dir_size(&path);
         assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn test_calculate_dir_size_nested() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        fs::create_dir_all(path.join("sub")).unwrap();
+        fs::write(path.join("a.txt"), "12345").unwrap(); // 5 bytes
+        fs::write(path.join("sub").join("b.txt"), "1234567890").unwrap(); // 10 bytes
+
+        let size = calculate_dir_size(&path);
+        assert_eq!(size, 15);
+    }
+
+    #[test]
+    fn test_calculate_dir_size_deep_nesting_no_overflow() {
+        let dir = tempfile::tempdir().unwrap();
+        let scan_dir = dir.path().join("scan");
+        fs::create_dir_all(&scan_dir).unwrap();
+
+        // Add a file at the root level
+        fs::write(scan_dir.join("root.txt"), "root").unwrap();
+
+        // Create a directory tree 100 levels deep
+        let mut current = scan_dir.clone();
+        for i in 0..100 {
+            current = current.join(format!("level_{i}"));
+        }
+        fs::create_dir_all(&current).unwrap();
+        fs::write(current.join("deep.txt"), "deep").unwrap();
+
+        // This must not panic or overflow the stack.
+        let size = calculate_dir_size(&scan_dir);
+
+        // Should include root.txt but NOT deep.txt (beyond MAX_WALK_DEPTH)
+        assert!(size > 0);
     }
 
     #[test]
