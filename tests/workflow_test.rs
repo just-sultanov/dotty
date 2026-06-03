@@ -195,15 +195,15 @@ fn crash_recovery_add_idempotency() {
     assert!(!env.repo.join("base/home/.vimrc").exists());
 
     // Running apply should detect and fix the broken symlink
-    // (or at least not crash)
-    let _out = env.run(&["apply"]);
+    let _out = env.run_ok(&["apply"]);
 
-    // Apply should succeed (it will detect the broken symlink)
-    // The exact behavior depends on implementation, but it shouldn't crash
-    // For now, we just verify it doesn't panic
+    // The broken symlink should have been restored by apply
+    assert!(vimrc.is_symlink(), "apply did not restore the symlink");
+    env.assert_symlink(&vimrc, &env.repo.join("base/home/.vimrc"));
 
-    // After apply, the symlink should either be fixed or reported as broken
-    // This test mainly ensures no crash occurs
+    // Apply should not be destructive on subsequent runs
+    let _out2 = env.run_ok(&["apply"]);
+    env.assert_symlink(&vimrc, &env.repo.join("base/home/.vimrc"));
 }
 
 /// Tests that applying multiple times produces the same result (idempotency).
