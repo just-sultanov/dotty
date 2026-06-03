@@ -9,6 +9,7 @@
 use crate::common::TestEnv;
 use std::fs;
 use std::os::unix::fs::symlink;
+use std::path::PathBuf;
 
 /// Test ext4-specific behaviors.
 #[test]
