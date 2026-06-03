@@ -26,7 +26,7 @@ fn test_ext4_behavior() {
         ("app3/preferences.toml", "app3_prefs"),
     ];
 
-    for (rel_path, content) in files {
+    for (rel_path, content) in &files {
         let full_path = config_dir.join(rel_path);
         if let Some(parent) = full_path.parent() {
             fs::create_dir_all(parent).unwrap();
@@ -90,7 +90,7 @@ fn test_linux_symlinks() {
 
     // Verify the link target
     let resolved = fs::read_link(&link_path).unwrap();
-    assert_eq!(resolved, "target.toml");
+    assert_eq!(resolved, PathBuf::from("target.toml"));
 }
 
 /// Test Linux file capabilities (if applicable).
