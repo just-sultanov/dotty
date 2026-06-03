@@ -149,33 +149,17 @@ pub(crate) fn git_commit(repo_state: &mut RepoState, message: &str) -> Result<()
     Ok(())
 }
 
-/// List all tracked files in the repository.
+/// Tracked files in the repository.
 ///
 /// Uses `-z` for null-delimited output so that filenames containing spaces,
 /// newlines, or non-ASCII characters are parsed correctly without git's quoted
 /// output mode interfering.
-pub(crate) fn git_ls_files(dir: &Path) -> Result<Vec<String>, DottyError> {
-    let output = git_run(dir, &["ls-files", "-z"])?;
-    Ok(output
-        .split('\0')
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect())
-}
-
-/// Streaming iterator for tracked files in the repository.
-///
-/// Provides lazy evaluation to avoid loading all files into memory at once.
-/// This is memory-efficient for large repositories (10,000+ files).
-///
-/// The iterator yields results wrapped in `Result` to handle potential parsing
-/// errors while maintaining the streaming nature of the operation.
-pub(crate) struct GitLsFilesIterator {
+pub(crate) struct TrackedFiles {
     items: std::vec::IntoIter<String>,
 }
 
-impl GitLsFilesIterator {
-    /// Create a new streaming iterator for tracked files.
+impl TrackedFiles {
+    /// List all tracked files in the repository.
     pub fn new(dir: &Path) -> Result<Self, DottyError> {
         let output = git_run(dir, &["ls-files", "-z"])?;
         let items: Vec<String> = output
@@ -183,13 +167,13 @@ impl GitLsFilesIterator {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .collect();
-        Ok(GitLsFilesIterator {
+        Ok(TrackedFiles {
             items: items.into_iter(),
         })
     }
 }
 
-impl Iterator for GitLsFilesIterator {
+impl Iterator for TrackedFiles {
     type Item = String;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -199,19 +183,6 @@ impl Iterator for GitLsFilesIterator {
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.items.size_hint()
     }
-}
-
-/// Return a streaming iterator of tracked files.
-///
-/// Uses lazy evaluation to build the conflict map without holding all
-/// file paths in memory simultaneously. For large repositories, this
-/// reduces memory pressure during the `add` command's conflict detection.
-///
-/// Note: The underlying git output is still read entirely, but the
-/// Iterator trait allows lazy filtering and transformation without
-/// creating intermediate collections.
-pub(crate) fn git_ls_files_streaming(dir: &Path) -> Result<GitLsFilesIterator, DottyError> {
-    GitLsFilesIterator::new(dir)
 }
 
 /// Get the git status summary (porcelain format).
@@ -445,7 +416,7 @@ mod tests {
             .output()
             .unwrap();
 
-        let files = git_ls_files(repo.path()).unwrap();
+        let files: Vec<String> = TrackedFiles::new(repo.path()).unwrap().collect();
         assert!(files.contains(&"my file.txt".to_string()));
         assert!(files.contains(&"café.txt".to_string()));
         assert!(files.contains(&"normal.txt".to_string()));

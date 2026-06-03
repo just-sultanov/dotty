@@ -238,8 +238,8 @@ fn find_tier_conflicts(
     machine: &Option<String>,
     platform: &Option<String>,
 ) -> Vec<(String, String, String)> {
-    let tracked_files = match git::git_ls_files(repo_path) {
-        Ok(f) => f,
+    let tracked_files = match git::TrackedFiles::new(repo_path) {
+        Ok(iter) => iter.collect::<Vec<_>>(),
         Err(_) => return Vec::new(),
     };
 
@@ -307,8 +307,8 @@ fn find_inactive_tiers(
     machine: &Option<String>,
     platform: &Option<String>,
 ) -> Vec<(String, String, String)> {
-    let tracked_files = match git::git_ls_files(repo_path) {
-        Ok(f) => f,
+    let tracked_files = match git::TrackedFiles::new(repo_path) {
+        Ok(iter) => iter.collect::<Vec<_>>(),
         Err(_) => return Vec::new(),
     };
 

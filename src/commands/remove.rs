@@ -73,7 +73,7 @@ pub fn run(
     }
 
     // Get tracked files from repo
-    let tracked_files = git::git_ls_files(&repo_path)?;
+    let tracked_files: Vec<String> = git::TrackedFiles::new(&repo_path)?.collect();
 
     // For each target file, find corresponding repo files
     let mut managed_pairs: Vec<(PathBuf, String)> = Vec::new();

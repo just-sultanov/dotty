@@ -115,11 +115,10 @@ pub fn run(
         });
     }
 
-    // Build conflict map from existing tracked files using streaming approach.
-    // This avoids loading all tracked files into memory at once, improving
-    // memory efficiency for large repositories (10,000+ files).
+    // Build conflict map from existing tracked files.
+    // Collects all files eagerly into a Vec before processing.
     let conflict_map = if repo.is_git_repo {
-        match git::git_ls_files_streaming(&repo_path) {
+        match git::TrackedFiles::new(&repo_path) {
             Ok(iterator) => build_conflict_map_streaming(iterator),
             Err(e) => {
                 warn!("failed to list tracked files: {e}");
@@ -453,13 +452,14 @@ fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> {
 /// Uses IndexMap to preserve insertion order for deterministic conflict display.
 ///
 /// This is the eager-evaluation version kept for backward compatibility with tests.
-/// Build conflict map using streaming iterator.
+/// Build conflict map from tracked files.
 ///
-/// This is the lazy-evaluation version that processes files one at a time
-/// without creating an intermediate Vec. The iterator is consumed directly
-/// into the HashMap, reducing memory allocation for large repositories.
+/// Processes files one at a time by consuming the iterator directly
+/// into the HashMap. The underlying data is collected eagerly by the
+/// caller, but the Iterator trait avoids intermediate allocations during
+/// conflict map construction.
 fn build_conflict_map_streaming(
-    files: git::GitLsFilesIterator,
+    files: git::TrackedFiles,
 ) -> indexmap::IndexMap<PathBuf, Vec<String>> {
     files
         .into_iter()
@@ -552,8 +552,8 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
-    /// Helper to create a mock streaming iterator from a Vec of file paths.
-    /// This simulates the production `GitLsFilesIterator` for testing purposes.
+    /// Helper to create a mock iterator from a Vec of file paths.
+    /// This simulates the production `TrackedFiles` for testing purposes.
     fn mock_git_iterator(files: Vec<String>) -> impl Iterator<Item = String> {
         files.into_iter()
     }

@@ -47,7 +47,7 @@ pub fn run(
     let machine_name = resolve_machine(&repo_path, &mut config, &state_path, dry_run, &platform)?;
 
     // 2. Collect all tracked files from git
-    let tracked_files = git::git_ls_files(&repo_path)?;
+    let tracked_files: Vec<String> = git::TrackedFiles::new(&repo_path)?.collect();
 
     // 3. Classify files by tier and merge by priority
     let merged = merge_tiers(&tracked_files, &machine_name, &platform);
