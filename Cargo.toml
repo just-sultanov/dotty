@@ -26,6 +26,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 dir_spec = "0.5.2"
 symlink-rs = "1.0.0"
 path-slash = "0.2"
+pwd = "1"
 indicatif = "0.17"
 sha2 = "0.10"
 percent-encoding = "2"

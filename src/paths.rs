@@ -202,23 +202,17 @@ pub fn expand_tilde(path: &str) -> Result<PathBuf, DottyError> {
     Ok(PathBuf::from(path))
 }
 
-/// Look up another user's home directory from `/etc/passwd`.
+/// Look up another user's home directory using the system user database.
 ///
-/// Returns `None` if the user is not found or the file cannot be read.
+/// Uses `pwd::Passwd::from_name()` which calls `getpwnam_r` internally,
+/// correctly handling LDAP/SSSD/AD users, container environments, and
+/// permission-locked `/etc/passwd`. Returns `None` if the user is not found.
 #[cfg(unix)]
 fn expand_tilde_user(username: &str) -> Option<PathBuf> {
-    std::fs::read_to_string("/etc/passwd")
+    pwd::Passwd::from_name(username)
         .ok()
-        .and_then(|data| {
-            data.lines().find_map(|line| {
-                let fields: Vec<&str> = line.split(':').collect();
-                if fields.len() >= 7 && fields[0] == username {
-                    Some(PathBuf::from(&fields[5]))
-                } else {
-                    None
-                }
-            })
-        })
+        .flatten()
+        .map(|u| PathBuf::from(u.dir))
 }
 
 #[cfg(not(unix))]
@@ -464,8 +458,8 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_expand_tilde_user() {
-        // On Unix, ~user expansion reads /etc/passwd. The `root` user always
-        // exists and has a well-known home directory.
+        // On Unix, ~user expansion uses the system user database via `pwd`.
+        // The `root` user always exists and has a well-known home directory.
         let path = expand_tilde("~root/some/file").unwrap();
         assert!(path.is_absolute());
         assert!(path.to_string_lossy().ends_with("some/file"));
