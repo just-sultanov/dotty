@@ -629,7 +629,10 @@ fn io_error_with_path(err: io::Error, path: &Path) -> DottyError {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
 
+    use crate::plan::Plan;
+    use crate::repo_state::RepoState;
     use crate::symlink::create_symlink;
 
     /// Test SHA-256 hash computation produces expected result.
@@ -1089,6 +1092,346 @@ mod tests {
             fs::read_to_string(&link).unwrap(),
             "original content",
             "Original file content should be unchanged"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // RestoreBackup tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_restore_backup_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("backup.txt");
+        let dest = dir.path().join("restored.txt");
+        fs::write(&source, "restored content").unwrap();
+
+        let action = Action::RestoreBackup {
+            source: source.clone(),
+            dest: dest.clone(),
+        };
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+        )
+        .unwrap();
+
+        assert!(dest.exists());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "restored content");
+    }
+
+    #[test]
+    fn test_restore_backup_missing_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("backups/backup.txt");
+        let dest = dir.path().join("config/file.txt");
+
+        let action = Action::RestoreBackup {
+            source: source.clone(),
+            dest: dest.clone(),
+        };
+        let result = action_execute(
+            &action,
+            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+        );
+
+        assert!(
+            result.is_ok(),
+            "Missing backup should be handled gracefully"
+        );
+    }
+
+    #[test]
+    fn test_restore_backup_overwrites_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("backup.txt");
+        let dest = dir.path().join("link.txt");
+        let old_target = dir.path().join("old_target.txt");
+
+        fs::write(&source, "restored content").unwrap();
+        fs::write(&old_target, "old content").unwrap();
+        create_symlink(&old_target, &dest).unwrap();
+
+        let action = Action::RestoreBackup {
+            source: source.clone(),
+            dest: dest.clone(),
+        };
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+        )
+        .unwrap();
+
+        assert!(dest.exists());
+        assert!(!is_symlink(&dest));
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "restored content");
+    }
+
+    #[test]
+    fn test_restore_backup_creates_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("backup.txt");
+        let dest = dir.path().join("nested/deep/restored.txt");
+
+        fs::write(&source, "content").unwrap();
+
+        let action = Action::RestoreBackup {
+            source: source.clone(),
+            dest: dest.clone(),
+        };
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+        )
+        .unwrap();
+
+        assert!(dest.exists());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "content");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_restore_backup_permission_denied() {
+        use std::fs::Permissions;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("backup.txt");
+        let dest = dir.path().join("readonly/child/restored.txt");
+
+        fs::write(&source, "content").unwrap();
+        fs::create_dir_all(dir.path().join("readonly")).unwrap();
+        fs::set_permissions(dir.path().join("readonly"), Permissions::from_mode(0o555)).unwrap();
+
+        let action = Action::RestoreBackup {
+            source: source.clone(),
+            dest: dest.clone(),
+        };
+        let result = action_execute(
+            &action,
+            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+        );
+
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // RestoreDir tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_restore_dir_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("backup_dir");
+        let dest = dir.path().join("restored_dir");
+
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("file1.txt"), "content1").unwrap();
+        fs::write(source.join("file2.txt"), "content2").unwrap();
+
+        let action = Action::RestoreDir {
+            source: source.clone(),
+            dest: dest.clone(),
+        };
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+        )
+        .unwrap();
+
+        assert!(dest.is_dir());
+        assert!(dest.join("file1.txt").exists());
+        assert_eq!(
+            fs::read_to_string(dest.join("file1.txt")).unwrap(),
+            "content1"
+        );
+        assert!(dest.join("file2.txt").exists());
+        assert_eq!(
+            fs::read_to_string(dest.join("file2.txt")).unwrap(),
+            "content2"
+        );
+    }
+
+    #[test]
+    fn test_restore_dir_missing_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("backups/config");
+        let dest = dir.path().join("config");
+
+        let action = Action::RestoreDir {
+            source: source.clone(),
+            dest: dest.clone(),
+        };
+        let result = action_execute(
+            &action,
+            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+        );
+
+        assert!(
+            result.is_ok(),
+            "Missing backup dir should be handled gracefully"
+        );
+    }
+
+    #[test]
+    fn test_restore_dir_overwrites_existing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("backup_dir");
+        let dest = dir.path().join("existing_dir");
+
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("new.txt"), "new content").unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("old.txt"), "old content").unwrap();
+
+        let action = Action::RestoreDir {
+            source: source.clone(),
+            dest: dest.clone(),
+        };
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+        )
+        .unwrap();
+
+        assert!(!dest.join("old.txt").exists());
+        assert!(dest.join("new.txt").exists());
+        assert_eq!(
+            fs::read_to_string(dest.join("new.txt")).unwrap(),
+            "new content"
+        );
+    }
+
+    #[test]
+    fn test_restore_dir_overwrites_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("backup_dir");
+        let dest = dir.path().join("link_dir");
+        let sym_target = dir.path().join("actual_dir");
+
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("file.txt"), "restored").unwrap();
+        fs::create_dir_all(&sym_target).unwrap();
+        create_symlink(&sym_target, &dest).unwrap();
+
+        let action = Action::RestoreDir {
+            source: source.clone(),
+            dest: dest.clone(),
+        };
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+        )
+        .unwrap();
+
+        assert!(dest.is_dir());
+        assert!(!is_symlink(&dest));
+        assert!(dest.join("file.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_restore_dir_permission_denied() {
+        use std::fs::Permissions;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("backup");
+        let dest = dir.path().join("restore_target");
+
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("file.txt"), "content").unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("old.txt"), "old").unwrap();
+
+        fs::set_permissions(&dest, Permissions::from_mode(0o000)).unwrap();
+
+        let action = Action::RestoreDir {
+            source: source.clone(),
+            dest: dest.clone(),
+        };
+        let result = action_execute(
+            &action,
+            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+        );
+
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // execute_plan rollback tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_execute_plan_mid_plan_rollback() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        fs::create_dir_all(&state).unwrap();
+
+        let dir_a = dir.path().join("dir_a");
+        let dir_b = dir.path().join("dir_b");
+
+        let mut plan = Plan::new(dir.path());
+        plan.add(Action::CreateDir {
+            path: dir_a.clone(),
+        });
+        plan.add(Action::CreateDir {
+            path: dir_b.clone(),
+        });
+        plan.add(Action::Backup {
+            source: dir.path().join("nonexistent"),
+            dest: dir.path().join("backup_dest"),
+        });
+
+        let result = execute_plan(
+            &plan,
+            ExecuteMode::Normal,
+            &mut RepoState::new_for_git(dir.path().to_path_buf(), state),
+        );
+
+        assert!(
+            result.is_err(),
+            "Plan should fail due to missing backup source"
+        );
+        assert!(!dir_a.exists(), "dir_a should be rolled back");
+        assert!(!dir_b.exists(), "dir_b should be rolled back");
+    }
+
+    /// Test that RestoreBackup rollback propagates error when the destination
+    /// parent directory is not writable, simulating a partial rollback failure.
+    #[cfg(unix)]
+    #[test]
+    fn test_rollback_failure_on_readonly_parent() {
+        use std::fs::Permissions;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        let link = dir.path().join("link");
+        let backup = dir.path().join("backup.txt");
+
+        fs::write(&target, "target content").unwrap();
+        fs::write(&backup, "backup content").unwrap();
+
+        let action = Action::CreateSymlink {
+            target: target.clone(),
+            link: link.clone(),
+            backup_path: Some(backup.clone()),
+            backup_exists: true,
+        };
+        let mut repo_state = RepoState::new_for_git(PathBuf::from("."), PathBuf::from("."));
+        action_execute(&action, &mut repo_state).unwrap();
+        assert!(is_symlink(&link));
+
+        // Make link's parent read-only so that rollback's copy_file fails
+        fs::set_permissions(dir.path(), Permissions::from_mode(0o555)).unwrap();
+
+        let rollback_action = action_rollback(&action).unwrap();
+        let result = action_execute(&rollback_action, &mut repo_state);
+
+        assert!(
+            result.is_err(),
+            "Rollback should fail when dest parent is read-only"
         );
     }
 }
