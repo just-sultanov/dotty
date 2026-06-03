@@ -2,7 +2,6 @@ use std::path::Path;
 
 use tracing::warn;
 
-use crate::err_msg;
 use crate::error::DottyError;
 use crate::paths::repo_to_target;
 use crate::platform::KNOWN_PLATFORMS;
@@ -68,49 +67,49 @@ impl MachineName {
         if name.trim().is_empty() {
             return Err(DottyError::InvalidMachineName {
                 name: name.to_string(),
-                reason: err_msg!("machine name cannot be empty"),
+                reason: "machine name cannot be empty".into(),
             });
         }
         // Block hidden names (starting with dot)
         if name.starts_with('.') {
             return Err(DottyError::InvalidMachineName {
                 name: name.to_string(),
-                reason: err_msg!("machine name cannot start with a dot"),
+                reason: "machine name cannot start with a dot".into(),
             });
         }
         // Block parent directory references (path traversal prevention)
         if name.contains("..") {
             return Err(DottyError::InvalidMachineName {
                 name: name.to_string(),
-                reason: err_msg!("machine name cannot contain '..'"),
+                reason: "machine name cannot contain '..'".into(),
             });
         }
         // Block Unix path separators (prevents directory traversal)
         if name.contains('/') {
             return Err(DottyError::InvalidMachineName {
                 name: name.to_string(),
-                reason: err_msg!("machine name cannot contain '/'"),
+                reason: "machine name cannot contain '/'".into(),
             });
         }
         // Block Windows path separators (prevents cross-platform traversal)
         if name.contains('\\') {
             return Err(DottyError::InvalidMachineName {
                 name: name.to_string(),
-                reason: err_msg!("machine name cannot contain '\\'"),
+                reason: "machine name cannot contain '\\'".into(),
             });
         }
         // Block reserved name 'base'
         if name == "base" {
             return Err(DottyError::InvalidMachineName {
                 name: name.to_string(),
-                reason: err_msg!("'base' is a reserved name"),
+                reason: "'base' is a reserved name".into(),
             });
         }
         // Block reserved platform names
         if KNOWN_PLATFORMS.contains(&name) {
             return Err(DottyError::InvalidMachineName {
                 name: name.to_string(),
-                reason: err_msg!("'{}' is a reserved platform name", name),
+                reason: format!("'{}' is a reserved platform name", name),
             });
         }
         // Whitelist validation: only allow alphanumeric, hyphens, and underscores
@@ -119,9 +118,7 @@ impl MachineName {
             if !c.is_alphanumeric() && c != '-' && c != '_' {
                 return Err(DottyError::InvalidMachineName {
                     name: name.to_string(),
-                    reason: err_msg!(
-                        "machine name can only contain alphanumeric characters, hyphens, and underscores"
-                    ),
+                    reason: "machine name can only contain alphanumeric characters, hyphens, and underscores".into(),
                 });
             }
         }

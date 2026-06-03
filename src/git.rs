@@ -4,7 +4,6 @@ use std::process::{Command, Output};
 
 use tracing::debug;
 
-use crate::err_msg;
 use crate::error::DottyError;
 use crate::repo_state::RepoState;
 
@@ -28,7 +27,7 @@ pub(crate) fn git_run_raw(dir: &Path, args: &[&str]) -> Result<Output, DottyErro
             } else {
                 DottyError::Git {
                     exit_code: -1,
-                    stderr: err_msg!("failed to execute git: {}", e),
+                    stderr: format!("failed to execute git: {}", e),
                 }
             }
         })?;
@@ -47,7 +46,7 @@ pub(crate) fn git_run(dir: &Path, args: &[&str]) -> Result<String, DottyError> {
         let exit_code = output.status.code().unwrap_or(-1);
         return Err(DottyError::Git {
             exit_code,
-            stderr: err_msg!("git {} failed: {}", args.join(" "), stderr),
+            stderr: format!("git {} failed: {}", args.join(" "), stderr),
         });
     }
 
@@ -64,7 +63,7 @@ pub fn git_init(dir: &Path) -> Result<(), DottyError> {
 pub fn git_clone(url: &str, dir: &Path) -> Result<(), DottyError> {
     let parent = dir.parent().ok_or_else(|| DottyError::PathResolution {
         path: dir.to_path_buf(),
-        reason: err_msg!("cannot determine parent of: {}", dir.display()),
+        reason: format!("cannot determine parent of: {}", dir.display()),
     })?;
 
     // Prevent cloning into the root directory
@@ -82,7 +81,7 @@ pub fn git_clone(url: &str, dir: &Path) -> Result<(), DottyError> {
             url,
             dir.to_str().ok_or_else(|| DottyError::PathResolution {
                 path: dir.to_path_buf(),
-                reason: err_msg!("path is not valid UTF-8: {}", dir.display()),
+                reason: format!("path is not valid UTF-8: {}", dir.display()),
             })?,
         ],
     )?;

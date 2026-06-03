@@ -5,7 +5,6 @@ use crate::backups::backup_timestamp;
 use crate::config::Config;
 use crate::config::write_config;
 use crate::convention::MachineName;
-use crate::err_msg;
 use crate::error::DottyError;
 use crate::fs_utils::walk_dir;
 use crate::git;
@@ -364,7 +363,7 @@ fn warn_non_xdg_non_interactive(target_path: &Path) -> Result<(), DottyError> {
     if is_sensitive_system_path(target_path) {
         return Err(DottyError::InvalidTargetPath {
             path: target_path.to_string_lossy().to_string(),
-            reason: err_msg!(
+            reason: format!(
                 "'{}' is under a sensitive system directory",
                 target_path.display()
             ),

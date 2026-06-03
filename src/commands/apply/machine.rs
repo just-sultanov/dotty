@@ -4,7 +4,6 @@ use anyhow::Result;
 
 use crate::config::write_config;
 use crate::convention::scan_machine_directories;
-use crate::err_msg;
 use crate::error::DottyError;
 use crate::prompt::prompt_machine_selection;
 
@@ -32,11 +31,11 @@ pub(crate) fn resolve_machine(
 
     if dry_run {
         if known.is_empty() {
-            return Err(DottyError::CommandError(err_msg!(
-                "No machine configured and no known machines in repo. Run `dotty init` or `dotty config machine <name>` first."
-            )));
+            return Err(DottyError::CommandError(
+                "No machine configured and no known machines in repo. Run `dotty init` or `dotty config machine <name>` first.".into()
+            ));
         }
-        return Err(DottyError::CommandError(err_msg!(
+        return Err(DottyError::CommandError(format!(
             "No machine configured. Known machines in repo: {}. Run `dotty config machine <name>` to select one.",
             known.join(", ")
         )));

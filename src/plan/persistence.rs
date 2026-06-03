@@ -11,8 +11,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::err_msg;
-
 use super::{Action, Plan};
 
 /// Filename for the pending plan file inside the state directory.
@@ -101,13 +99,13 @@ pub(crate) fn load_pending_plan(
     let repo_path = PathBuf::from(&pending.repo_path);
     if !repo_path.is_dir() {
         return Err(crate::error::DottyError::PendingPlanInvalid {
-            reason: err_msg!("repository no longer exists at {}", repo_path.display()),
+            reason: format!("repository no longer exists at {}", repo_path.display()),
             source: None,
         });
     }
     if !repo_path.join(".git").exists() {
         return Err(crate::error::DottyError::PendingPlanInvalid {
-            reason: err_msg!("path is not a git repository: {}", repo_path.display()),
+            reason: format!("path is not a git repository: {}", repo_path.display()),
             source: None,
         });
     }
@@ -116,7 +114,7 @@ pub(crate) fn load_pending_plan(
     // `git rev-parse --git-dir` is extremely fast (<10ms) and safe — it only reads metadata.
     let output = crate::git::git_run_raw(&repo_path, &["rev-parse", "--git-dir"]).map_err(|e| {
         crate::error::DottyError::PendingPlanInvalid {
-            reason: err_msg!(
+            reason: format!(
                 "git command failed for pending plan repo at {}",
                 repo_path.display()
             ),
@@ -125,7 +123,7 @@ pub(crate) fn load_pending_plan(
     })?;
     if !output.status.success() {
         return Err(crate::error::DottyError::PendingPlanInvalid {
-            reason: err_msg!("repository at {} is corrupted", repo_path.display()),
+            reason: format!("repository at {} is corrupted", repo_path.display()),
             source: None,
         });
     }
