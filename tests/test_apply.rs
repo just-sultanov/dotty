@@ -199,10 +199,22 @@ fn apply_platform_tier_overrides_base() {
     env.run_ok(&["apply"]);
 
     // On macOS the platform tier should win; on other platforms base wins.
-    // We can't control detect_platform() from integration tests, so we just
-    // verify that apply succeeds and creates a symlink.
+    // Verify the symlink target to prevent silent false-positives where
+    // only the base tier is applied but the test passes.
     let target = env.home.join(".config/editor.conf");
     assert!(target.is_symlink(), "symlink not created");
+    let link_target = std::fs::read_link(&target).unwrap();
+    let expected_suffix: &std::path::Path = if cfg!(target_os = "macos") {
+        std::path::Path::new("macos/home/.config/editor.conf")
+    } else {
+        std::path::Path::new("base/home/.config/editor.conf")
+    };
+    assert!(
+        link_target.ends_with(expected_suffix),
+        "expected symlink to end with {:?}, got {}",
+        expected_suffix,
+        link_target.display()
+    );
 }
 
 // ---------------------------------------------------------------------------
