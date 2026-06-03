@@ -17,3 +17,35 @@ pub fn detect_platform() -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_known_platforms_contains_expected() {
+        assert!(KNOWN_PLATFORMS.contains(&"macos"));
+        assert!(KNOWN_PLATFORMS.contains(&"linux"));
+        assert!(KNOWN_PLATFORMS.contains(&"freebsd"));
+        assert_eq!(KNOWN_PLATFORMS.len(), 3);
+    }
+
+    #[test]
+    fn test_detect_platform_returns_known() {
+        let platform = detect_platform();
+        assert!(platform.is_some());
+        let p = platform.unwrap();
+        assert!(KNOWN_PLATFORMS.contains(&p.as_str()));
+    }
+
+    #[test]
+    fn test_detect_platform_current_platform() {
+        let platform = detect_platform().unwrap();
+        #[cfg(target_os = "macos")]
+        assert_eq!(platform, "macos");
+        #[cfg(target_os = "linux")]
+        assert_eq!(platform, "linux");
+        #[cfg(target_os = "freebsd")]
+        assert_eq!(platform, "freebsd");
+    }
+}

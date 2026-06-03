@@ -139,6 +139,112 @@ fn prompt_machine_from_repo(repo_path: &Path) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    // Tests for scan_machine_directories and validate_machine_name live in convention.rs.
-    // Integration tests for init live in tests/test_init.rs.
+    use super::*;
+    use std::fs;
+
+    /// Helper: create a temp directory for test isolation.
+    fn test_dir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
+    }
+
+    /// Helper: initialize a minimal git repo at the given path.
+    fn init_git_repo(path: &Path) {
+        fs::create_dir_all(path).unwrap();
+        std::process::Command::new("git")
+            .current_dir(path)
+            .args(["init"])
+            .output()
+            .unwrap();
+    }
+
+    // -- create_fresh_repo tests --
+
+    #[test]
+    fn test_create_fresh_repo_creates_structure() {
+        let dir = test_dir();
+        let repo_path = dir.path().join("fresh");
+        create_fresh_repo(&repo_path).unwrap();
+
+        assert!(repo_path.join(".git").is_dir());
+        assert!(repo_path.join("base/home").is_dir());
+    }
+
+    #[test]
+    fn test_create_fresh_repo_idempotent_when_git_exists() {
+        let dir = test_dir();
+        let repo_path = dir.path().join("existing");
+        create_fresh_repo(&repo_path).unwrap();
+        assert!(repo_path.join(".git").is_dir());
+
+        // Second call should succeed (idempotent)
+        create_fresh_repo(&repo_path).unwrap();
+        assert!(repo_path.join(".git").is_dir());
+    }
+
+    #[test]
+    fn test_create_fresh_repo_existing_git_dir() {
+        let dir = test_dir();
+        let repo_path = dir.path().join("has_git");
+        init_git_repo(&repo_path);
+
+        // Already has .git, should return Ok without error
+        create_fresh_repo(&repo_path).unwrap();
+    }
+
+    // -- clone_repo pre-check tests --
+
+    #[test]
+    fn test_clone_repo_fails_when_git_exists() {
+        let dir = test_dir();
+        let repo_path = dir.path().join("has_git");
+        init_git_repo(&repo_path);
+
+        let result = clone_repo("https://example.com/repo.git", &repo_path);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::GitAlreadyInitialized { path } => {
+                assert!(path.contains("has_git"));
+            }
+            _ => panic!("expected GitAlreadyInitialized error"),
+        }
+    }
+
+    #[test]
+    fn test_clone_repo_fails_when_dir_not_empty() {
+        let dir = test_dir();
+        let repo_path = dir.path().join("nonempty");
+        fs::create_dir_all(&repo_path).unwrap();
+        fs::write(repo_path.join("stale_file"), "content").unwrap();
+
+        let result = clone_repo("https://example.com/repo.git", &repo_path);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::InitDirectoryNotEmpty { path } => {
+                assert!(path.contains("nonempty"));
+            }
+            _ => panic!("expected InitDirectoryNotEmpty error"),
+        }
+    }
+
+    // -- ensure_state_dir tests --
+
+    #[test]
+    fn test_ensure_state_dir_creates_directory() {
+        let dir = test_dir();
+        let state_path = dir.path().join("state/deep/nested");
+        assert!(!state_path.exists());
+
+        ensure_state_dir(&state_path).unwrap();
+        assert!(state_path.is_dir());
+    }
+
+    #[test]
+    fn test_ensure_state_dir_succeeds_when_exists() {
+        let dir = test_dir();
+        let state_path = dir.path().join("existing");
+        fs::create_dir_all(&state_path).unwrap();
+
+        ensure_state_dir(&state_path).unwrap();
+        assert!(state_path.is_dir());
+    }
 }

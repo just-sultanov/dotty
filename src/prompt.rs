@@ -190,4 +190,112 @@ mod tests {
             assert!(!is_interactive(), "should not be interactive when CI=1");
         });
     }
+
+    /// Test that is_interactive returns false when CI is set to empty string.
+    #[test]
+    fn test_is_interactive_ci_empty() {
+        temp_env::with_var("CI", Some(""), || {
+            assert!(
+                !is_interactive(),
+                "should not be interactive when CI is set"
+            );
+        });
+    }
+
+    /// Test map_dialoguer_error: aborted error maps to Cancelled.
+    #[test]
+    fn test_map_dialoguer_error_aborted() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "user aborted");
+        let err = dialoguer::Error::from(io_err);
+        let mapped = map_dialoguer_error(err);
+        assert!(matches!(mapped, DottyError::Cancelled));
+    }
+
+    /// Test map_dialoguer_error: non-aborted error maps to Prompt.
+    #[test]
+    fn test_map_dialoguer_error_other() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "broken pipe");
+        let err = dialoguer::Error::from(io_err);
+        let mapped = map_dialoguer_error(err);
+        assert!(matches!(mapped, DottyError::Prompt(_)));
+    }
+
+    /// Test require_interactive returns NotInteractive in CI.
+    #[test]
+    fn test_require_interactive_not_interactive() {
+        temp_env::with_var("CI", Some("1"), || {
+            let result = require_interactive();
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                DottyError::NotInteractive { .. }
+            ));
+        });
+    }
+
+    /// Test prompt_confirm returns NotInteractive in CI.
+    #[test]
+    fn test_prompt_confirm_non_interactive() {
+        temp_env::with_var("CI", Some("1"), || {
+            let result = prompt_confirm("test prompt");
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                DottyError::NotInteractive { .. }
+            ));
+        });
+    }
+
+    /// Test prompt_input returns NotInteractive in CI.
+    #[test]
+    fn test_prompt_input_non_interactive() {
+        temp_env::with_var("CI", Some("1"), || {
+            let result: Result<String, DottyError> = prompt_input("test input");
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                DottyError::NotInteractive { .. }
+            ));
+        });
+    }
+
+    /// Test prompt_select returns NotInteractive in CI.
+    #[test]
+    fn test_prompt_select_non_interactive() {
+        temp_env::with_var("CI", Some("1"), || {
+            let result = prompt_select("test select", &["a", "b"]);
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                DottyError::NotInteractive { .. }
+            ));
+        });
+    }
+
+    /// Test prompt_machine_selection returns NotInteractive in CI.
+    #[test]
+    fn test_prompt_machine_selection_non_interactive() {
+        temp_env::with_var("CI", Some("1"), || {
+            let result = prompt_machine_selection(&[]);
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                DottyError::NotInteractive { .. }
+            ));
+        });
+    }
+
+    /// Test prompt_machine_selection with known machines in CI returns NotInteractive.
+    #[test]
+    fn test_prompt_machine_selection_known_machines_non_interactive() {
+        temp_env::with_var("CI", Some("1"), || {
+            let known = vec!["macbook".to_string(), "server".to_string()];
+            let result = prompt_machine_selection(&known);
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                DottyError::NotInteractive { .. }
+            ));
+        });
+    }
 }
