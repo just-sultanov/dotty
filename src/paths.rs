@@ -122,11 +122,11 @@ fn validate_no_dotdot(result: &Path, original: &Path) -> Result<(), DottyError> 
 /// Return the user's home directory.
 ///
 /// Checks `$HOME` first (for cross-platform consistency and testability),
-/// then falls back to `std::env::home_dir()` which consults platform-specific
+/// then falls back to `home::home_dir()` which consults platform-specific
 /// mechanisms (`USERPROFILE` on Windows, `$HOME` on Unix).
 pub fn home_dir() -> Result<PathBuf, DottyError> {
     // Check $HOME first for cross-platform consistency.
-    // On Windows std::env::home_dir() reads USERPROFILE, not HOME,
+    // On Windows home::home_dir() reads USERPROFILE, not HOME,
     // so tests that set HOME to a temp dir would fail without this.
     if let Ok(home) = env::var("HOME") {
         let path = PathBuf::from(home);
@@ -134,7 +134,7 @@ pub fn home_dir() -> Result<PathBuf, DottyError> {
             return Ok(path);
         }
     }
-    std::env::home_dir().ok_or_else(|| {
+    home::home_dir().ok_or_else(|| {
         DottyError::MissingHomeDirectory(
             "HOME environment variable not set and unable to determine user home directory".into(),
         )
@@ -516,7 +516,7 @@ mod tests {
 
     #[test]
     fn test_format_target_display_home_dir_failure() {
-        // When HOME is unset and std::env::home_dir() returns None,
+        // When HOME is unset and home::home_dir() returns None,
         // format_target_display falls back to the full path.
         let path = PathBuf::from("/home/user/.vimrc");
         let formatted = temp_env::with_var_unset("HOME", || format_target_display(&path));
