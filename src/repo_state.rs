@@ -34,19 +34,6 @@ pub(crate) struct RepoState {
     pub git_identity_valid: bool,
 }
 
-// Explicit thread-safety bounds.
-//
-// Safe because all fields are inherently `Send + Sync`:
-// - `PathBuf`: `Send + Sync`
-// - `bool`: `Send + Sync`
-// - `Config`: derives `Clone`, contains only `Send + Sync` types
-//
-// These impls are `unsafe` because we're asserting properties that
-// the compiler cannot automatically verify, but they're sound
-// because we're only asserting what the fields already guarantee.
-unsafe impl Send for RepoState {}
-unsafe impl Sync for RepoState {}
-
 impl RepoState {
     /// Create a new `RepoState` by resolving paths and reading config.
     ///
