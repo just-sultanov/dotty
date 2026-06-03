@@ -139,17 +139,7 @@ fn remove_with_commit_stages_and_commits() {
     );
 
     // There should be a commit for the removal
-    let log_output = std::process::Command::new("git")
-        .current_dir(&env.repo)
-        .args(["log", "--oneline"])
-        .output()
-        .unwrap();
-    let log = String::from_utf8_lossy(&log_output.stdout);
-    assert!(
-        log.contains("remove testrc"),
-        "commit message not found in git log:\n{}",
-        log
-    );
+    assert_eq!(env.git_log(), "remove testrc");
 }
 
 #[test]

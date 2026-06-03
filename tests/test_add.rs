@@ -25,6 +25,8 @@ fn add_file_with_spaces_in_name() {
         "add app config",
     ]);
 
+    assert_eq!(env.git_log(), "add app config");
+
     let tracked = env.tracked_files();
     assert!(
         tracked.contains(&"base/home/.config/my app/config".to_string()),
@@ -51,6 +53,8 @@ fn add_file_with_unicode_name() {
         "--commit",
         "add unicode file",
     ]);
+
+    assert_eq!(env.git_log(), "add unicode file");
 
     let tracked = env.tracked_files();
     let has_file = tracked
@@ -82,6 +86,8 @@ fn add_file_with_quotes_in_name() {
         "add quoted file",
     ]);
 
+    assert_eq!(env.git_log(), "add quoted file");
+
     let tracked = env.tracked_files();
     assert!(
         tracked.iter().any(|f| f.contains("it's a config")),
@@ -102,6 +108,8 @@ fn add_remove_file_with_special_chars_roundtrip() {
     // Add a file with spaces
     let target = env.create_file(".config/my app/settings", "setting=value");
     env.run_ok(&["add", target.to_str().unwrap(), "--commit", "add settings"]);
+
+    assert_eq!(env.git_log(), "add settings");
 
     assert!(target.is_symlink());
 
@@ -127,6 +135,8 @@ fn add_single_file_to_base() {
 
     // Add it (using --commit to stage+commit in one go)
     env.run_ok(&["add", target.to_str().unwrap(), "--commit", "add vimrc"]);
+
+    assert_eq!(env.git_log(), "add vimrc");
 
     // File copied into repo at base/home/.vimrc
     let tracked = env.tracked_files();
@@ -161,6 +171,8 @@ fn add_file_to_machine_tier() {
         "add gitconfig",
     ]);
 
+    assert_eq!(env.git_log(), "add gitconfig");
+
     let tracked = env.tracked_files();
     assert!(
         tracked.contains(&"mybox/home/.gitconfig".to_string()),
@@ -188,6 +200,8 @@ fn add_file_to_platform_tier() {
         "--commit",
         "add skhdrc",
     ]);
+
+    assert_eq!(env.git_log(), "add skhdrc");
 
     let tracked = env.tracked_files();
     assert!(
@@ -218,6 +232,8 @@ fn add_directory_recursively() {
     .unwrap();
 
     env.run_ok(&["add", dir.to_str().unwrap(), "--commit", "add nvim config"]);
+
+    assert_eq!(env.git_log(), "add nvim config");
 
     let tracked = env.tracked_files();
     assert!(tracked.contains(&"base/home/.config/nvim/init.lua".to_string()));
@@ -289,6 +305,8 @@ fn add_updates_managed_map() {
     let target = env.create_file(".testrc", "managed map test");
 
     env.run_ok(&["add", target.to_str().unwrap(), "--commit", "add testrc"]);
+
+    assert_eq!(env.git_log(), "add testrc");
 
     let config = env.read_config();
     // The managed map should contain the repo path

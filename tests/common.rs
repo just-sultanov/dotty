@@ -212,6 +212,23 @@ impl TestEnv {
             .collect()
     }
 
+    /// Run `git log --oneline -1 --format=%s` in the test repo.
+    /// Returns the full commit subject line (trimmed), or panics on failure.
+    pub fn git_log(&self) -> String {
+        let out = Command::new("git")
+            .current_dir(&self.repo)
+            .args(["log", "--oneline", "-1", "--format=%s"])
+            .output()
+            .expect("git log");
+        assert!(
+            out.status.success(),
+            "git log failed (exit {})\nstderr: {}",
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
     /// Check if a path is a symlink pointing to the expected target.
     pub fn assert_symlink(&self, link: &Path, expected_target: &Path) {
         assert!(link.is_symlink(), "{} is not a symlink", link.display());
