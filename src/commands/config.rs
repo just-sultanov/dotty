@@ -1,14 +1,14 @@
 use anyhow::Result;
 
 use crate::config::{read_config, write_config};
-use crate::convention::validate_machine_name;
+use crate::convention::MachineName;
 use crate::paths::resolve_state_path;
 
 /// Set the current machine name.
 ///
 /// Writes the machine name to `config.toml` in the state directory.
 pub fn set_machine(name: String) -> Result<()> {
-    validate_machine_name(&name)?;
+    MachineName::new(&name)?;
 
     let state_path = resolve_state_path()?;
 

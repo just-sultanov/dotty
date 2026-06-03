@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::backups::backup_timestamp;
 use crate::config::Config;
 use crate::config::write_config;
+use crate::convention::MachineName;
 use crate::err_msg;
 use crate::error::DottyError;
 use crate::fs_utils::walk_dir;
@@ -35,7 +36,7 @@ pub fn run(
     let target_path = expand_tilde(&path)?;
 
     // Determine scope (tier directory name)
-    let scope = resolve_scope(&machine, &platform);
+    let scope = resolve_scope(&machine, &platform)?;
 
     // Reject paths inside the dotty repo itself.
     // Two-layer defense: (1) canonicalize both paths and compare, (2) string-prefix fallback
@@ -294,14 +295,19 @@ pub(crate) fn build_add_plan(
 
 /// Resolve the scope (tier directory name) from --machine / --platform flags.
 ///
+/// Validates the machine name if provided.
 /// Priority: --machine > --platform > "base" (default).
-fn resolve_scope(machine: &Option<String>, platform: &Option<String>) -> String {
+fn resolve_scope(
+    machine: &Option<String>,
+    platform: &Option<String>,
+) -> Result<String, DottyError> {
     if let Some(name) = machine {
-        name.clone()
+        MachineName::new(name)?;
+        Ok(name.clone())
     } else if let Some(name) = platform {
-        name.clone()
+        Ok(name.clone())
     } else {
-        "base".to_string()
+        Ok("base".to_string())
     }
 }
 
@@ -734,25 +740,25 @@ mod tests {
 
     #[test]
     fn test_resolve_scope_machine() {
-        let scope = resolve_scope(&Some("macbook".into()), &None);
+        let scope = resolve_scope(&Some("macbook".into()), &None).unwrap();
         assert_eq!(scope, "macbook");
     }
 
     #[test]
     fn test_resolve_scope_platform() {
-        let scope = resolve_scope(&None, &Some("macos".into()));
+        let scope = resolve_scope(&None, &Some("macos".into())).unwrap();
         assert_eq!(scope, "macos");
     }
 
     #[test]
     fn test_resolve_scope_default() {
-        let scope = resolve_scope(&None, &None);
+        let scope = resolve_scope(&None, &None).unwrap();
         assert_eq!(scope, "base");
     }
 
     #[test]
     fn test_resolve_scope_machine_over_platform() {
-        let scope = resolve_scope(&Some("macbook".into()), &Some("macos".into()));
+        let scope = resolve_scope(&Some("macbook".into()), &Some("macos".into())).unwrap();
         assert_eq!(scope, "macbook");
     }
 

@@ -47,74 +47,91 @@ pub fn scan_machine_directories(repo_path: &Path) -> Vec<String> {
     machines
 }
 
-/// Validate a machine name.
+/// A validated machine name.
 ///
-/// Rejects empty names, reserved names (`base`, platform dirs), hidden names
-/// (starting with `.`), and names containing path traversal (`..`).
-/// Only allows alphanumeric characters, hyphens, and underscores.
-pub fn validate_machine_name(name: &str) -> Result<(), DottyError> {
-    // Block empty or whitespace-only names
-    if name.trim().is_empty() {
-        return Err(DottyError::InvalidMachineName {
-            name: name.to_string(),
-            reason: err_msg!("machine name cannot be empty"),
-        });
-    }
-    // Block hidden names (starting with dot)
-    if name.starts_with('.') {
-        return Err(DottyError::InvalidMachineName {
-            name: name.to_string(),
-            reason: err_msg!("machine name cannot start with a dot"),
-        });
-    }
-    // Block parent directory references (path traversal prevention)
-    if name.contains("..") {
-        return Err(DottyError::InvalidMachineName {
-            name: name.to_string(),
-            reason: err_msg!("machine name cannot contain '..'"),
-        });
-    }
-    // Block Unix path separators (prevents directory traversal)
-    if name.contains('/') {
-        return Err(DottyError::InvalidMachineName {
-            name: name.to_string(),
-            reason: err_msg!("machine name cannot contain '/'"),
-        });
-    }
-    // Block Windows path separators (prevents cross-platform traversal)
-    if name.contains('\\') {
-        return Err(DottyError::InvalidMachineName {
-            name: name.to_string(),
-            reason: err_msg!("machine name cannot contain '\\'"),
-        });
-    }
-    // Block reserved name 'base'
-    if name == "base" {
-        return Err(DottyError::InvalidMachineName {
-            name: name.to_string(),
-            reason: err_msg!("'base' is a reserved name"),
-        });
-    }
-    // Block reserved platform names
-    if KNOWN_PLATFORMS.contains(&name) {
-        return Err(DottyError::InvalidMachineName {
-            name: name.to_string(),
-            reason: err_msg!("'{}' is a reserved platform name", name),
-        });
-    }
-    // Whitelist validation: only allow alphanumeric, hyphens, and underscores
-    // This blocks URL-encoded chars, control chars, null bytes, and any other invalid chars
-    for c in name.chars() {
-        if !c.is_alphanumeric() && c != '-' && c != '_' {
+/// Guarantees that the inner `String` satisfies all machine-name constraints.
+/// Validation rules:
+/// - Must not be empty or whitespace-only
+/// - Must not start with a dot (hidden names)
+/// - Must not contain `..` (path traversal)
+/// - Must not contain `/` or `\\` (path separators)
+/// - Must not be `base` (reserved)
+/// - Must not match a known platform name
+/// - Must only contain alphanumeric characters, hyphens, and underscores
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MachineName(String);
+
+impl MachineName {
+    /// Validate and construct a `MachineName`.
+    pub fn new(name: &str) -> Result<Self, DottyError> {
+        // Block empty or whitespace-only names
+        if name.trim().is_empty() {
             return Err(DottyError::InvalidMachineName {
                 name: name.to_string(),
-                reason: err_msg!(
-                    "machine name can only contain alphanumeric characters, hyphens, and underscores"
-                ),
+                reason: err_msg!("machine name cannot be empty"),
             });
         }
+        // Block hidden names (starting with dot)
+        if name.starts_with('.') {
+            return Err(DottyError::InvalidMachineName {
+                name: name.to_string(),
+                reason: err_msg!("machine name cannot start with a dot"),
+            });
+        }
+        // Block parent directory references (path traversal prevention)
+        if name.contains("..") {
+            return Err(DottyError::InvalidMachineName {
+                name: name.to_string(),
+                reason: err_msg!("machine name cannot contain '..'"),
+            });
+        }
+        // Block Unix path separators (prevents directory traversal)
+        if name.contains('/') {
+            return Err(DottyError::InvalidMachineName {
+                name: name.to_string(),
+                reason: err_msg!("machine name cannot contain '/'"),
+            });
+        }
+        // Block Windows path separators (prevents cross-platform traversal)
+        if name.contains('\\') {
+            return Err(DottyError::InvalidMachineName {
+                name: name.to_string(),
+                reason: err_msg!("machine name cannot contain '\\'"),
+            });
+        }
+        // Block reserved name 'base'
+        if name == "base" {
+            return Err(DottyError::InvalidMachineName {
+                name: name.to_string(),
+                reason: err_msg!("'base' is a reserved name"),
+            });
+        }
+        // Block reserved platform names
+        if KNOWN_PLATFORMS.contains(&name) {
+            return Err(DottyError::InvalidMachineName {
+                name: name.to_string(),
+                reason: err_msg!("'{}' is a reserved platform name", name),
+            });
+        }
+        // Whitelist validation: only allow alphanumeric, hyphens, and underscores
+        // This blocks URL-encoded chars, control chars, null bytes, and any other invalid chars
+        for c in name.chars() {
+            if !c.is_alphanumeric() && c != '-' && c != '_' {
+                return Err(DottyError::InvalidMachineName {
+                    name: name.to_string(),
+                    reason: err_msg!(
+                        "machine name can only contain alphanumeric characters, hyphens, and underscores"
+                    ),
+                });
+            }
+        }
+        Ok(MachineName(name.to_string()))
     }
-    Ok(())
+
+    /// Consume the newtype and return the inner `String`.
+    pub fn into_string(self) -> String {
+        self.0
+    }
 }
 
 /// Classify a repo-relative path into its tier.
@@ -258,63 +275,103 @@ mod tests {
 
     #[test]
     fn test_validate_machine_name_rejects_empty() {
-        assert!(validate_machine_name("").is_err());
-        assert!(validate_machine_name("   ").is_err());
+        assert!(MachineName::new("").is_err());
+        assert!(MachineName::new("   ").is_err());
     }
 
     #[test]
     fn test_validate_machine_name_accepts_valid() {
-        assert!(validate_machine_name("macbook").is_ok());
-        assert!(validate_machine_name("ubuntu-work").is_ok());
+        assert!(MachineName::new("macbook").is_ok());
+        assert!(MachineName::new("ubuntu-work").is_ok());
     }
 
     #[test]
     fn test_validate_machine_name_rejects_slash() {
-        assert!(validate_machine_name("foo/bar").is_err());
-        assert!(validate_machine_name("foo/../bar").is_err());
+        assert!(MachineName::new("foo/bar").is_err());
+        assert!(MachineName::new("foo/../bar").is_err());
     }
 
     #[test]
     fn test_validate_machine_name_rejects_backslash() {
         // Windows path separator should be rejected
-        assert!(validate_machine_name("foo\\bar").is_err());
-        assert!(validate_machine_name("..\\etc\\passwd").is_err());
+        assert!(MachineName::new("foo\\bar").is_err());
+        assert!(MachineName::new("..\\etc\\passwd").is_err());
     }
 
     #[test]
     fn test_validate_machine_name_rejects_dotdot_in_middle() {
         // Machine names with '..' in the middle should be rejected
-        assert!(validate_machine_name("mac..book").is_err());
-        assert!(validate_machine_name("test..machine").is_err());
+        assert!(MachineName::new("mac..book").is_err());
+        assert!(MachineName::new("test..machine").is_err());
     }
 
     #[test]
     fn test_validate_machine_name_rejects_url_encoded() {
         // URL-encoded '..' should be rejected
-        assert!(validate_machine_name("my%2e%2emachine").is_err());
+        assert!(MachineName::new("my%2e%2emachine").is_err());
         // URL-encoded '/..' should be rejected
-        assert!(validate_machine_name("test%2f..%2fetc").is_err());
+        assert!(MachineName::new("test%2f..%2fetc").is_err());
     }
 
     #[test]
     fn test_validate_machine_name_rejects_null_byte() {
         // Null bytes should be rejected
-        assert!(validate_machine_name("machine\0hack").is_err());
+        assert!(MachineName::new("machine\0hack").is_err());
     }
 
     #[test]
     fn test_validate_machine_name_rejects_control_chars() {
         // Control characters should be rejected
-        assert!(validate_machine_name("machine\tname").is_err());
-        assert!(validate_machine_name("machine\nname").is_err());
+        assert!(MachineName::new("machine\tname").is_err());
+        assert!(MachineName::new("machine\nname").is_err());
     }
 
     #[test]
     fn test_validate_machine_name_accepts_hyphens_and_underscores() {
         // Hyphens and underscores should be allowed
-        assert!(validate_machine_name("valid-machine-name").is_ok());
-        assert!(validate_machine_name("valid_machine_name").is_ok());
-        assert!(validate_machine_name("valid-machine_name123").is_ok());
+        assert!(MachineName::new("valid-machine-name").is_ok());
+        assert!(MachineName::new("valid_machine_name").is_ok());
+        assert!(MachineName::new("valid-machine_name123").is_ok());
+    }
+
+    // -- MachineName::new tests --
+
+    #[test]
+    fn test_machine_name_new_valid() {
+        let m = MachineName::new("macbook").unwrap();
+        assert_eq!(m.into_string(), "macbook");
+    }
+
+    #[test]
+    fn test_machine_name_new_rejects_empty() {
+        assert!(MachineName::new("").is_err());
+        assert!(MachineName::new("   ").is_err());
+    }
+
+    #[test]
+    fn test_machine_name_new_rejects_invalid_chars() {
+        assert!(MachineName::new("foo/bar").is_err());
+        assert!(MachineName::new("foo\\bar").is_err());
+        assert!(MachineName::new("..").is_err());
+        assert!(MachineName::new("machine\0hack").is_err());
+        assert!(MachineName::new("machine\tname").is_err());
+    }
+
+    #[test]
+    fn test_machine_name_new_rejects_reserved() {
+        assert!(MachineName::new("base").is_err());
+        assert!(MachineName::new("macos").is_err());
+        assert!(MachineName::new("linux").is_err());
+        assert!(MachineName::new(".hidden").is_err());
+    }
+
+    #[test]
+    fn test_machine_name_new_equality() {
+        let a = MachineName::new("my-machine").unwrap();
+        let b = MachineName::new("my-machine").unwrap();
+        let c = MachineName::new("other").unwrap();
+        assert_eq!(a, b);
+        assert_ne!(a, c);
     }
 
     // -- classify_tier tests --

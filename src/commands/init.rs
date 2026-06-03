@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::config::{read_config, write_config};
-use crate::convention::{scan_machine_directories, validate_machine_name};
+use crate::convention::{MachineName, scan_machine_directories};
 use crate::error::DottyError;
 use crate::git::{git_clone, git_init};
 use crate::paths::{resolve_repo_path, resolve_state_path};
@@ -26,16 +26,14 @@ pub fn run(git_url: Option<String>, machine: Option<String>) -> Result<()> {
         // Clone mode: clone repo, then resolve machine name
         clone_repo(url, &repo_path)?;
         if let Some(name) = machine {
-            validate_machine_name(&name)?;
-            name
+            MachineName::new(&name)?.into_string()
         } else {
             prompt_machine_from_repo(&repo_path)?
         }
     } else if let Some(name) = machine {
         // Fresh repo with explicit machine name (no prompt)
         create_fresh_repo(&repo_path)?;
-        validate_machine_name(&name)?;
-        name
+        MachineName::new(&name)?.into_string()
     } else {
         // Fresh repo: prompt for machine name
         create_fresh_repo(&repo_path)?;
@@ -119,7 +117,7 @@ fn ensure_state_dir(state_path: &Path) -> Result<()> {
 fn prompt_machine_name() -> Result<String> {
     let name =
         crate::prompt::prompt_input("What is this machine called? (e.g. macbook, ubuntu-work)")?;
-    validate_machine_name(&name)?;
+    MachineName::new(&name)?;
     Ok(name)
 }
 
@@ -135,7 +133,7 @@ fn prompt_machine_name() -> Result<String> {
 fn prompt_machine_from_repo(repo_path: &Path) -> Result<String> {
     let known_machines = scan_machine_directories(repo_path);
     let name = prompt_machine_selection(&known_machines)?;
-    validate_machine_name(&name)?;
+    MachineName::new(&name)?;
     Ok(name)
 }
 
