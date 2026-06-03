@@ -680,7 +680,10 @@ mod tests {
             let total_hops = MAX_SYMLINK_HOPS - 2 + extra_hops;
 
             // Create a chain approaching the hop limit
-            let mut prev_path = PathBuf::new();
+            // Create a real target file as the chain's starting point
+            let target = dir.path().join("target");
+            std::fs::write(&target, b"content").unwrap();
+            let mut prev_path = target;
             let mut links: Vec<PathBuf> = Vec::with_capacity(total_hops);
 
             for i in 0..total_hops {
