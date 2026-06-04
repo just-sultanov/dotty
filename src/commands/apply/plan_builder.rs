@@ -112,7 +112,6 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                     target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: None,
-                    backup_exists: false,
                 });
                 TargetState::CircularSymlink
             }
@@ -124,7 +123,6 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                     target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: None,
-                    backup_exists: false,
                 });
                 TargetState::NeedsSymlink
             }
@@ -149,7 +147,6 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                     target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: Some(backup_dest.clone()),
-                    backup_exists: true,
                 });
                 TargetState::NeedsBackup
             }
@@ -191,7 +188,6 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                     target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: Some(backup_dest.clone()),
-                    backup_exists: true,
                 });
                 warn!(
                     "replacing directory {} with symlink → {}",

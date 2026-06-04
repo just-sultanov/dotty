@@ -236,8 +236,6 @@ pub(crate) fn build_add_plan(
         } else {
             None
         };
-        let backup_exists = target_file.exists();
-
         // Copy file to repo (dereference symlinks)
         plan.add(Action::CopyFile {
             source: target_file.clone(),
@@ -249,7 +247,6 @@ pub(crate) fn build_add_plan(
             target: repo_absolute_path.clone(),
             link: target_file.clone(),
             backup_path,
-            backup_exists,
         });
 
         // Track path for git add
@@ -1010,18 +1007,10 @@ mod tests {
                 .collect();
             assert_eq!(symlink_actions.len(), 1, "expected one CreateSymlink");
             match symlink_actions[0] {
-                Action::CreateSymlink {
-                    backup_path,
-                    backup_exists,
-                    ..
-                } => {
+                Action::CreateSymlink { backup_path, .. } => {
                     assert!(
                         backup_path.is_some(),
                         "backup_path should be Some when file exists"
-                    );
-                    assert!(
-                        backup_exists,
-                        "backup_exists should be true when file exists"
                     );
                 }
                 _ => unreachable!(),
@@ -1063,18 +1052,10 @@ mod tests {
                 .collect();
             assert_eq!(symlink_actions.len(), 1, "expected one CreateSymlink");
             match symlink_actions[0] {
-                Action::CreateSymlink {
-                    backup_path,
-                    backup_exists,
-                    ..
-                } => {
+                Action::CreateSymlink { backup_path, .. } => {
                     assert!(
                         backup_path.is_none(),
                         "backup_path should be None when no file exists"
-                    );
-                    assert!(
-                        !backup_exists,
-                        "backup_exists should be false when no file exists"
                     );
                 }
                 _ => unreachable!(),

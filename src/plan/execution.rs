@@ -141,8 +141,7 @@ pub(crate) fn action_execute(
             }
             // TOCTOU race condition mitigation: backup could have been deleted by
             // concurrent `dotty clean` between plan construction and rollback execution.
-            // Check existence at rollback time (not just relying on backup_exists flag)
-            // to provide graceful degradation.
+            // Check existence at rollback time to provide graceful degradation.
             if !source.exists() {
                 warn!(
                     "Backup file deleted during rollback (race with `dotty clean`), \
@@ -202,15 +201,14 @@ pub(crate) fn action_rollback(action: &Action) -> Option<Action> {
         Action::CreateSymlink {
             link,
             backup_path,
-            backup_exists,
             target: _,
         } => {
-            // Use the stored backup_exists flag (recorded at plan construction time)
-            // instead of checking backup.exists() here, which would be a TOCTOU race:
-            // the backup could be deleted between execution and rollback (e.g., by
-            // a concurrent `dotty clean`), causing silent data loss.
+            // Check backup existence at rollback time to avoid storing stale
+            // metadata from plan-build time. The backup may have been deleted
+            // between execution and rollback (e.g., by a concurrent `dotty clean`).
+            // If the backup doesn't exist, fall back to simple symlink removal.
             if let Some(backup) = backup_path {
-                if *backup_exists {
+                if backup.exists() {
                     Some(Action::RestoreBackup {
                         source: backup.clone(),
                         dest: link.clone(),
@@ -1091,7 +1089,6 @@ mod tests {
             target: target.clone(),
             link: link.clone(),
             backup_path: None,
-            backup_exists: false,
         };
         let result = action_execute(
             &action,
@@ -1438,7 +1435,6 @@ mod tests {
             target: target.clone(),
             link: link.clone(),
             backup_path: Some(backup.clone()),
-            backup_exists: true,
         };
         let mut repo_state = RepoState::new_for_git(PathBuf::from("."), PathBuf::from("."));
         action_execute(&action, &mut repo_state).unwrap();
