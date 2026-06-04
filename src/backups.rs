@@ -8,6 +8,7 @@ use std::path::Path;
 /// two runs happen within the same second.
 pub fn backup_timestamp() -> String {
     let now = chrono::Local::now();
+    // Use hyphens instead of colons because colons are invalid in Windows filenames.
     now.format("%Y-%m-%dT%H-%M-%S-%3f").to_string()
 }
 
