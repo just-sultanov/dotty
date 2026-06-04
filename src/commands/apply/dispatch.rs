@@ -78,9 +78,14 @@ pub fn run(
     //     If --force is set, skip prompting and proceed with removal.
     //     If not interactive (CI, pipes), skip orphan removal silently.
     let mut plan = output.plan;
-    if !output.orphans.is_empty() && !force {
-        let confirmed = prompt::prompt_orphan_removal(&output.orphans)?;
-        if confirmed {
+    if !output.orphans.is_empty() {
+        let should_remove = if force {
+            true
+        } else {
+            prompt::prompt_orphan_removal(&output.orphans)?
+        };
+
+        if should_remove {
             for action in output.orphan_removal_actions {
                 plan.add(action);
             }
@@ -89,11 +94,6 @@ pub fn run(
                 "orphan removal skipped by user ({} orphan(s) not removed)",
                 output.orphans.len()
             );
-        }
-    } else if !output.orphans.is_empty() && force {
-        // --force: remove orphans without prompting
-        for action in output.orphan_removal_actions {
-            plan.add(action);
         }
     }
 
