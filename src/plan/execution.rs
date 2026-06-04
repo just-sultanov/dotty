@@ -42,8 +42,12 @@ pub(crate) fn action_execute(
                 reason: format!("cannot determine parent of backup path: {}", dest.display()),
             })?;
             fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
+            // Compute source hash *before* copy_file to avoid false-positive
+            // BackupHashMismatch when the source file is modified concurrently
+            // (e.g., editor autosave) between copy and verification.
+            let source_hash = compute_file_hash(source).ok();
             copy_file(source, dest)?;
-            verify_backup_integrity(source, dest)?;
+            verify_backup_integrity(source, dest, source_hash.as_deref())?;
         }
         Action::BackupDir {
             source,
@@ -564,10 +568,15 @@ fn compute_file_hash(path: &Path) -> Result<String, DottyError> {
 /// - Files ≤ 1KB: size check only (fast, catches most corruption)
 /// - Files > 1KB: size check + SHA-256 hash verification (strong integrity)
 ///
-/// The 1KB threshold balances security for critical dotfiles (SSH keys, GPG
-/// configs) against performance for many small config files.
-pub(crate) fn verify_backup_integrity(source: &Path, dest: &Path) -> Result<(), DottyError> {
-    // Fast pre-validation: check file sizes match
+/// If `expected_source_hash` is provided, it is used instead of re-hashing the
+/// live source file. This prevents false-positive `BackupHashMismatch` when the
+/// source file is modified concurrently (e.g., editor autosave) between the
+/// copy and verification step.
+pub(crate) fn verify_backup_integrity(
+    source: &Path,
+    dest: &Path,
+    expected_source_hash: Option<&str>,
+) -> Result<(), DottyError> {
     let dest_meta = fs::metadata(dest).map_err(|e| DottyError::BackupVerification {
         path: dest.to_path_buf(),
         detail: format!("backup file does not exist or is not readable: {}", e),
@@ -590,17 +599,12 @@ pub(crate) fn verify_backup_integrity(source: &Path, dest: &Path) -> Result<(), 
         });
     }
 
-    // SHA-256 verification for files > 1KB (performance tradeoff)
-    // Small files use size-only check; larger files get cryptographic verification
-    /// Files > 1KB get SHA-256 verification; smaller files use size check only.
-    /// 1KB threshold balances security for critical configs (SSH keys, GPG) against
-    /// performance for many small dotfiles. Chosen based on typical dotfile sizes:
-    /// - SSH keys: 1-4KB
-    /// - GPG keys: 2-8KB
-    /// - vimrc: <500B typically
-    const HASH_VERIFICATION_THRESHOLD: u64 = 1024; // 1KB
+    const HASH_VERIFICATION_THRESHOLD: u64 = 1024;
     if source_size > HASH_VERIFICATION_THRESHOLD {
-        let source_hash = compute_file_hash(source)?;
+        let source_hash = match expected_source_hash {
+            Some(h) => h.to_string(),
+            None => compute_file_hash(source)?,
+        };
         let dest_hash = compute_file_hash(dest)?;
 
         if source_hash != dest_hash {
@@ -718,7 +722,7 @@ mod tests {
         fs::write(&source, "small content").unwrap();
         fs::copy(&source, &dest).unwrap();
 
-        let result = verify_backup_integrity(&source, &dest);
+        let result = verify_backup_integrity(&source, &dest, None);
         assert!(
             result.is_ok(),
             "Small identical files should pass verification"
@@ -736,7 +740,7 @@ mod tests {
         fs::write(&source, &content).unwrap();
         fs::copy(&source, &dest).unwrap();
 
-        let result = verify_backup_integrity(&source, &dest);
+        let result = verify_backup_integrity(&source, &dest, None);
         assert!(
             result.is_ok(),
             "Large identical files should pass verification"
@@ -752,7 +756,7 @@ mod tests {
         fs::write(&source, "original content").unwrap();
         fs::write(&dest, "short").unwrap();
 
-        let result = verify_backup_integrity(&source, &dest);
+        let result = verify_backup_integrity(&source, &dest, None);
         assert!(result.is_err());
         match result.unwrap_err() {
             DottyError::BackupVerification { path, detail } => {
@@ -775,7 +779,7 @@ mod tests {
         fs::write(&source, &source_content).unwrap();
         fs::write(&dest, &dest_content).unwrap();
 
-        let result = verify_backup_integrity(&source, &dest);
+        let result = verify_backup_integrity(&source, &dest, None);
         assert!(result.is_err());
         match result.unwrap_err() {
             DottyError::BackupHashMismatch {
@@ -800,7 +804,7 @@ mod tests {
         let dest = dir.path().join("nonexistent.txt");
         fs::write(&source, "content").unwrap();
 
-        let result = verify_backup_integrity(&source, &dest);
+        let result = verify_backup_integrity(&source, &dest, None);
         assert!(result.is_err());
     }
 
@@ -815,7 +819,7 @@ mod tests {
         fs::write(&source, &content).unwrap();
         fs::copy(&source, &dest).unwrap();
 
-        let result = verify_backup_integrity(&source, &dest);
+        let result = verify_backup_integrity(&source, &dest, None);
         assert!(
             result.is_ok(),
             "Exactly 1KB file should pass with size check"
@@ -833,10 +837,42 @@ mod tests {
         fs::write(&source, &content).unwrap();
         fs::copy(&source, &dest).unwrap();
 
-        let result = verify_backup_integrity(&source, &dest);
+        let result = verify_backup_integrity(&source, &dest, None);
         assert!(
             result.is_ok(),
             "1KB+1 file should pass with hash verification"
+        );
+    }
+
+    /// Test that a pre-computed source hash prevents false-positive
+    /// BackupHashMismatch when the source file is modified concurrently
+    /// (simulated by modifying the source after copy).
+    #[test]
+    fn test_verify_backup_integrity_precomputed_hash_avoids_race() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        let original = "original content ".repeat(200);
+        let modified = "modified content ".repeat(200);
+
+        fs::write(&source, &original).unwrap();
+
+        let precomputed_hash = compute_file_hash(&source).unwrap();
+
+        fs::copy(&source, &dest).unwrap();
+
+        fs::write(&source, &modified).unwrap();
+
+        let result = verify_backup_integrity(&source, &dest, Some(&precomputed_hash));
+        assert!(
+            result.is_ok(),
+            "pre-computed hash should pass even though source was modified"
+        );
+
+        let result = verify_backup_integrity(&source, &dest, None);
+        assert!(
+            result.is_err(),
+            "without pre-computed hash, verification should fail due to modified source"
         );
     }
 

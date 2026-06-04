@@ -765,7 +765,7 @@ mod tests {
         std::fs::write(&src, "original content").unwrap();
         std::fs::write(&dst, "original content").unwrap();
 
-        execution::verify_backup_integrity(&src, &dst).unwrap();
+        execution::verify_backup_integrity(&src, &dst, None).unwrap();
     }
 
     #[test]
@@ -777,7 +777,7 @@ mod tests {
         std::fs::write(&src, "original content").unwrap();
         std::fs::write(&dst, "short").unwrap();
 
-        let result = execution::verify_backup_integrity(&src, &dst);
+        let result = execution::verify_backup_integrity(&src, &dst, None);
         assert!(result.is_err());
         match result.unwrap_err() {
             crate::error::DottyError::BackupVerification { path, detail } => {
@@ -797,7 +797,7 @@ mod tests {
         std::fs::write(&src, "content").unwrap();
         // dst does not exist
 
-        let result = execution::verify_backup_integrity(&src, &dst);
+        let result = execution::verify_backup_integrity(&src, &dst, None);
         assert!(result.is_err());
         match result.unwrap_err() {
             crate::error::DottyError::BackupVerification { path, detail } => {
@@ -818,7 +818,7 @@ mod tests {
         std::fs::write(&dst, "").unwrap();
 
         // Two empty files should pass verification (both 0 bytes)
-        execution::verify_backup_integrity(&src, &dst).unwrap();
+        execution::verify_backup_integrity(&src, &dst, None).unwrap();
     }
 
     #[test]
