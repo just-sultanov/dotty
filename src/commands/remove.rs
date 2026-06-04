@@ -142,7 +142,7 @@ pub fn run(
         skipped,
         commit: commit.clone(),
     };
-    let output = build_remove_plan(&input, &config)?;
+    let output = build_remove_plan(&input, config)?;
 
     // Execute plan
     let mode = if dry_run {
@@ -367,10 +367,9 @@ pub(crate) fn build_repo_cleanup_phase(
 /// where the operation fails.
 pub(crate) fn build_remove_plan(
     input: &RemovePlanInput,
-    config: &Config,
+    mut config: Config,
 ) -> Result<RemovePlanOutput, DottyError> {
     let mut plan = Plan::new(&input.repo_path);
-    let mut config = config.clone();
 
     // Phase 1: Restore files from repo to target.
     // Safety: Must run first to ensure data exists before symlinks are removed.
@@ -564,7 +563,7 @@ mod tests {
             skipped: HashSet::new(),
             commit: None,
         };
-        let output = build_remove_plan(&input, &config).unwrap();
+        let output = build_remove_plan(&input, config.clone()).unwrap();
 
         // Backup + CopyFile + RemoveFile + GitAdd = 4 actions (target exists as regular file)
         assert_eq!(output.plan.actions.len(), 4);
@@ -600,7 +599,7 @@ mod tests {
             skipped: HashSet::new(),
             commit: None,
         };
-        let output = build_remove_plan(&input, &config).unwrap();
+        let output = build_remove_plan(&input, config.clone()).unwrap();
 
         // CopyFile + RemoveSymlink + RemoveFile + GitAdd = 4 actions (target is symlink, no backup)
         assert_eq!(output.plan.actions.len(), 4);
@@ -635,7 +634,7 @@ mod tests {
             skipped,
             commit: None,
         };
-        let output = build_remove_plan(&input, &config).unwrap();
+        let output = build_remove_plan(&input, config.clone()).unwrap();
 
         // Skipped: no actions, managed map unchanged
         assert!(output.plan.is_empty());
@@ -672,7 +671,7 @@ mod tests {
             skipped: HashSet::new(),
             commit: Some("remove vimrc".to_string()),
         };
-        let output = build_remove_plan(&input, &config).unwrap();
+        let output = build_remove_plan(&input, config.clone()).unwrap();
 
         // Backup + CopyFile + RemoveFile + GitAdd + GitCommit = 5
         assert_eq!(output.plan.actions.len(), 5);
@@ -716,7 +715,7 @@ mod tests {
             skipped: HashSet::new(),
             commit: None,
         };
-        let output = build_remove_plan(&input, &config).unwrap();
+        let output = build_remove_plan(&input, config.clone()).unwrap();
 
         // Verify phase ordering: CopyFile must come before RemoveSymlink (target is symlink, no backup)
         let mut found_copy = false;
@@ -775,7 +774,7 @@ mod tests {
             skipped,
             commit: None,
         };
-        let output = build_remove_plan(&input, &config).unwrap();
+        let output = build_remove_plan(&input, config.clone()).unwrap();
 
         // Skipped: no CopyFile, no RemoveSymlink, no RemoveFile
         assert!(output.plan.is_empty());
@@ -1325,7 +1324,7 @@ mod tests {
             skipped: HashSet::new(),
             commit: None,
         };
-        let output = build_remove_plan(&input, &config).unwrap();
+        let output = build_remove_plan(&input, config.clone()).unwrap();
 
         // No CopyFile (target is symlink to dir), but RemoveSymlink + RemoveFile + GitAdd
         assert!(
