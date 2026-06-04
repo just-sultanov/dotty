@@ -435,7 +435,6 @@ fn rollback_completed(
 ) -> Result<(), DottyError> {
     debug!("rolling back {} completed actions", completed_indices.len());
     let actions = &plan.actions;
-    let _repo_path = &plan.repo_path;
 
     let mut indices: Vec<usize> = completed_indices.to_vec();
     indices.sort_unstable();
