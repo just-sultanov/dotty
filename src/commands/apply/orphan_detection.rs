@@ -46,11 +46,11 @@ pub(crate) fn detect_orphans_and_build_removals(
     let tracked_set: HashSet<&String> = input.config.managed.keys().collect();
     let mut orphans: Vec<(String, String)> = Vec::new();
 
-    for (_target_path, (_tier, repo_relative_path)) in input.merged {
+    for (target_path, (_tier, repo_relative_path)) in input.merged {
         if !tracked_set.contains(repo_relative_path) {
             orphans.push((
                 repo_relative_path.clone(),
-                _target_path.to_string_lossy().to_string(),
+                target_path.to_string_lossy().to_string(),
             ));
         }
     }
