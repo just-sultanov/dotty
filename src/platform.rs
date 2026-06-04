@@ -1,5 +1,5 @@
 /// Known platform identifiers.
-pub const KNOWN_PLATFORMS: &[&str] = &["macos", "linux", "freebsd"];
+pub const KNOWN_PLATFORMS: &[&str] = &["macos", "linux", "freebsd", "windows"];
 
 /// Detect the current platform at compile time via `cfg!(target_os = ...)`.
 ///
@@ -15,6 +15,9 @@ pub fn detect_platform() -> Option<String> {
     if cfg!(target_os = "freebsd") {
         return Some("freebsd".into());
     }
+    if cfg!(target_os = "windows") {
+        return Some("windows".into());
+    }
     None
 }
 
@@ -27,7 +30,8 @@ mod tests {
         assert!(KNOWN_PLATFORMS.contains(&"macos"));
         assert!(KNOWN_PLATFORMS.contains(&"linux"));
         assert!(KNOWN_PLATFORMS.contains(&"freebsd"));
-        assert_eq!(KNOWN_PLATFORMS.len(), 3);
+        assert!(KNOWN_PLATFORMS.contains(&"windows"));
+        assert_eq!(KNOWN_PLATFORMS.len(), 4);
     }
 
     #[test]
@@ -47,5 +51,7 @@ mod tests {
         assert_eq!(platform, "linux");
         #[cfg(target_os = "freebsd")]
         assert_eq!(platform, "freebsd");
+        #[cfg(target_os = "windows")]
+        assert_eq!(platform, "windows");
     }
 }

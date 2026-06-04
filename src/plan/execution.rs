@@ -120,9 +120,6 @@ pub(crate) fn action_execute(
         }
         Action::RemoveSymlink { path } => {
             if is_symlink(path) {
-                // Warn if the symlink points to a directory — the target
-                // directory content will be orphaned (not touched, but no
-                // longer managed by dotty).
                 if let Ok(target) = fs::read_link(path)
                     && target.is_dir()
                 {
@@ -132,12 +129,12 @@ pub(crate) fn action_execute(
                         target.display()
                     );
                 }
-                fs::remove_file(path).map_err(|e| io_error_with_path(e, path))?;
+                remove_symlink_file(path).map_err(|e| io_error_with_path(e, path))?;
             }
         }
         Action::RestoreBackup { source, dest } => {
             if is_symlink(dest) {
-                fs::remove_file(dest).map_err(|e| io_error_with_path(e, dest))?;
+                remove_symlink_file(dest).map_err(|e| io_error_with_path(e, dest))?;
             }
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
@@ -163,7 +160,7 @@ pub(crate) fn action_execute(
                 if dest.is_dir() && !is_symlink(dest) {
                     fs::remove_dir_all(dest).map_err(|e| io_error_with_path(e, dest))?;
                 } else if is_symlink(dest) {
-                    fs::remove_file(dest).map_err(|e| io_error_with_path(e, dest))?;
+                    remove_symlink_file(dest).map_err(|e| io_error_with_path(e, dest))?;
                 }
             }
             // TOCTOU race condition mitigation: backup could have been deleted by
@@ -620,6 +617,19 @@ pub(crate) fn verify_backup_integrity(source: &Path, dest: &Path) -> Result<(), 
 
     debug!("backup verified: {} ({} bytes)", dest.display(), dest_size);
     Ok(())
+}
+
+/// Remove a symlink file, handling Windows directory symlinks correctly.
+///
+/// On Windows, directory symlinks (junctions/reparse points) must be removed
+/// with `remove_dir` rather than `remove_file`. On Unix, both file and
+/// directory symlinks are removed with `remove_file`.
+fn remove_symlink_file(path: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    if path.is_dir() {
+        return fs::remove_dir(path);
+    }
+    fs::remove_file(path)
 }
 
 /// Convert an IO error into a more specific DottyError.
