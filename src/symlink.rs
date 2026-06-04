@@ -1,4 +1,5 @@
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use tracing::{error, warn};
 
@@ -14,10 +15,19 @@ use tracing::{error, warn};
 const MAX_SYMLINK_HOPS: usize = 15;
 
 /// Check if a path is a symlink (without following it).
+///
+/// Returns `false` and logs a warning via `tracing::warn!` on unexpected IO errors
+/// (e.g., permission denied), distinguishing them from non-existent paths which also
+/// return `false` silently.
 pub fn is_symlink(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
+    match fs::symlink_metadata(path) {
+        Ok(m) => m.file_type().is_symlink(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+        Err(e) => {
+            warn!("Failed to query symlink metadata for {:?}: {}", path, e);
+            false
+        }
+    }
 }
 
 /// Create a symlink at `link` pointing to `target`.
@@ -220,6 +230,34 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nonexistent.txt");
         assert!(!is_symlink(&path));
+    }
+
+    #[test]
+    fn test_is_symlink_permission_denied_logs_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "content").unwrap();
+
+        // Remove all permissions from parent dir to trigger PermissionDenied
+        let mut perms = fs::metadata(dir.path()).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o000);
+        }
+        fs::set_permissions(dir.path(), perms).unwrap();
+
+        let result = is_symlink(&path);
+        assert!(!result);
+
+        // Restore permissions so tempdir cleanup succeeds
+        let mut perms = fs::metadata(dir.path()).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(dir.path(), perms).unwrap();
     }
 
     #[test]
