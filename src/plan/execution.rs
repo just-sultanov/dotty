@@ -5,7 +5,7 @@
 //! copying/verifying files.
 
 use std::fs;
-use std::io;
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -546,9 +546,12 @@ pub(crate) fn copy_dir(
 ///
 /// Returns the hash as a lowercase hexadecimal string (64 characters).
 fn compute_file_hash(path: &Path) -> Result<String, DottyError> {
-    let mut file = fs::File::open(path).map_err(DottyError::Io)?;
+    let file = fs::File::open(path).map_err(DottyError::Io)?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
     let mut hasher = Sha256::new();
-    io::copy(&mut file, &mut hasher).map_err(DottyError::Io)?;
+    // io::copy already buffers internally, but BufReader reduces syscall
+    // overhead for files >100KB by using a larger buffer (64KB vs default 8KB).
+    io::copy(&mut reader, &mut hasher).map_err(DottyError::Io)?;
     let hash = hasher.finalize();
     Ok(format!("{:x}", hash))
 }
