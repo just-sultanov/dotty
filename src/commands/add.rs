@@ -82,8 +82,9 @@ pub fn run(
         && !KNOWN_PLATFORMS.contains(&plat.as_str())
     {
         let ok = prompt_confirm(&format!(
-            "Platform '{}' is not recognized. Valid: macos, linux, freebsd. Continue?",
-            plat
+            "Platform '{}' is not recognized. Valid: {}. Continue?",
+            plat,
+            KNOWN_PLATFORMS.join(", "),
         ))?;
         if !ok {
             println!("Aborted.");

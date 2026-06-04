@@ -133,7 +133,7 @@ impl MachineName {
 
 /// Classify a repo-relative path into its tier.
 ///
-/// Returns `Some("base")`, `Some("macos")`, `Some("macbook")`, etc.
+/// Returns `Some("base")`, `Some("macos")`, `Some("windows")`, `Some("macbook")`, etc.
 pub fn classify_tier(
     file: &str,
     machine: &Option<String>,
@@ -262,6 +262,7 @@ mod tests {
         fs::create_dir_all(base.join("macos/home")).unwrap();
         fs::create_dir_all(base.join("linux/home")).unwrap();
         fs::create_dir_all(base.join("freebsd/home")).unwrap();
+        fs::create_dir_all(base.join("windows/home")).unwrap();
         fs::create_dir_all(base.join("my-machine/home")).unwrap();
 
         let machines = scan_machine_directories(&base);
@@ -359,6 +360,7 @@ mod tests {
         assert!(MachineName::new("base").is_err());
         assert!(MachineName::new("macos").is_err());
         assert!(MachineName::new("linux").is_err());
+        assert!(MachineName::new("windows").is_err());
         assert!(MachineName::new(".hidden").is_err());
     }
 
@@ -429,6 +431,7 @@ mod tests {
         assert_eq!(tier_priority("macos"), 2);
         assert_eq!(tier_priority("linux"), 2);
         assert_eq!(tier_priority("freebsd"), 2);
+        assert_eq!(tier_priority("windows"), 2);
         assert_eq!(tier_priority("macbook"), 3);
         assert_eq!(tier_priority("ubuntu-work"), 3);
     }
