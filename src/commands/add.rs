@@ -314,6 +314,9 @@ fn resolve_scope(
 /// `~/.config/`, `~/.local/`, `~/.ssh/`, or is a dotfile (starts with `.`
 /// but not `..`).
 ///
+/// When `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, or `$XDG_CACHE_HOME` are set,
+/// paths under those directories are also recognized as standard.
+///
 /// When HOME is unset, the path is treated as non-standard.
 /// Check if a path follows a standard XDG pattern relative to `$HOME`.
 ///
@@ -322,6 +325,22 @@ fn resolve_scope(
 /// because home-relative prefix stripping fails and the full path cannot
 /// satisfy the XDG patterns — use `is_sensitive_system_path` instead.
 fn is_standard_xdg_path(target_path: &Path) -> bool {
+    if let Some(dir) = dir_spec::config_home()
+        && target_path.starts_with(&dir)
+    {
+        return true;
+    }
+    if let Some(dir) = dir_spec::data_home()
+        && target_path.starts_with(&dir)
+    {
+        return true;
+    }
+    if let Some(dir) = dir_spec::cache_home()
+        && target_path.starts_with(&dir)
+    {
+        return true;
+    }
+
     let home = crate::paths::home_dir().ok();
     let rel_str = match home {
         Some(home) => {
@@ -1129,6 +1148,73 @@ mod tests {
         temp_env::with_var_unset("HOME", || {
             assert!(!is_standard_xdg_path(Path::new("/some/path")));
         });
+    }
+
+    #[test]
+    fn test_is_standard_xdg_respects_xdg_config_home() {
+        let dir = test_dir();
+        let custom_config = dir.path().join("custom-config");
+        let home = dir.path().to_path_buf();
+        temp_env::with_vars(
+            vec![
+                ("HOME", Some(home.to_str().unwrap())),
+                ("XDG_CONFIG_HOME", Some(custom_config.to_str().unwrap())),
+            ],
+            || {
+                assert!(is_standard_xdg_path(&custom_config.join("nvim/init.lua")));
+                assert!(is_standard_xdg_path(&custom_config.join("app.conf")));
+            },
+        );
+    }
+
+    #[test]
+    fn test_is_standard_xdg_respects_xdg_data_home() {
+        let dir = test_dir();
+        let custom_data = dir.path().join("custom-data");
+        let home = dir.path().to_path_buf();
+        temp_env::with_vars(
+            vec![
+                ("HOME", Some(home.to_str().unwrap())),
+                ("XDG_DATA_HOME", Some(custom_data.to_str().unwrap())),
+            ],
+            || {
+                assert!(is_standard_xdg_path(
+                    &custom_data.join("applications/mimeapps.list")
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn test_is_standard_xdg_respects_xdg_cache_home() {
+        let dir = test_dir();
+        let custom_cache = dir.path().join("custom-cache");
+        let home = dir.path().to_path_buf();
+        temp_env::with_vars(
+            vec![
+                ("HOME", Some(home.to_str().unwrap())),
+                ("XDG_CACHE_HOME", Some(custom_cache.to_str().unwrap())),
+            ],
+            || {
+                assert!(is_standard_xdg_path(&custom_cache.join("wal")));
+            },
+        );
+    }
+
+    #[test]
+    fn test_is_standard_xdg_respects_xdg_config_home_outside_home() {
+        // Custom $XDG_CONFIG_HOME outside $HOME should still be recognized
+        let home = test_dir().path().to_path_buf();
+        let outside = Path::new("/tmp/xdg-custom-test");
+        temp_env::with_vars(
+            vec![
+                ("HOME", Some(home.to_str().unwrap())),
+                ("XDG_CONFIG_HOME", Some(outside.to_str().unwrap())),
+            ],
+            || {
+                assert!(is_standard_xdg_path(&outside.join("nvim")));
+            },
+        );
     }
 
     // -- is_sensitive_system_path tests --
