@@ -360,8 +360,8 @@ pub(crate) fn execute_plan(
 enum RollbackAction {
     /// Rollback a filesystem action by executing its inverse `Action`.
     Filesystem(Action),
-    /// Undo the last commit via `git reset --soft HEAD~1`.
-    GitResetSoft,
+    /// Undo `depth` commits via `git reset --soft HEAD~{depth}`.
+    GitResetSoft { depth: usize },
     /// Unstage files via `git reset HEAD <paths>`.
     GitResetHead { paths: Vec<PathBuf> },
 }
@@ -371,7 +371,9 @@ impl RollbackAction {
     fn execute(&self, repo_state: &mut RepoState) -> Result<(), DottyError> {
         match self {
             RollbackAction::Filesystem(action) => action_execute(action, repo_state),
-            RollbackAction::GitResetSoft => git::git_reset_soft_head(&repo_state.repo_path),
+            RollbackAction::GitResetSoft { depth } => {
+                git::git_reset_soft_head(&repo_state.repo_path, *depth)
+            }
             RollbackAction::GitResetHead { paths } => {
                 let path_strs: Vec<&str> = paths.iter().filter_map(|p| p.to_str()).collect();
                 git::git_reset(&repo_state.repo_path, &path_strs)
@@ -383,7 +385,9 @@ impl RollbackAction {
     fn display(&self) -> String {
         match self {
             RollbackAction::Filesystem(action) => format!("{action}"),
-            RollbackAction::GitResetSoft => "git reset --soft HEAD~1".to_string(),
+            RollbackAction::GitResetSoft { depth } => {
+                format!("git reset --soft HEAD~{depth}")
+            }
             RollbackAction::GitResetHead { paths } => {
                 let path_strs: Vec<&str> = paths.iter().filter_map(|p| p.to_str()).collect();
                 format!("git reset HEAD {}", path_strs.join(" "))
@@ -396,7 +400,7 @@ impl RollbackAction {
     /// Returns `None` if the action has no rollback (e.g. `RemoveFile`, `RemoveDir`).
     fn from_action(action: &Action) -> Option<RollbackAction> {
         match action {
-            Action::GitCommit { .. } => Some(RollbackAction::GitResetSoft),
+            Action::GitCommit { .. } => Some(RollbackAction::GitResetSoft { depth: 1 }),
             Action::GitAdd { paths } => {
                 if paths.is_empty() {
                     None
@@ -415,7 +419,8 @@ impl RollbackAction {
 ///
 /// Each action is converted to a `RollbackAction` (filesystem or git) and
 /// executed in reverse order. Git actions are batched per type so that
-/// `git reset HEAD` is called once with all paths.
+/// `git reset HEAD` is called once with all paths, and `git reset --soft`
+/// undoes all committed changes in a single call (`HEAD~N`).
 fn rollback_completed(
     plan: &super::Plan,
     completed_indices: &[usize],
@@ -430,8 +435,10 @@ fn rollback_completed(
 
     // Collect all rollback actions, then execute in reverse order.
     // GitAdd rollbacks are batched: all paths are collected and reset in one call.
+    // GitCommit rollbacks are batched: all commits are undone in one reset.
     let mut rollbacks: Vec<RollbackAction> = Vec::new();
     let mut git_add_paths: Vec<PathBuf> = Vec::new();
+    let mut git_commit_count: usize = 0;
 
     for &idx in &indices {
         let Some(action) = actions.get(idx) else {
@@ -442,13 +449,25 @@ fn rollback_completed(
                 RollbackAction::GitResetHead { paths } => {
                     git_add_paths.extend(paths.clone());
                 }
+                RollbackAction::GitResetSoft { .. } => {
+                    git_commit_count += 1;
+                }
                 _ => rollbacks.push(rb),
             }
         }
     }
 
-    // Execute non-GitAdd rollbacks in order
+    // Execute non-git rollbacks in order
     for rb in &rollbacks {
+        println!("  rollback: {}", rb.display());
+        rb.execute(repo_state)?;
+    }
+
+    // Batch GitCommit rollback (all commits undone in one reset call)
+    if git_commit_count > 0 {
+        let rb = RollbackAction::GitResetSoft {
+            depth: git_commit_count,
+        };
         println!("  rollback: {}", rb.display());
         rb.execute(repo_state)?;
     }
@@ -1485,6 +1504,98 @@ mod tests {
         assert!(
             result.is_err(),
             "Rollback should fail when dest parent is read-only"
+        );
+    }
+
+    /// Test that rolling back a plan with multiple GitCommit actions resets
+    /// to HEAD~N (N = number of commits), not HEAD~1 per commit.
+    #[test]
+    fn test_rollback_multiple_git_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let state = dir.path().join("state");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&state).unwrap();
+
+        // Init git repo with initial commit
+        std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["init", "-q"])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        fs::write(repo.join("file.txt"), "initial").unwrap();
+        std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["add", "file.txt"])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["commit", "-m", "initial", "-q"])
+            .output()
+            .unwrap();
+
+        let initial_count: usize = git::git_run(&repo, &["rev-list", "--count", "HEAD"])
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+
+        // Plan: 2 GitCommit actions followed by a failing Backup
+        let mut plan = Plan::new(&repo);
+        plan.add(Action::GitCommit {
+            message: "commit one".to_string(),
+        });
+        plan.add(Action::GitCommit {
+            message: "commit two".to_string(),
+        });
+        // This action will fail, triggering rollback of the 2 commits
+        plan.add(Action::Backup {
+            source: repo.join("nonexistent"),
+            dest: repo.join("backup"),
+        });
+
+        // Modify file so commits have something to commit
+        fs::write(repo.join("file.txt"), "v1").unwrap();
+        std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["add", "file.txt"])
+            .output()
+            .unwrap();
+
+        let mut repo_state = RepoState::new_for_git(repo.clone(), state.clone());
+
+        let result = execute_plan(&plan, ExecuteMode::Rollback, &mut repo_state);
+
+        assert!(
+            result.is_err(),
+            "Plan should fail due to missing backup source"
+        );
+
+        // After rollback, should be back to initial commit count
+        let final_count: usize = git::git_run(&repo, &["rev-list", "--count", "HEAD"])
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            final_count,
+            initial_count,
+            "Rollback should undo all {} commits, restoring to initial state",
+            plan.actions
+                .iter()
+                .filter(|a| matches!(a, Action::GitCommit { .. }))
+                .count()
         );
     }
 }

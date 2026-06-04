@@ -202,9 +202,11 @@ pub(crate) fn git_reset(dir: &Path, paths: &[&str]) -> Result<(), DottyError> {
     Ok(())
 }
 
-/// Soft reset to undo the last commit.
-pub(crate) fn git_reset_soft_head(dir: &Path) -> Result<(), DottyError> {
-    git_run(dir, &["reset", "--soft", "HEAD~1"])?;
+/// Soft reset to undo `depth` commits.
+///
+/// Defaults to 1 when called with the default argument.
+pub(crate) fn git_reset_soft_head(dir: &Path, depth: usize) -> Result<(), DottyError> {
+    git_run(dir, &["reset", "--soft", &format!("HEAD~{depth}")])?;
     Ok(())
 }
 
