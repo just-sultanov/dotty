@@ -671,42 +671,37 @@ mod tests {
     // Property-based test: verify hop limit handling.
     // Creates a chain approaching the hop limit and verifies that
     // the warning is logged and the chain is treated as potentially circular.
-    proptest::proptest! {
-        #![proptest_config(proptest::test_runner::Config {
+    #[test]
+    fn proptest_hop_limit_handling() {
+        let config = proptest::test_runner::Config {
             failure_persistence: None,
-            .. proptest::test_runner::Config::default()
-        })]
-        #[test]
-        fn proptest_hop_limit_handling(
-            extra_hops in 0usize..3,
-        ) {
-            let dir = tempfile::tempdir().unwrap();
-            let total_hops = MAX_SYMLINK_HOPS - 2 + extra_hops;
+            ..proptest::test_runner::Config::default()
+        };
+        let mut runner = proptest::test_runner::TestRunner::new(config);
+        runner
+            .run(&(0usize..3), |extra_hops| {
+                let dir = tempfile::tempdir().unwrap();
+                let total_hops = MAX_SYMLINK_HOPS - 2 + extra_hops;
 
-            // Create a chain approaching the hop limit
-            // Create a real target file as the chain's starting point
-            let target = dir.path().join("target");
-            std::fs::write(&target, b"content").unwrap();
-            let mut prev_path = target;
-            let mut links: Vec<PathBuf> = Vec::with_capacity(total_hops);
+                let target = dir.path().join("target");
+                std::fs::write(&target, b"content").unwrap();
+                let mut prev_path = target;
+                let mut links: Vec<PathBuf> = Vec::with_capacity(total_hops);
 
-            for i in 0..total_hops {
-                let link_path = dir.path().join(format!("link{}", i));
-                create_symlink(&prev_path, &link_path).unwrap();
-                links.push(link_path.clone());
-                prev_path = link_path;
-            }
+                for i in 0..total_hops {
+                    let link_path = dir.path().join(format!("link{}", i));
+                    create_symlink(&prev_path, &link_path).unwrap();
+                    links.push(link_path.clone());
+                    prev_path = link_path;
+                }
 
-            // Create a new link pointing to the start of the long chain
-            let new_link = dir.path().join("new_link");
-            let first_link = &links[0];
+                let new_link = dir.path().join("new_link");
+                let first_link = &links[0];
 
-            // With a very long chain, the hop limit should be reached
-            // and the result should be treated as potentially circular
-            // (though this depends on the exact implementation)
-            let _is_circular = would_be_circular(first_link, &new_link);
-            // We don't assert a specific result here since the chain doesn't
-            // actually form a cycle — we just verify the test doesn't panic
-        }
+                let _is_circular = would_be_circular(first_link, &new_link);
+
+                Ok(())
+            })
+            .unwrap();
     }
 }
