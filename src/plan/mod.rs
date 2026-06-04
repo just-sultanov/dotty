@@ -248,10 +248,6 @@ mod tests {
         (dir, path)
     }
 
-    fn dummy_repo_path() -> PathBuf {
-        PathBuf::from(".")
-    }
-
     #[test]
     fn test_create_dir_action() {
         let (_dir, base) = setup();
@@ -260,7 +256,7 @@ mod tests {
         let action = Action::CreateDir { path: path.clone() };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(path.is_dir());
@@ -280,7 +276,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(dst.exists());
@@ -301,7 +297,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(dst.exists());
@@ -322,7 +318,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(dst.exists());
@@ -347,7 +343,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
 
@@ -388,7 +384,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
 
@@ -420,7 +416,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(backup_dir.exists());
@@ -435,7 +431,7 @@ mod tests {
         }
         action_execute(
             &rollback,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(!backup_dir.exists());
@@ -455,7 +451,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(dest.exists());
@@ -470,7 +466,7 @@ mod tests {
         }
         action_execute(
             &rollback,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(!dest.exists());
@@ -485,7 +481,7 @@ mod tests {
         let action = Action::RemoveFile { path: path.clone() };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(!path.exists());
@@ -499,7 +495,7 @@ mod tests {
         let action = Action::RemoveFile { path };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
     }
@@ -520,7 +516,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(crate::symlink::is_symlink(&link));
@@ -544,7 +540,7 @@ mod tests {
                 backup_path: None,
                 backup_exists: false,
             },
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
 
@@ -555,7 +551,7 @@ mod tests {
                 backup_path: None,
                 backup_exists: false,
             },
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
 
@@ -590,7 +586,7 @@ mod tests {
                 backup_path: None,
                 backup_exists: false,
             },
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
 
@@ -606,7 +602,7 @@ mod tests {
         let action = Action::CreateDir { path: path.clone() };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(path.is_dir());
@@ -614,7 +610,7 @@ mod tests {
         let rollback = action.rollback().unwrap();
         action_execute(
             &rollback,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(!path.exists());
@@ -634,7 +630,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(dst.exists());
@@ -642,7 +638,7 @@ mod tests {
         let rollback = action.rollback().unwrap();
         action_execute(
             &rollback,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(!dst.exists());
@@ -664,7 +660,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(crate::symlink::is_symlink(&link));
@@ -672,7 +668,7 @@ mod tests {
         let rollback = action.rollback().unwrap();
         action_execute(
             &rollback,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(!crate::symlink::is_symlink(&link));
@@ -681,13 +677,15 @@ mod tests {
 
     #[test]
     fn test_plan_empty() {
-        let plan = Plan::new(&dummy_repo_path());
+        let _dir = test_dir();
+        let plan = Plan::new(_dir.path());
         assert!(plan.is_empty());
     }
 
     #[test]
     fn test_plan_add_actions() {
-        let mut plan = Plan::new(&dummy_repo_path());
+        let _dir = test_dir();
+        let mut plan = Plan::new(_dir.path());
         plan.add(Action::CreateDir {
             path: PathBuf::from("/tmp/test"),
         });
@@ -712,7 +710,7 @@ mod tests {
         execute_plan(
             &plan,
             ExecuteMode::DryRun,
-            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+            &mut RepoState::new_for_git(base.clone(), state.clone()),
         )
         .unwrap();
         assert!(!base.join("should_not_exist").exists());
@@ -727,7 +725,7 @@ mod tests {
         execute_plan(
             &plan,
             ExecuteMode::Normal,
-            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+            &mut RepoState::new_for_git(base.clone(), state.clone()),
         )
         .unwrap();
     }
@@ -845,7 +843,7 @@ mod tests {
         // Should succeed: copy + verify
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(dst.exists());
@@ -995,7 +993,7 @@ mod tests {
         execute_plan(
             &plan,
             ExecuteMode::Normal,
-            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+            &mut RepoState::new_for_git(base.clone(), state.clone()),
         )
         .unwrap();
 
@@ -1018,7 +1016,7 @@ mod tests {
         execute_plan(
             &plan,
             ExecuteMode::DryRun,
-            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+            &mut RepoState::new_for_git(base.clone(), state.clone()),
         )
         .unwrap();
 
@@ -1044,7 +1042,7 @@ mod tests {
         execute_plan(
             &plan,
             ExecuteMode::Normal,
-            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+            &mut RepoState::new_for_git(base.clone(), state.clone()),
         )
         .unwrap();
 
@@ -1073,7 +1071,7 @@ mod tests {
         execute_plan(
             &plan,
             ExecuteMode::Normal,
-            &mut RepoState::new_for_git(dummy_repo_path(), state.clone()),
+            &mut RepoState::new_for_git(base.clone(), state.clone()),
         )
         .unwrap();
 
@@ -1246,7 +1244,7 @@ mod tests {
         // Execute: creates symlink at link → target
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(crate::symlink::is_symlink(&link));
@@ -1256,7 +1254,7 @@ mod tests {
         let rollback = action.rollback().unwrap();
         action_execute(
             &rollback,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
 
@@ -1286,7 +1284,7 @@ mod tests {
         // Execute: creates symlink
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(crate::symlink::is_symlink(&link));
@@ -1295,7 +1293,7 @@ mod tests {
         let rollback = action.rollback().unwrap();
         action_execute(
             &rollback,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
 
@@ -1325,7 +1323,7 @@ mod tests {
         // Execute: creates symlink
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(crate::symlink::is_symlink(&link));
@@ -1334,7 +1332,7 @@ mod tests {
         let rollback = action.rollback().unwrap();
         action_execute(
             &rollback,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
 
@@ -1374,7 +1372,7 @@ mod tests {
         // Execute: creates symlink at link → target
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(crate::symlink::is_symlink(&link));
@@ -1404,7 +1402,7 @@ mod tests {
         // This is the TOCTOU fix: we don't panic on missing backup.
         let result = action_execute(
             &rollback,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         );
         assert!(
             result.is_ok(),
@@ -1442,7 +1440,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
 
@@ -1468,7 +1466,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(dest.exists());
@@ -1477,7 +1475,7 @@ mod tests {
         let rollback = action.rollback().unwrap();
         action_execute(
             &rollback,
-            &mut RepoState::new_for_git(dummy_repo_path(), dummy_repo_path()),
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
         )
         .unwrap();
         assert!(!dest.exists());
