@@ -203,8 +203,7 @@ pub(crate) fn build_add_plan(
     let mut config = config.clone();
 
     // Backup timestamp
-    let backup_timestamp = backup_timestamp();
-    let backup_base = input.state_path.join("backups").join(&backup_timestamp);
+    let backup_ts = backup_timestamp();
 
     // Collect repo-relative paths for git add alongside plan building
     let mut git_add_paths: Vec<PathBuf> = Vec::new();
@@ -223,11 +222,12 @@ pub(crate) fn build_add_plan(
 
         // Backup original file if it exists at target
         let backup_path = if target_file.exists() {
-            let dest = if let Ok(relative) = target_file.strip_prefix(&input.home) {
-                backup_base.join(relative)
-            } else {
-                backup_base.join(target_file.file_name().unwrap_or_default())
-            };
+            let dest = crate::backups::backup_dest_for(
+                target_file,
+                &input.home,
+                &input.state_path,
+                &backup_ts,
+            );
             plan.add(Action::Backup {
                 source: target_file.clone(),
                 dest: dest.clone(),

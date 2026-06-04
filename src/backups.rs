@@ -1,5 +1,25 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Construct the backup destination path for a given target file.
+///
+/// If `target` is under `home`, the backup preserves the relative path
+/// (e.g. `~/.config/foo` → `backups/<ts>/.config/foo`).
+/// Otherwise, only the file name is used (e.g. `/tmp/foo` → `backups/<ts>/foo`).
+///
+/// # Parameters
+/// * `target` — the real-path of the file being backed up
+/// * `home` — the user's home directory
+/// * `state_path` — the dotty state directory (contains `backups/` subdirectory)
+/// * `ts` — the backup timestamp string (from [`backup_timestamp`])
+pub fn backup_dest_for(target: &Path, home: &Path, state_path: &Path, ts: &str) -> PathBuf {
+    let backup_base = state_path.join("backups").join(ts);
+    if let Ok(relative) = target.strip_prefix(home) {
+        backup_base.join(relative)
+    } else {
+        backup_base.join(target.file_name().unwrap_or_default())
+    }
+}
 
 /// Generate a timestamp string for backup directories.
 ///
@@ -122,5 +142,54 @@ mod tests {
         assert_eq!(backups.len(), 2);
         assert_eq!(backups[0], "2024-01-15T10-30-00");
         assert_eq!(backups[1], "2024-01-16T09-15-00");
+    }
+
+    #[test]
+    fn test_backup_dest_for_inside_home() {
+        let home = Path::new("/home/user");
+        let state_path = Path::new("/home/user/.local/share/dotty");
+        let target = Path::new("/home/user/.config/alacritty/alacritty.toml");
+        let ts = "2024-01-15T10-30-00-847";
+
+        let dest = backup_dest_for(target, home, state_path, ts);
+
+        assert_eq!(
+            dest,
+            PathBuf::from(
+                "/home/user/.local/share/dotty/backups/2024-01-15T10-30-00-847/.config/alacritty/alacritty.toml"
+            )
+        );
+    }
+
+    #[test]
+    fn test_backup_dest_for_outside_home() {
+        let home = Path::new("/home/user");
+        let state_path = Path::new("/home/user/.local/share/dotty");
+        let target = Path::new("/tmp/somefile");
+        let ts = "2024-01-15T10-30-00-847";
+
+        let dest = backup_dest_for(target, home, state_path, ts);
+
+        assert_eq!(
+            dest,
+            PathBuf::from("/home/user/.local/share/dotty/backups/2024-01-15T10-30-00-847/somefile")
+        );
+    }
+
+    #[test]
+    fn test_backup_dest_for_root_relative() {
+        let home = Path::new("/home/user");
+        let state_path = Path::new("/home/user/.local/share/dotty");
+        let target = Path::new("/etc/ssh/sshd_config");
+        let ts = "2024-01-15T10-30-00-847";
+
+        let dest = backup_dest_for(target, home, state_path, ts);
+
+        assert_eq!(
+            dest,
+            PathBuf::from(
+                "/home/user/.local/share/dotty/backups/2024-01-15T10-30-00-847/sshd_config"
+            )
+        );
     }
 }

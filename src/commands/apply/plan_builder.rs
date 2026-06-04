@@ -130,15 +130,13 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 if let Some(parent) = target.parent() {
                     created_parents.insert(parent.to_path_buf());
                 }
-                let backup_base = input.state_path.join("backups");
                 let backup_ts = crate::backups::backup_timestamp();
-                let backup_dest = if let Ok(relative) = target.strip_prefix(&input.home) {
-                    backup_base.join(&backup_ts).join(relative)
-                } else {
-                    backup_base
-                        .join(&backup_ts)
-                        .join(target.file_name().unwrap_or_default())
-                };
+                let backup_dest = crate::backups::backup_dest_for(
+                    &target,
+                    &input.home,
+                    &input.state_path,
+                    &backup_ts,
+                );
                 plan.add(Action::Backup {
                     source: target.clone(),
                     dest: backup_dest.clone(),
@@ -170,15 +168,13 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 if let Some(parent) = target.parent() {
                     created_parents.insert(parent.to_path_buf());
                 }
-                let backup_base = input.state_path.join("backups");
                 let backup_ts = crate::backups::backup_timestamp();
-                let backup_dest = if let Ok(relative) = target.strip_prefix(&input.home) {
-                    backup_base.join(&backup_ts).join(relative)
-                } else {
-                    backup_base
-                        .join(&backup_ts)
-                        .join(target.file_name().unwrap_or_default())
-                };
+                let backup_dest = crate::backups::backup_dest_for(
+                    &target,
+                    &input.home,
+                    &input.state_path,
+                    &backup_ts,
+                );
                 plan.add(Action::BackupDir {
                     source: target.clone(),
                     dest: backup_dest.clone(),
