@@ -318,6 +318,12 @@ fn resolve_scope(
 /// but not `..`).
 ///
 /// When HOME is unset, the path is treated as non-standard.
+/// Check if a path follows a standard XDG pattern relative to `$HOME`.
+///
+/// Only paths under the user's home directory can match XDG conventions.
+/// Paths outside `$HOME` (e.g. `/etc`, `/opt`, `/var`) always return `false`
+/// because home-relative prefix stripping fails and the full path cannot
+/// satisfy the XDG patterns — use `is_sensitive_system_path` instead.
 fn is_standard_xdg_path(target_path: &Path) -> bool {
     let home = crate::paths::home_dir().ok();
     let rel_str = match home {
