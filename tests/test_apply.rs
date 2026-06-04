@@ -490,17 +490,12 @@ fn apply_reports_config_write_failure_to_stderr() {
         .output()
         .unwrap();
 
-    // Second apply should fail because the state directory is read-only.
+    // Second apply must fail because the state directory is read-only.
     // With atomic writes, write_config needs to create a temp file in the
     // state directory, which fails when the directory is unwritable.
-    let out = env.run(&["apply"]);
-
-    // The apply fails because save_pending_plan cannot write to the state dir.
-    // This is expected — the state directory must be writable for dotty to operate.
+    // write_config now propagates the error via `?`, making this fatal.
     assert!(
-        !out.status.success() || out.stderr.contains("failed to write config"),
-        "apply should fail or report config write error when state dir is unwritable:\nstderr: {}\nstdout: {}",
-        out.stderr,
-        out.stdout
+        !env.run(&["apply"]).status.success(),
+        "apply should fail when state dir is unwritable"
     );
 }

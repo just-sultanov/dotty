@@ -110,12 +110,11 @@ pub fn run(
 
     // 8. Write updated config (managed map was rebuilt in step 4b).
     //
-    // Config write failure is non-fatal: the apply itself succeeded.
-    // We print to stderr with details and a recommendation so the user
-    // knows the managed map may be stale (orphan detection will be
-    // incorrect on the next apply until the config is fixed).
-    if !dry_run && let Err(e) = write_config(&state_path, &config) {
-        warn!("failed to write config: {e}. Your managed map may be out of sync.");
+    // Config write failure is fatal because orphan detection relies on
+    // the managed map to be accurate. If the write fails, the command
+    // exits with an error so the user can retry.
+    if !dry_run {
+        write_config(&state_path, &config)?;
     }
 
     Ok(())
