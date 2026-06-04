@@ -28,14 +28,6 @@ const MAX_WALK_DEPTH: u32 = 50;
 /// grows on the heap, which can handle far wider directory trees than the
 /// call stack can handle deep ones.
 pub fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), DottyError> {
-    walk_dir_internal(dir, files, 0)
-}
-
-fn walk_dir_internal(dir: &Path, files: &mut Vec<PathBuf>, depth: u32) -> Result<(), DottyError> {
-    if depth > MAX_WALK_DEPTH {
-        return Ok(());
-    }
-
     // Resolve the starting path: if it's a symlink to a directory, use the
     // target so that traversal works correctly (walk_dir skips symlinked dirs
     // during iteration, so we must resolve the initial path).
@@ -49,7 +41,7 @@ fn walk_dir_internal(dir: &Path, files: &mut Vec<PathBuf>, depth: u32) -> Result
     };
 
     // Iterative DFS using an explicit work queue (stack).
-    let mut queue: Vec<(PathBuf, u32)> = vec![(start_path, depth)];
+    let mut queue: Vec<(PathBuf, u32)> = vec![(start_path, 0)];
 
     while let Some((current, current_depth)) = queue.pop() {
         let dir_entries = fs::read_dir(&current)?;
