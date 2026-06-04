@@ -88,6 +88,8 @@ mod tests {
     use serial_test::serial;
 
     #[test]
+    // Requires serial execution: OnceLock initialization in SYMBOLS depends on
+    // TERM env var which may differ across parallel threads.
     #[serial]
     fn test_symbols_are_nonempty() {
         assert!(!check().is_empty());
