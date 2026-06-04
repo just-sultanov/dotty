@@ -19,6 +19,34 @@ pub(crate) fn filter_backups(
     before: Option<&str>,
 ) -> Result<(Vec<String>, Option<String>), String> {
     if let Some(count) = keep {
+        // When both flags are present, restrict the candidate set to backups
+        // before the date first, then keep the N newest among those.
+        if let Some(date_str) = before {
+            let prefix = date_to_backup_prefix(date_str)
+                .ok_or_else(|| format!("Invalid date format: {}. Use YYYY-MM-DD.", date_str))?;
+            let before_backups: Vec<&String> = all_backups
+                .iter()
+                .filter(|b| b.as_str() < prefix.as_str())
+                .collect();
+            if count >= before_backups.len() {
+                return Ok((
+                    Vec::new(),
+                    Some(format!(
+                        "Keeping all {} backups before {} (keep count >= total).",
+                        before_backups.len(),
+                        date_str
+                    )),
+                ));
+            }
+            let num_to_remove = before_backups.len() - count;
+            let to_remove: Vec<String> = before_backups
+                .iter()
+                .take(num_to_remove)
+                .map(|s| (*s).clone())
+                .collect();
+            return Ok((to_remove, None));
+        }
+
         if count >= all_backups.len() {
             return Ok((
                 Vec::new(),
@@ -176,5 +204,74 @@ mod tests {
         let result = filter_backups(&backups, None, Some("not-a-date"));
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid date format"));
+    }
+
+    #[test]
+    fn test_filter_backups_keep_before_combined() {
+        let backups = vec![
+            "2024-01-10T10-00-00-000".to_string(),
+            "2024-01-15T10-00-00-000".to_string(),
+            "2024-01-20T10-00-00-000".to_string(),
+            "2024-02-01T10-00-00-000".to_string(),
+            "2024-02-10T10-00-00-000".to_string(),
+        ];
+        // --keep 2 --before 2024-02-01: 3 backups before Feb, keep the 2 newest
+        let (to_remove, skip) = filter_backups(&backups, Some(2), Some("2024-02-01")).unwrap();
+        assert!(skip.is_none());
+        assert_eq!(to_remove.len(), 1);
+        assert_eq!(to_remove[0], "2024-01-10T10-00-00-000");
+    }
+
+    #[test]
+    fn test_filter_backups_keep_before_keeps_all_when_under_count() {
+        let backups = vec![
+            "2024-01-10T10-00-00-000".to_string(),
+            "2024-01-15T10-00-00-000".to_string(),
+            "2024-02-10T10-00-00-000".to_string(),
+        ];
+        // --keep 5 --before 2024-02-01: only 2 backups before Feb, keep both
+        let (to_remove, skip) = filter_backups(&backups, Some(5), Some("2024-02-01")).unwrap();
+        assert!(to_remove.is_empty());
+        assert!(skip.is_some());
+        assert!(
+            skip.unwrap()
+                .contains("Keeping all 2 backups before 2024-02-01")
+        );
+    }
+
+    #[test]
+    fn test_filter_backups_keep_before_invalid_date() {
+        let backups = vec!["2024-01-10T10-00-00-000".to_string()];
+        let result = filter_backups(&backups, Some(1), Some("bad-date"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid date format"));
+    }
+
+    #[test]
+    fn test_filter_backups_keep_before_empty_set() {
+        // All backups are after the cutoff, so --keep applies to empty set
+        let backups = vec!["2024-03-01T10-00-00-000".to_string()];
+        let (to_remove, skip) = filter_backups(&backups, Some(1), Some("2024-02-01")).unwrap();
+        assert!(to_remove.is_empty());
+        assert!(skip.is_some());
+        assert!(
+            skip.unwrap()
+                .contains("Keeping all 0 backups before 2024-02-01")
+        );
+    }
+
+    #[test]
+    fn test_filter_backups_keep_zero_combined() {
+        let backups = vec![
+            "2024-01-10T10-00-00-000".to_string(),
+            "2024-01-15T10-00-00-000".to_string(),
+            "2024-02-10T10-00-00-000".to_string(),
+        ];
+        // --keep 0 --before 2024-02-01: remove all backups before Feb
+        let (to_remove, skip) = filter_backups(&backups, Some(0), Some("2024-02-01")).unwrap();
+        assert!(skip.is_none());
+        assert_eq!(to_remove.len(), 2);
+        assert_eq!(to_remove[0], "2024-01-10T10-00-00-000");
+        assert_eq!(to_remove[1], "2024-01-15T10-00-00-000");
     }
 }

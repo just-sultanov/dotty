@@ -449,3 +449,162 @@ fn clean_invalid_date_fails() {
 
     env.run_err(&["clean", "--before", "not-a-date"]);
 }
+
+// ---------------------------------------------------------------------------
+// clean – --keep + --before combined interaction
+// ---------------------------------------------------------------------------
+
+/// Table-driven test exercising all combinations of --keep and --before.
+#[test]
+fn clean_keep_before_combinations() {
+    let cases = vec![
+        // (keep, before, backups_to_create, expected_remaining, expected_removed_msg)
+        // --keep N only: keep 2 most recent, remove oldest 2
+        (
+            Some("2"),
+            None,
+            vec![
+                "2024-01-01T00-00-00",
+                "2024-03-15T00-00-00",
+                "2024-06-01T00-00-00",
+                "2024-09-01T00-00-00",
+            ],
+            vec!["2024-06-01T00-00-00", "2024-09-01T00-00-00"],
+            Some("Removed 2 of 2"),
+        ),
+        // --before DATE only: remove backups before 2024-06-01
+        (
+            None,
+            Some("2024-06-01"),
+            vec![
+                "2024-01-01T00-00-00",
+                "2024-03-15T00-00-00",
+                "2024-06-01T00-00-00",
+                "2024-09-01T00-00-00",
+            ],
+            vec!["2024-06-01T00-00-00", "2024-09-01T00-00-00"],
+            Some("Removed 2 of 2"),
+        ),
+        // --keep 2 --before 2024-06-01: 3 backups before cutoff, keep 2 newest
+        (
+            Some("2"),
+            Some("2024-06-01"),
+            vec![
+                "2024-01-01T00-00-00",
+                "2024-03-15T00-00-00",
+                "2024-05-01T00-00-00",
+                "2024-06-01T00-00-00",
+                "2024-09-01T00-00-00",
+            ],
+            vec![
+                "2024-03-15T00-00-00",
+                "2024-05-01T00-00-00",
+                "2024-06-01T00-00-00",
+                "2024-09-01T00-00-00",
+            ],
+            Some("Removed 1 of 1"),
+        ),
+        // --keep all --before date: fewer backups than keep count
+        (
+            Some("10"),
+            Some("2024-06-01"),
+            vec![
+                "2024-01-01T00-00-00",
+                "2024-03-15T00-00-00",
+                "2024-06-01T00-00-00",
+                "2024-09-01T00-00-00",
+            ],
+            vec![
+                "2024-01-01T00-00-00",
+                "2024-03-15T00-00-00",
+                "2024-06-01T00-00-00",
+                "2024-09-01T00-00-00",
+            ],
+            Some("Keeping all 2 backups before 2024-06-01"),
+        ),
+        // --keep 0 --before date: remove all backups before cutoff
+        (
+            Some("0"),
+            Some("2024-06-01"),
+            vec![
+                "2024-01-01T00-00-00",
+                "2024-03-15T00-00-00",
+                "2024-06-01T00-00-00",
+                "2024-09-01T00-00-00",
+            ],
+            vec!["2024-06-01T00-00-00", "2024-09-01T00-00-00"],
+            Some("Removed 2 of 2"),
+        ),
+        // --keep 1 --before far past: no backups before cutoff
+        (
+            Some("1"),
+            Some("2020-01-01"),
+            vec!["2024-01-01T00-00-00", "2024-06-01T00-00-00"],
+            vec!["2024-01-01T00-00-00", "2024-06-01T00-00-00"],
+            Some("Keeping all 0 backups before 2020-01-01"),
+        ),
+    ];
+
+    for (i, (keep, before, backups, expected_remaining, expected_msg)) in
+        cases.into_iter().enumerate()
+    {
+        let env = TestEnv::new();
+        env.run_ok(&["init", "--machine", "testbox"]);
+        env.git_config_identity();
+
+        let backup_dir = env.state.join("backups");
+        for name in &backups {
+            std::fs::create_dir_all(backup_dir.join(name)).unwrap();
+        }
+
+        // Build args
+        let mut args = vec!["clean", "--yes"];
+        if let Some(k) = keep {
+            args.push("--keep");
+            args.push(k);
+        }
+        if let Some(b) = before {
+            args.push("--before");
+            args.push(b);
+        }
+
+        let out = env.run_ok(&args);
+
+        // Check output message
+        if let Some(msg) = expected_msg {
+            assert!(
+                out.stdout.contains(msg),
+                "Case {}: expected stdout to contain {:?}, got:\n{}",
+                i,
+                msg,
+                out.stdout
+            );
+        }
+
+        // Check remaining backups
+        let remaining: Vec<String> = std::fs::read_dir(&backup_dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+
+        for name in &expected_remaining {
+            assert!(
+                remaining.iter().any(|r| r == name),
+                "Case {}: expected backup {:?} to remain, but got: {:?}",
+                i,
+                name,
+                remaining
+            );
+        }
+
+        assert_eq!(
+            remaining.len(),
+            expected_remaining.len(),
+            "Case {}: expected {} remaining backups, got {}: {:?}",
+            i,
+            expected_remaining.len(),
+            remaining.len(),
+            remaining
+        );
+    }
+}
