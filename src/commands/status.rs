@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -170,7 +171,7 @@ fn git_status_summary(repo_path: &Path) -> Result<String, DottyError> {
 /// Find broken symlinks from the managed map.
 ///
 /// Returns a list of (target_path, repo_relative_path, reason).
-fn find_broken_symlinks(repo_path: &Path, config: &Config) -> Vec<(String, String, String)> {
+fn find_broken_symlinks(_repo_path: &Path, config: &Config) -> Vec<(String, String, String)> {
     let mut broken = Vec::new();
 
     for (repo_relative_path, target_ref) in &config.managed {
@@ -191,14 +192,32 @@ fn find_broken_symlinks(repo_path: &Path, config: &Config) -> Vec<(String, Strin
             continue;
         }
 
-        // Check if the symlink target (repo file) exists
-        let repo_absolute_path = repo_path.join(repo_relative_path);
-        if !repo_absolute_path.exists() {
-            broken.push((
-                target_ref.clone(),
-                repo_relative_path.clone(),
-                "missing".to_string(),
-            ));
+        // Check if the symlink target (repo file) exists and is reachable
+        // fs::metadata follows symlinks, so calling it on the symlink path
+        // detects dangling symlinks (NotFound), permission errors, etc.
+        match fs::metadata(&target) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                broken.push((
+                    target_ref.clone(),
+                    repo_relative_path.clone(),
+                    "target not found (dangling symlink)".to_string(),
+                ));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                broken.push((
+                    target_ref.clone(),
+                    repo_relative_path.clone(),
+                    format!("target unreachable: {}", e),
+                ));
+            }
+            Err(e) => {
+                broken.push((
+                    target_ref.clone(),
+                    repo_relative_path.clone(),
+                    format!("target error: {}", e),
+                ));
+            }
         }
     }
 
