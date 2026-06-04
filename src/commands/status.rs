@@ -106,6 +106,38 @@ pub fn run() -> Result<(), DottyError> {
     Ok(())
 }
 
+/// Parse git porcelain status lines into change counts.
+///
+/// Returns `(modified, added, deleted, untracked)`.
+fn count_porcelain_changes(porcelain: &str) -> (usize, usize, usize, usize) {
+    let mut modified = 0usize;
+    let mut added = 0usize;
+    let mut deleted = 0usize;
+    let mut untracked = 0usize;
+
+    for line in porcelain.lines() {
+        if let Some(status) = line.get(..2) {
+            match status {
+                "M " | "MM" => modified += 1,
+                "A " | "AA" => added += 1,
+                "D " | "DD" => deleted += 1,
+                "??" => untracked += 1,
+                _ => {
+                    if status.contains('M') {
+                        modified += 1;
+                    } else if status.contains('A') {
+                        added += 1;
+                    } else if status.contains('D') {
+                        deleted += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    (modified, added, deleted, untracked)
+}
+
 /// Summarize git status as a human-readable string.
 ///
 /// Returns `DottyError::Git` if the git command fails (e.g., git not installed,
@@ -118,32 +150,7 @@ fn git_status_summary(repo_path: &Path) -> Result<String, DottyError> {
         return Ok("clean".to_string());
     }
 
-    let mut modified = 0usize;
-    let mut added = 0usize;
-    let mut deleted = 0usize;
-    let mut untracked = 0usize;
-
-    for line in porcelain.lines() {
-        if line.len() >= 2 {
-            let status = &line[..2];
-            match status {
-                "M " | "MM" => modified += 1,
-                "A " | "AA" => added += 1,
-                "D " | "DD" => deleted += 1,
-                "??" => untracked += 1,
-                _ => {
-                    // Modified in index, staged, etc.
-                    if status.contains('M') {
-                        modified += 1;
-                    } else if status.contains('A') {
-                        added += 1;
-                    } else if status.contains('D') {
-                        deleted += 1;
-                    }
-                }
-            }
-        }
-    }
+    let (modified, added, deleted, untracked) = count_porcelain_changes(&porcelain);
 
     let mut parts = Vec::new();
     if modified > 0 {
@@ -443,5 +450,41 @@ mod tests {
             }
             other => panic!("expected DottyError::Git, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_count_porcelain_changes_empty() {
+        let (m, a, d, u) = count_porcelain_changes("");
+        assert_eq!((m, a, d, u), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_count_porcelain_changes_newline_only() {
+        let (m, a, d, u) = count_porcelain_changes("\n\n\n");
+        assert_eq!((m, a, d, u), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_count_porcelain_changes_short_lines() {
+        let (m, a, d, u) = count_porcelain_changes("M\nA\n?\n");
+        assert_eq!((m, a, d, u), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_count_porcelain_changes_mixed() {
+        let (m, a, d, u) = count_porcelain_changes("M  file1\nA  file2\n D file3\n?? file4\n");
+        assert_eq!((m, a, d, u), (1, 1, 1, 1));
+    }
+
+    #[test]
+    fn test_count_porcelain_changes_untracked_only() {
+        let (m, a, d, u) = count_porcelain_changes("?? file1\n?? file2\n");
+        assert_eq!((m, a, d, u), (0, 0, 0, 2));
+    }
+
+    #[test]
+    fn test_count_porcelain_changes_only_newlines() {
+        let (m, a, d, u) = count_porcelain_changes("\n\n?? file1\n\n");
+        assert_eq!((m, a, d, u), (0, 0, 0, 1));
     }
 }
