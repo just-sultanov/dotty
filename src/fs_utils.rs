@@ -95,14 +95,28 @@ pub fn calculate_dir_size(dir: &Path) -> u64 {
     while let Some(current) = stack.pop() {
         let entries = match fs::read_dir(&current) {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!(
+                    "failed to read directory {current:?}: {err}",
+                    current = current,
+                    err = e
+                );
+                continue;
+            }
         };
 
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() {
-                if let Ok(meta) = fs::metadata(&path) {
-                    total += meta.len();
+                match fs::metadata(&path) {
+                    Ok(meta) => total += meta.len(),
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to read metadata for {path:?}: {err}",
+                            path = path,
+                            err = e
+                        );
+                    }
                 }
             } else if path.is_dir() {
                 stack.push(path);
