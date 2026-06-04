@@ -482,7 +482,13 @@ fn rollback_completed(
 /// so no explicit dereferencing is needed. This wrapper exists to make
 /// the intent clear at call sites.
 pub(crate) fn copy_file(source: &Path, dest: &Path) -> Result<(), DottyError> {
-    fs::copy(source, dest).map(|_| ())?;
+    let bytes = fs::copy(source, dest)?;
+    debug!(
+        "copied {} bytes: {} → {}",
+        bytes,
+        source.display(),
+        dest.display()
+    );
     Ok(())
 }
 
