@@ -3,8 +3,8 @@
 //! Each module implements a single subcommand and follows a consistent pattern:
 //!
 //! 1. **Resolve inputs** — parse arguments, resolve paths, detect platform/machine
-//! 2. **Build plan** — a pure function (`build_*_plan`) that constructs a `Plan`
-//!    from resolved inputs without performing any side effects
+//! 2. **Build plan** — a function (`build_*_plan`) that constructs a `Plan` from
+//!    resolved inputs; may perform filesystem I/O for target inspection
 //! 3. **Execute plan** — calls `plan::execute_plan()` to apply actions
 //! 4. **Persist state** — write updated config, git stage/commit
 //!

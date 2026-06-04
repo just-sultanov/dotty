@@ -13,6 +13,7 @@ use indexmap::IndexSet;
 use tracing::warn;
 
 use crate::config::Config;
+use crate::error::DottyError;
 use crate::plan::{Action, Plan};
 
 use super::inspect::{TargetState, inspect_target};
@@ -51,7 +52,7 @@ pub(crate) struct ApplyPlanOutput {
 }
 
 /// Per-file result for console output.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct FileResult {
     pub(crate) target: PathBuf,
     pub(crate) tier: String,
@@ -67,9 +68,9 @@ pub(crate) struct FileResult {
 /// CreateSymlink, RemoveSymlink). It also detects orphan managed entries
 /// and produces per-file results for console output.
 ///
-/// Note: currently infallible — no sub-operation can fail. If a fallible
-/// path is added later, restore the `Result` wrapper.
-pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> ApplyPlanOutput {
+/// Propagates `DottyError` for filesystem I/O errors encountered during
+/// target inspection (e.g., permission denied, broken FS).
+pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput, DottyError> {
     let mut plan = Plan::new(&input.repo_path);
     let mut file_results: Vec<FileResult> = Vec::new();
 
@@ -88,7 +89,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> ApplyPlanOutput {
         let overrides = input.override_map.get(target_path).cloned();
 
         // Check target state
-        let state = match inspect_target(&target, &repo_absolute_path) {
+        let state = match inspect_target(&target, &repo_absolute_path)? {
             TargetState::Correct => {
                 file_results.push(FileResult {
                     target: target.clone(),
@@ -224,12 +225,12 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> ApplyPlanOutput {
     };
     let orphan_output = detect_orphans_and_build_removals(&orphan_input);
 
-    ApplyPlanOutput {
+    Ok(ApplyPlanOutput {
         plan,
         file_results,
         orphans: orphan_output.orphans,
         orphan_removal_actions: orphan_output.removal_actions,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -243,7 +244,7 @@ mod tests {
         let target = dir.path().join("nonexistent.txt");
         let repo_absolute_path = PathBuf::from("/tmp/dotty_repo_file.txt");
         assert_eq!(
-            inspect_target(&target, &repo_absolute_path),
+            inspect_target(&target, &repo_absolute_path).unwrap(),
             TargetState::NeedsSymlink
         );
     }
@@ -258,7 +259,7 @@ mod tests {
         assert!(crate::symlink::is_symlink(&target));
 
         assert_eq!(
-            inspect_target(&target, &repo_absolute_path),
+            inspect_target(&target, &repo_absolute_path).unwrap(),
             TargetState::CircularSymlink
         );
     }
@@ -274,11 +275,11 @@ mod tests {
         create_symlink(&a, &b).unwrap();
 
         assert_eq!(
-            inspect_target(&a, &repo_absolute_path),
+            inspect_target(&a, &repo_absolute_path).unwrap(),
             TargetState::CircularSymlink
         );
         assert_eq!(
-            inspect_target(&b, &repo_absolute_path),
+            inspect_target(&b, &repo_absolute_path).unwrap(),
             TargetState::CircularSymlink
         );
     }
@@ -291,7 +292,7 @@ mod tests {
             let repo_absolute_path = PathBuf::from("/tmp/repo.txt");
 
             assert_eq!(
-                inspect_target(&target, &repo_absolute_path),
+                inspect_target(&target, &repo_absolute_path).unwrap(),
                 TargetState::NeedsBackup
             );
         });
@@ -304,7 +305,7 @@ mod tests {
             std::fs::create_dir(&target).unwrap();
             let repo_absolute_path = PathBuf::from("/tmp/repo.txt");
 
-            let state = inspect_target(&target, &repo_absolute_path);
+            let state = inspect_target(&target, &repo_absolute_path).unwrap();
             assert!(
                 matches!(state, TargetState::NeedsBackupDir(_)),
                 "expected NeedsBackupDir, got {:?}",
@@ -333,7 +334,7 @@ mod tests {
         create_symlink(&link_target, &target).unwrap();
 
         assert_eq!(
-            inspect_target(&target, &repo_absolute_path),
+            inspect_target(&target, &repo_absolute_path).unwrap(),
             TargetState::Correct
         );
     }
@@ -351,7 +352,7 @@ mod tests {
 
         let expected = base.join("other_dir").join("file.txt");
         assert_eq!(
-            inspect_target(&target, &expected),
+            inspect_target(&target, &expected).unwrap(),
             TargetState::NeedsSymlink
         );
     }
@@ -394,7 +395,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             assert!(output.plan.is_empty());
             assert_eq!(output.file_results.len(), 1);
@@ -440,7 +441,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             assert_eq!(output.plan.actions.len(), 2);
             assert_eq!(output.file_results.len(), 1);
@@ -486,7 +487,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             assert_eq!(output.plan.actions.len(), 3);
             assert_eq!(output.file_results.len(), 1);
@@ -532,7 +533,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             assert_eq!(output.plan.actions.len(), 3);
             assert_eq!(output.file_results.len(), 1);
@@ -580,7 +581,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             // Without --force, directory replacement should be skipped
             assert!(output.plan.is_empty());
@@ -630,7 +631,7 @@ mod tests {
                 force: true,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             // With --force, directory replacement should proceed.
             // CreateDir is now deduplicated and added after per-file actions.
@@ -716,7 +717,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             // .old is in merged but not in config.managed → orphan
             assert_eq!(output.orphans.len(), 1);
@@ -773,7 +774,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             // No orphans when merged and config.managed are aligned
             assert!(output.orphans.is_empty());
@@ -865,7 +866,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             // Should have 3 file results
             assert_eq!(output.file_results.len(), 3);
@@ -998,7 +999,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             assert_eq!(output.file_results.len(), 3);
 
@@ -1053,7 +1054,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             assert_eq!(output.orphans.len(), 1);
             assert_eq!(output.orphans[0].0, "base/home/.old_symlink");
@@ -1107,7 +1108,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             assert_eq!(output.orphans.len(), 1);
             // Orphan removal actions are returned separately
@@ -1167,7 +1168,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             assert_eq!(output.orphans.len(), 1);
             // Should have NO removal actions (target already gone)
@@ -1290,7 +1291,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             // 4 files across 3 unique parent directories:
             //   ~/.config/nvim (2 files), ~/.config/nvim/lua (1 file),
@@ -1396,7 +1397,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input);
+            let output = build_apply_plan(&input).unwrap();
 
             // Collect CreateDir paths in order
             let create_dirs: Vec<PathBuf> = output
@@ -1424,5 +1425,65 @@ mod tests {
                 "third CreateDir should be parent_c"
             );
         });
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_build_apply_plan_permission_denied_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let restricted = base.join("restricted");
+        std::fs::create_dir_all(&restricted).unwrap();
+        let secret = restricted.join("secret.txt");
+        std::fs::write(&secret, "content").unwrap();
+
+        let target = home.join(".secret");
+        let repo_absolute_path = repo.join("base/home/.secret");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
+        create_symlink(&secret, &target).unwrap();
+
+        let original_perms = std::fs::metadata(&restricted).unwrap().permissions();
+        let mut no_perms = original_perms.clone();
+        no_perms.set_mode(0o000);
+        std::fs::set_permissions(&restricted, no_perms).unwrap();
+
+        let mut merged = IndexMap::new();
+        merged.insert(
+            target.clone(),
+            ("base".to_string(), "base/home/.secret".to_string()),
+        );
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.secret".into(), "~/.secret".into());
+
+        crate::tests::with_test_home(|_| {
+            let input = ApplyPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                merged,
+                override_map: IndexMap::new(),
+                config,
+                force: false,
+                follow_symlinks: false,
+            };
+            let result = build_apply_plan(&input);
+            assert!(
+                matches!(result, Err(DottyError::PermissionDenied { .. })),
+                "expected PermissionDenied error"
+            );
+        });
+
+        std::fs::set_permissions(&restricted, original_perms).unwrap();
     }
 }
