@@ -2,8 +2,6 @@ use indexmap::IndexMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
-
 use crate::config::Config;
 use crate::convention::classify_tier;
 use crate::error::DottyError;
@@ -15,9 +13,9 @@ use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
 
 /// Run the `status` command.
-pub fn run() -> Result<()> {
-    let repo = RepoState::new().map_err(|e| anyhow::anyhow!("{e}"))?;
-    repo.require_git().map_err(|e| anyhow::anyhow!("{e}"))?;
+pub fn run() -> Result<(), DottyError> {
+    let repo = RepoState::new()?;
+    repo.require_git()?;
 
     let repo_path = &repo.repo_path;
     let state_path = &repo.state_path;
