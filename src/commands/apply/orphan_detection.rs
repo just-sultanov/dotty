@@ -88,9 +88,7 @@ pub(crate) fn detect_orphans_and_build_removals(
         } else if file_type.is_file() {
             removal_actions.push(Action::RemoveFile { path: target });
         } else if file_type.is_dir() {
-            // Mitigation: directories are removed via RemoveFile which
-            // will fail gracefully if the action doesn't support dirs.
-            removal_actions.push(Action::RemoveFile { path: target });
+            removal_actions.push(Action::RemoveDir { path: target });
         } else {
             // Special files (sockets, fifos, etc.) — best-effort RemoveFile.
             removal_actions.push(Action::RemoveFile { path: target });

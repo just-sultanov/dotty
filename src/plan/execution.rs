@@ -109,13 +109,13 @@ pub(crate) fn action_execute(
             fs::rename(&temp_path, link).map_err(|e| io_error_with_path(e, link))?;
         }
         Action::RemoveFile { path } => {
-            if !path.exists() {
-                return Ok(());
-            }
-            if path.is_dir() && !is_symlink(path) {
-                fs::remove_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
-            } else {
+            if path.exists() {
                 fs::remove_file(path).map_err(|e| io_error_with_path(e, path))?;
+            }
+        }
+        Action::RemoveDir { path } => {
+            if path.exists() {
+                fs::remove_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
             }
         }
         Action::RemoveSymlink { path } => {
@@ -190,16 +190,17 @@ pub(crate) fn action_execute(
 /// Return the inverse filesystem action, or `None` if not reversible.
 ///
 /// Filesystem actions (CreateDir, Backup, CopyFile, CreateSymlink) are
-/// reversible. RemoveFile / RemoveSymlink return None because the original
-/// content is not tracked (the file was already removed from management;
-/// to restore it, the user would need to re-add it or use `git checkout`).
+/// reversible. RemoveFile / RemoveDir / RemoveSymlink return None because the
+/// original content is not tracked (the file was already removed from
+/// management; to restore it, the user would need to re-add it or use
+/// `git checkout`).
 /// Git actions (GitAdd, GitCommit) are handled separately in
 /// `rollback_completed` via `git reset`.
 pub(crate) fn action_rollback(action: &Action) -> Option<Action> {
     match action {
-        Action::CreateDir { path } => Some(Action::RemoveFile { path: path.clone() }),
+        Action::CreateDir { path } => Some(Action::RemoveDir { path: path.clone() }),
         Action::Backup { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
-        Action::BackupDir { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
+        Action::BackupDir { dest, .. } => Some(Action::RemoveDir { path: dest.clone() }),
         Action::CopyFile { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
         Action::CreateSymlink {
             link,
@@ -225,9 +226,10 @@ pub(crate) fn action_rollback(action: &Action) -> Option<Action> {
             }
         }
         Action::RemoveFile { path: _ } => None,
+        Action::RemoveDir { path: _ } => None,
         Action::RemoveSymlink { path: _, .. } => None,
         Action::RestoreBackup { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
-        Action::RestoreDir { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
+        Action::RestoreDir { dest, .. } => Some(Action::RemoveDir { path: dest.clone() }),
         Action::GitAdd { .. } => None,
         Action::GitCommit { .. } => None,
     }
@@ -403,7 +405,7 @@ impl RollbackAction {
 
     /// Convert an `Action` into the appropriate `RollbackAction`.
     ///
-    /// Returns `None` if the action has no rollback (e.g. `RemoveFile`).
+    /// Returns `None` if the action has no rollback (e.g. `RemoveFile`, `RemoveDir`).
     fn from_action(action: &Action) -> Option<RollbackAction> {
         match action {
             Action::GitCommit { .. } => Some(RollbackAction::GitResetSoft),

@@ -85,6 +85,14 @@ pub(crate) enum Action {
     RemoveFile {
         path: PathBuf,
     },
+    /// Remove a directory (recursively) that was created as part of the plan.
+    ///
+    /// Used in rollback of dir-creating actions (CreateDir, BackupDir,
+    /// RestoreDir). Separated from `RemoveFile` to prevent accidental
+    /// silent data loss via `remove_dir_all` on file-type removals.
+    RemoveDir {
+        path: PathBuf,
+    },
     RemoveSymlink {
         path: PathBuf,
     },
@@ -123,6 +131,7 @@ impl fmt::Display for Action {
                 write!(f, "create link   {} → {}", link.display(), target.display())
             }
             Action::RemoveFile { path } => write!(f, "remove file   {}", path.display()),
+            Action::RemoveDir { path } => write!(f, "remove dir    {}", path.display()),
             Action::RemoveSymlink { path } => write!(f, "remove link   {}", path.display()),
             Action::RestoreBackup { source, dest } => {
                 write!(
@@ -162,9 +171,10 @@ impl Action {
     /// Return the inverse filesystem action, or `None` if not reversible.
     ///
     /// Filesystem actions (CreateDir, Backup, CopyFile, CreateSymlink) are
-    /// reversible. RemoveFile / RemoveSymlink return None because the original
-    /// content is not tracked (the file was already removed from management;
-    /// to restore it, the user would need to re-add it or use `git checkout`).
+    /// reversible. RemoveFile / RemoveDir / RemoveSymlink return None because
+    /// the original content is not tracked (the file was already removed from
+    /// management; to restore it, the user would need to re-add it or use
+    /// `git checkout`).
     /// Git actions (GitAdd, GitCommit) are handled separately in
     /// `rollback_completed` via `git reset`.
     pub fn rollback(&self) -> Option<Action> {
@@ -415,13 +425,13 @@ mod tests {
         .unwrap();
         assert!(backup_dir.exists());
 
-        // Rollback of BackupDir is RemoveFile (removes the backup)
+        // Rollback of BackupDir is RemoveDir (removes the backup directory)
         let rollback = action.rollback().unwrap();
         match &rollback {
-            Action::RemoveFile { path } => {
+            Action::RemoveDir { path } => {
                 assert_eq!(path, &backup_dir);
             }
-            other => panic!("expected RemoveFile, got {:?}", other),
+            other => panic!("expected RemoveDir, got {:?}", other),
         }
         action_execute(
             &rollback,
@@ -450,13 +460,13 @@ mod tests {
         .unwrap();
         assert!(dest.exists());
 
-        // Rollback of RestoreDir is RemoveFile (removes the restored dir)
+        // Rollback of RestoreDir is RemoveDir (removes the restored dir)
         let rollback = action.rollback().unwrap();
         match &rollback {
-            Action::RemoveFile { path } => {
+            Action::RemoveDir { path } => {
                 assert_eq!(path, &dest);
             }
-            other => panic!("expected RemoveFile, got {:?}", other),
+            other => panic!("expected RemoveDir, got {:?}", other),
         }
         action_execute(
             &rollback,
@@ -938,6 +948,9 @@ mod tests {
         plan.add(Action::RemoveFile {
             path: base.join("remove.txt"),
         });
+        plan.add(Action::RemoveDir {
+            path: base.join("remove_dir"),
+        });
         plan.add(Action::RemoveSymlink {
             path: base.join("remove_link"),
         });
@@ -951,14 +964,14 @@ mod tests {
         save_pending_plan(&plan, &state).unwrap();
         let loaded = load_pending_plan(&state).unwrap().unwrap();
 
-        assert_eq!(loaded.actions.len(), 8);
+        assert_eq!(loaded.actions.len(), 9);
 
         // Verify each action type roundtrips correctly
         match &loaded.actions[0] {
             Action::CreateDir { path } => assert!(path.ends_with("dir")),
             other => panic!("expected CreateDir, got {:?}", other),
         }
-        match &loaded.actions[7] {
+        match &loaded.actions[8] {
             Action::GitCommit { message } => assert_eq!(message, "test commit"),
             other => panic!("expected GitCommit, got {:?}", other),
         }

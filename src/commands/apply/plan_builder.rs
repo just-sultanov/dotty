@@ -1180,7 +1180,14 @@ mod tests {
                 .plan
                 .actions
                 .iter()
-                .filter(|a| matches!(a, Action::RemoveFile { .. } | Action::RemoveSymlink { .. }))
+                .filter(|a| {
+                    matches!(
+                        a,
+                        Action::RemoveFile { .. }
+                            | Action::RemoveDir { .. }
+                            | Action::RemoveSymlink { .. }
+                    )
+                })
                 .collect();
             assert!(
                 removal_actions.is_empty(),
