@@ -14,9 +14,6 @@ fn main() {
     println!("cargo:rustc-env=DOTTY_VERSION={version}");
     println!("cargo:rustc-env=DOTTY_GIT_SHA={sha}");
     println!("cargo:rustc-env=DOTTY_BUILT_AT={date}");
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/ORIG_HEAD");
-    println!("cargo:rerun-if-env-changed=DOTTY_FORCE_BUILD");
 }
 
 fn run_git(args: &[&str]) -> Option<String> {
