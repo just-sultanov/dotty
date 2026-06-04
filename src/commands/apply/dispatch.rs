@@ -72,7 +72,7 @@ pub fn run(
         force,
         follow_symlinks,
     };
-    let output = build_apply_plan(&input)?;
+    let output = build_apply_plan(&input);
 
     // 5b. Orphan confirmation: prompt user before removing orphans.
     //     If --force is set, skip prompting and proceed with removal.

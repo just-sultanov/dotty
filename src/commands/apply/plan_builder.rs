@@ -17,7 +17,6 @@ use crate::plan::{Action, Plan};
 
 use super::inspect::{TargetState, inspect_target};
 use super::orphan_detection::{OrphanDetectionInput, detect_orphans_and_build_removals};
-use crate::error::DottyError;
 
 /// Input data for building an `apply` plan.
 pub(crate) struct ApplyPlanInput {
@@ -68,13 +67,9 @@ pub(crate) struct FileResult {
 /// CreateSymlink, RemoveSymlink). It also detects orphan managed entries
 /// and produces per-file results for console output.
 ///
-/// Returns `DottyError` for any plan-building failures. Currently infallible
-/// since all sub-operations (`inspect_target`, `detect_orphans_and_build_removals`)
-/// are non-fallible, but the error type is reserved for future fallible paths
-/// (e.g., backup timestamp generation, state path creation).
-pub(crate) fn build_apply_plan(
-    input: &ApplyPlanInput,
-) -> std::result::Result<ApplyPlanOutput, DottyError> {
+/// Note: currently infallible — no sub-operation can fail. If a fallible
+/// path is added later, restore the `Result` wrapper.
+pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> ApplyPlanOutput {
     let mut plan = Plan::new(&input.repo_path);
     let mut file_results: Vec<FileResult> = Vec::new();
 
@@ -229,12 +224,12 @@ pub(crate) fn build_apply_plan(
     };
     let orphan_output = detect_orphans_and_build_removals(&orphan_input);
 
-    Ok(ApplyPlanOutput {
+    ApplyPlanOutput {
         plan,
         file_results,
         orphans: orphan_output.orphans,
         orphan_removal_actions: orphan_output.removal_actions,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -399,7 +394,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             assert!(output.plan.is_empty());
             assert_eq!(output.file_results.len(), 1);
@@ -445,7 +440,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             assert_eq!(output.plan.actions.len(), 2);
             assert_eq!(output.file_results.len(), 1);
@@ -491,7 +486,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             assert_eq!(output.plan.actions.len(), 3);
             assert_eq!(output.file_results.len(), 1);
@@ -537,7 +532,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             assert_eq!(output.plan.actions.len(), 3);
             assert_eq!(output.file_results.len(), 1);
@@ -585,7 +580,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             // Without --force, directory replacement should be skipped
             assert!(output.plan.is_empty());
@@ -635,7 +630,7 @@ mod tests {
                 force: true,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             // With --force, directory replacement should proceed.
             // CreateDir is now deduplicated and added after per-file actions.
@@ -721,7 +716,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             // .old is in merged but not in config.managed → orphan
             assert_eq!(output.orphans.len(), 1);
@@ -778,7 +773,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             // No orphans when merged and config.managed are aligned
             assert!(output.orphans.is_empty());
@@ -870,7 +865,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             // Should have 3 file results
             assert_eq!(output.file_results.len(), 3);
@@ -1003,7 +998,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             assert_eq!(output.file_results.len(), 3);
 
@@ -1058,7 +1053,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             assert_eq!(output.orphans.len(), 1);
             assert_eq!(output.orphans[0].0, "base/home/.old_symlink");
@@ -1112,7 +1107,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             assert_eq!(output.orphans.len(), 1);
             // Orphan removal actions are returned separately
@@ -1172,7 +1167,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             assert_eq!(output.orphans.len(), 1);
             // Should have NO removal actions (target already gone)
@@ -1295,7 +1290,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             // 4 files across 3 unique parent directories:
             //   ~/.config/nvim (2 files), ~/.config/nvim/lua (1 file),
@@ -1401,7 +1396,7 @@ mod tests {
                 force: false,
                 follow_symlinks: false,
             };
-            let output = build_apply_plan(&input).unwrap();
+            let output = build_apply_plan(&input);
 
             // Collect CreateDir paths in order
             let create_dirs: Vec<PathBuf> = output
