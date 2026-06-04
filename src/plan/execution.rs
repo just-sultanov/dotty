@@ -5,7 +5,7 @@
 //! copying/verifying files.
 
 use std::fs;
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -549,11 +549,19 @@ fn compute_file_hash(path: &Path) -> Result<String, DottyError> {
     let file = fs::File::open(path).map_err(DottyError::Io)?;
     let mut reader = BufReader::with_capacity(64 * 1024, file);
     let mut hasher = Sha256::new();
-    // io::copy already buffers internally, but BufReader reduces syscall
-    // overhead for files >100KB by using a larger buffer (64KB vs default 8KB).
-    io::copy(&mut reader, &mut hasher).map_err(DottyError::Io)?;
-    let hash = hasher.finalize();
-    Ok(format!("{:x}", hash))
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buf).map_err(DottyError::Io)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect())
 }
 
 /// Verify that a backup file was created correctly.
