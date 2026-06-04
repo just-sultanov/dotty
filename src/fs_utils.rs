@@ -70,6 +70,19 @@ pub fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), DottyError> 
     Ok(())
 }
 
+/// Remove a stale `.tmp` file if it exists, logging a warning.
+///
+/// This is a shared helper used by multiple modules that check for leftover
+/// temporary files before writing new ones. Errors from `remove_file` are
+/// deliberately ignored to match existing behavior across call sites.
+pub fn remove_stale_tmp(state_path: &Path, filename: &str) {
+    let tmp_path = state_path.join(filename);
+    if tmp_path.exists() {
+        tracing::warn!("removing stale temp file: {}", tmp_path.display());
+        let _ = fs::remove_file(&tmp_path);
+    }
+}
+
 /// Calculate the total size of a directory iteratively in bytes.
 ///
 /// Uses an explicit `Vec<PathBuf>` work stack instead of recursion to prevent

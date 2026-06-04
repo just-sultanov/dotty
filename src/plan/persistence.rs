@@ -8,6 +8,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::fs_utils;
+
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -88,11 +90,7 @@ pub(crate) fn save_pending_plan(
 pub(crate) fn load_pending_plan(
     state_path: &Path,
 ) -> Result<Option<Plan>, crate::error::DottyError> {
-    let tmp_path = state_path.join("pending_plan.json.tmp");
-    if tmp_path.exists() {
-        tracing::warn!("removing stale temp file: {}", tmp_path.display());
-        fs::remove_file(&tmp_path)?;
-    }
+    fs_utils::remove_stale_tmp(state_path, "pending_plan.json.tmp");
 
     let path = pending_plan_path(state_path);
     if !path.exists() {

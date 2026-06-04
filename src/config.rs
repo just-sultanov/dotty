@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::DottyError;
+use crate::fs_utils;
 
 /// Configuration stored in `config.toml` inside the state directory.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -29,11 +30,7 @@ impl Config {
 ///
 /// Returns a default (empty) config if the file doesn't exist.
 pub fn read_config(state_path: &std::path::Path) -> Result<Config, DottyError> {
-    let tmp_path = state_path.join("config.toml.tmp");
-    if tmp_path.exists() {
-        tracing::warn!("removing stale temp file: {}", tmp_path.display());
-        std::fs::remove_file(&tmp_path)?;
-    }
+    fs_utils::remove_stale_tmp(state_path, "config.toml.tmp");
 
     let config_path = state_path.join("config.toml");
     if !config_path.exists() {
