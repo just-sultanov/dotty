@@ -46,19 +46,9 @@ pub fn date_to_backup_prefix(date: &str) -> Option<String> {
     if date.len() != 10 {
         return None;
     }
-    // Basic validation: YYYY-MM-DD
-    let parts: Vec<&str> = date.split('-').collect();
-    if parts.len() != 3
-        || parts[0].len() != 4
-        || parts[1].len() != 2
-        || parts[2].len() != 2
-        || parts[0].parse::<u32>().is_err()
-        || parts[1].parse::<u32>().is_err()
-        || parts[2].parse::<u32>().is_err()
-    {
-        return None;
-    }
-    Some(format!("{}T", date))
+    chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .ok()
+        .map(|d| format!("{}T", d.format("%Y-%m-%d")))
 }
 
 #[cfg(test)]
