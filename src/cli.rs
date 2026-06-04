@@ -1,4 +1,12 @@
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+
+/// Recovery action for handling pending plans non-interactively.
+#[derive(ValueEnum, Clone, Debug, PartialEq)]
+pub(crate) enum RecoveryAction {
+    Rollback,
+    Discard,
+    Ignore,
+}
 
 /// A minimal dotfiles manager for multiple machines.
 #[derive(Parser, Debug)]
@@ -35,13 +43,11 @@ pub struct Cli {
     #[arg(long, global = true)]
     recover: bool,
 
-    /// Non-interactive recovery action for pending plans (rollback, discard, or ignore)
+    /// Non-interactive recovery action for pending plans
     ///
     /// When set, dotty will automatically handle any pending plan without prompting.
-    /// Use "rollback" to undo completed actions, "discard" to remove the pending plan,
-    /// or "ignore" to leave the pending plan and skip recovery.
     #[arg(long, global = true)]
-    recovery_action: Option<String>,
+    recovery_action: Option<RecoveryAction>,
 
     #[command(subcommand)]
     pub command: Commands,
@@ -64,8 +70,8 @@ impl Cli {
     }
 
     /// Return the non-interactive recovery action, if set.
-    pub fn recovery_action(&self) -> Option<&str> {
-        self.recovery_action.as_deref()
+    pub fn recovery_action(&self) -> Option<&RecoveryAction> {
+        self.recovery_action.as_ref()
     }
 }
 

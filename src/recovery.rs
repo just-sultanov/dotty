@@ -22,6 +22,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::cli::RecoveryAction;
 use crate::error::DottyError;
 use crate::plan;
 use crate::prompt;
@@ -34,7 +35,7 @@ use crate::repo_state::RepoState;
 pub(crate) struct RecoveryContext {
     pub(crate) state_path: PathBuf,
     pub(crate) plan: plan::Plan,
-    pub(crate) recovery_action: Option<String>,
+    pub(crate) recovery_action: Option<RecoveryAction>,
 }
 
 /// Handle a valid pending plan during recovery.
@@ -53,22 +54,17 @@ pub(crate) fn handle_valid_plan(ctx: &RecoveryContext) -> Result<(), DottyError>
         println!("  {}. {}", i + 1, action);
     }
 
-    // "ignore" means leave the pending plan and proceed with the command.
-    if ctx.recovery_action.as_deref() == Some("ignore") {
+    // Ignore means leave the pending plan and proceed with the command.
+    if ctx.recovery_action.as_ref() == Some(&RecoveryAction::Ignore) {
         println!("Pending plan left as-is. Proceeding with command.");
         return Ok(());
     }
 
     let options = ["Rollback", "Discard", "Abort"];
-    let choice = match ctx.recovery_action.as_deref() {
-        Some("rollback") => 0,
-        Some("discard") => 1,
-        Some(other) => {
-            return Err(DottyError::CommandError(format!(
-                "invalid recovery action '{}'. Must be one of: rollback, discard, ignore",
-                other
-            )));
-        }
+    let choice = match ctx.recovery_action.as_ref() {
+        Some(RecoveryAction::Rollback) => 0,
+        Some(RecoveryAction::Discard) => 1,
+        Some(RecoveryAction::Ignore) => unreachable!(),
         None => prompt::prompt_select("What would you like to do?", &options)?,
     };
 
@@ -123,19 +119,13 @@ pub(crate) fn handle_valid_plan(ctx: &RecoveryContext) -> Result<(), DottyError>
 pub(crate) fn handle_stale_plan(
     state_path: &Path,
     reason: &str,
-    recovery_action: Option<&str>,
+    recovery_action: Option<&RecoveryAction>,
 ) -> Result<(), DottyError> {
     eprintln!("Pending plan is invalid: {reason}");
     let choice = match recovery_action {
-        Some("discard") => 0,
-        Some("ignore") => 1,
-        Some(other) => {
-            return Err(DottyError::CommandError(format!(
-                "invalid recovery action '{}'. Must be one of: rollback, discard, ignore",
-                other
-            )));
-        }
-        None => {
+        Some(RecoveryAction::Discard) => 0,
+        Some(RecoveryAction::Ignore) => 1,
+        Some(_) | None => {
             let options = ["Discard", "Ignore"];
             prompt::prompt_select("What would you like to do?", &options)?
         }
@@ -171,7 +161,9 @@ pub(crate) fn handle_stale_plan(
 /// When `recovery_action` is provided (via `--recovery-action`), the
 /// corresponding choice is executed automatically without prompting,
 /// enabling non-interactive recovery in scripts or CI.
-pub(crate) fn check_pending_plan(recovery_action: Option<&str>) -> Result<(), DottyError> {
+pub(crate) fn check_pending_plan(
+    recovery_action: Option<&RecoveryAction>,
+) -> Result<(), DottyError> {
     let state_path = crate::paths::resolve_state_path()?;
     let pending = match plan::load_pending_plan(&state_path) {
         Ok(p) => p,
@@ -188,7 +180,7 @@ pub(crate) fn check_pending_plan(recovery_action: Option<&str>) -> Result<(), Do
     let ctx = RecoveryContext {
         state_path,
         plan,
-        recovery_action: recovery_action.map(String::from),
+        recovery_action: recovery_action.cloned(),
     };
 
     handle_valid_plan(&ctx)
@@ -246,7 +238,7 @@ mod tests {
         let result = handle_stale_plan(
             &state,
             "repository no longer exists at /tmp/does_not_exist_dotty_repo",
-            Some("discard"),
+            Some(&RecoveryAction::Discard),
         );
         assert!(result.is_ok());
         assert!(!state.join("pending_plan.json").exists());
@@ -267,20 +259,10 @@ mod tests {
         let result = handle_stale_plan(
             &state,
             "repository no longer exists at /tmp/does_not_exist_dotty_repo_2",
-            Some("ignore"),
+            Some(&RecoveryAction::Ignore),
         );
         assert!(result.is_ok());
         assert!(state.join("pending_plan.json").exists());
-    }
-
-    #[test]
-    fn test_handle_stale_plan_invalid_recovery_action() {
-        let (_dir, state) = setup_state_with_repo();
-        let result = handle_stale_plan(&state, "some reason", Some("rollback"));
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("rollback"));
-        assert!(err.contains("Must be one of: rollback, discard, ignore"));
     }
 
     // ── handle_valid_plan tests ──
@@ -297,7 +279,7 @@ mod tests {
         let ctx = RecoveryContext {
             state_path: state.clone(),
             plan,
-            recovery_action: Some("discard".to_string()),
+            recovery_action: Some(RecoveryAction::Discard),
         };
         let result = handle_valid_plan(&ctx);
         assert!(result.is_ok());
@@ -315,7 +297,7 @@ mod tests {
         let ctx = RecoveryContext {
             state_path: state.clone(),
             plan,
-            recovery_action: Some("rollback".to_string()),
+            recovery_action: Some(RecoveryAction::Rollback),
         };
         let result = handle_valid_plan(&ctx);
         assert!(result.is_ok());
@@ -336,7 +318,7 @@ mod tests {
         let ctx = RecoveryContext {
             state_path: state.clone(),
             plan,
-            recovery_action: Some("ignore".to_string()),
+            recovery_action: Some(RecoveryAction::Ignore),
         };
         let result = handle_valid_plan(&ctx);
         assert!(result.is_ok());
@@ -344,26 +326,6 @@ mod tests {
         // Pending plan should still exist on disk (not cleared)
         let plan_after = plan::load_pending_plan(&state).unwrap();
         assert!(plan_after.is_some());
-    }
-
-    #[test]
-    fn test_handle_valid_plan_invalid_recovery_action() {
-        let (dir, state) = setup_state_with_repo();
-        let repo = dir.path().to_path_buf();
-        save_dummy_plan(&state, &repo);
-
-        let plan = plan::load_pending_plan(&state).unwrap().unwrap();
-
-        let ctx = RecoveryContext {
-            state_path: state.clone(),
-            plan,
-            recovery_action: Some("invalid".to_string()),
-        };
-        let result = handle_valid_plan(&ctx);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("invalid"));
-        assert!(err.contains("Must be one of: rollback, discard, ignore"));
     }
 
     // ── Integration: check_pending_plan dispatch ──
@@ -386,7 +348,7 @@ mod tests {
 
         // Temporarily override DOTTY_STATE_HOME so check_pending_plan uses our state dir
         let result = temp_env::with_var("DOTTY_STATE_HOME", Some(state.to_str().unwrap()), || {
-            check_pending_plan(Some("discard"))
+            check_pending_plan(Some(&RecoveryAction::Discard))
         });
         assert!(result.is_ok());
         assert!(!state.join("pending_plan.json").exists());
@@ -399,7 +361,7 @@ mod tests {
         save_dummy_plan(&state, &repo);
 
         let result = temp_env::with_var("DOTTY_STATE_HOME", Some(state.to_str().unwrap()), || {
-            check_pending_plan(Some("discard"))
+            check_pending_plan(Some(&RecoveryAction::Discard))
         });
         assert!(result.is_ok());
         assert!(!state.join("pending_plan.json").exists());
@@ -433,7 +395,7 @@ mod tests {
         let ctx = RecoveryContext {
             state_path: state.clone(),
             plan: original_plan,
-            recovery_action: Some("rollback".to_string()),
+            recovery_action: Some(RecoveryAction::Rollback),
         };
         let result = handle_valid_plan(&ctx);
         assert!(result.is_ok());
@@ -463,7 +425,7 @@ mod tests {
         let ctx = RecoveryContext {
             state_path: state.clone(),
             plan: original_plan,
-            recovery_action: Some("rollback".to_string()),
+            recovery_action: Some(RecoveryAction::Rollback),
         };
         let result = handle_valid_plan(&ctx);
         assert!(result.is_ok());
