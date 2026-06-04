@@ -46,6 +46,12 @@ pub fn scan_machine_directories(repo_path: &Path) -> Vec<String> {
     machines
 }
 
+/// Maximum length for a machine name.
+///
+/// Enforced to prevent filesystem path length issues on Windows (`MAX_PATH`=260)
+/// and excessively deep directory entries.
+const MAX_MACHINE_NAME_LEN: usize = 64;
+
 /// A validated machine name.
 ///
 /// Guarantees that the inner `String` satisfies all machine-name constraints.
@@ -54,6 +60,7 @@ pub fn scan_machine_directories(repo_path: &Path) -> Vec<String> {
 /// - Must not start with a dot (hidden names)
 /// - Must not contain `..` (path traversal)
 /// - Must not contain `/` or `\\` (path separators)
+/// - Must not exceed [`MAX_MACHINE_NAME_LEN`] (64) characters
 /// - Must not be `base` (reserved)
 /// - Must not match a known platform name
 /// - Must only contain alphanumeric characters, hyphens, and underscores
@@ -62,7 +69,20 @@ pub struct MachineName(String);
 
 impl MachineName {
     /// Validate and construct a `MachineName`.
+    ///
+    /// Returns `Err` if the name exceeds [`MAX_MACHINE_NAME_LEN`] (64) characters,
+    /// is empty, contains invalid characters, or matches a reserved name.
     pub fn new(name: &str) -> Result<Self, DottyError> {
+        // Block names exceeding maximum length
+        if name.len() > MAX_MACHINE_NAME_LEN {
+            return Err(DottyError::InvalidMachineName {
+                name: name.to_string(),
+                reason: format!(
+                    "machine name must be at most {} characters",
+                    MAX_MACHINE_NAME_LEN
+                ),
+            });
+        }
         // Block empty or whitespace-only names
         if name.trim().is_empty() {
             return Err(DottyError::InvalidMachineName {
@@ -368,6 +388,23 @@ mod tests {
         assert!(MachineName::new("linux").is_err());
         assert!(MachineName::new("windows").is_err());
         assert!(MachineName::new(".hidden").is_err());
+    }
+
+    #[test]
+    fn test_machine_name_max_length() {
+        let long = "a".repeat(MAX_MACHINE_NAME_LEN + 1);
+        assert!(MachineName::new(&long).is_err());
+        let boundary = "a".repeat(MAX_MACHINE_NAME_LEN);
+        assert!(MachineName::new(&boundary).is_ok());
+    }
+
+    #[test]
+    fn test_machine_name_max_length_error_message() {
+        let long = "a".repeat(65);
+        let err = MachineName::new(&long).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("64"));
+        assert!(msg.contains("at most 64 characters"));
     }
 
     #[test]
