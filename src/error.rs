@@ -136,10 +136,15 @@ pub(crate) enum DottyError {
     )]
     GitAlreadyInitialized { path: String },
 
-    /// Generic command error for cases where a domain-specific variant
-    /// does not cleanly apply. Used when converting from anyhow::Error.
-    #[error("command error: {0}")]
-    CommandError(String),
+    /// Failed to resolve machine: either not configured or no known machines.
+    /// Used when `dotty apply` cannot determine which machine to use.
+    #[error("{detail}")]
+    MachineNotConfigured { detail: String },
+
+    /// Aborted because a pending plan exists and blocks the current operation.
+    /// Used when the user selects "Abort" in the pending plan prompt.
+    #[error("Aborted. Pending plan still exists at {path}.")]
+    PendingPlanBlocking { path: PathBuf },
 
     #[error(
         "invalid commit message: {reason}. Use a non-empty message without newlines or control characters."

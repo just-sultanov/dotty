@@ -98,10 +98,9 @@ pub(crate) fn handle_valid_plan(ctx: &RecoveryContext) -> Result<(), DottyError>
         }
         2 => {
             // Abort: exit without running the current command
-            return Err(DottyError::CommandError(format!(
-                "Aborted. Pending plan still exists at {}.",
-                ctx.state_path.display()
-            )));
+            return Err(DottyError::PendingPlanBlocking {
+                path: ctx.state_path.clone(),
+            });
         }
         _ => unreachable!(),
     }

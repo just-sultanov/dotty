@@ -31,14 +31,16 @@ pub(crate) fn resolve_machine(
 
     if dry_run {
         if known.is_empty() {
-            return Err(DottyError::CommandError(
-                "No machine configured and no known machines in repo. Run `dotty init` or `dotty config machine <name>` first.".into()
-            ));
+            return Err(DottyError::MachineNotConfigured {
+                detail: "No machine configured and no known machines in repo. Run `dotty init` or `dotty config machine <name>` first.".into(),
+            });
         }
-        return Err(DottyError::CommandError(format!(
-            "No machine configured. Known machines in repo: {}. Run `dotty config machine <name>` to select one.",
-            known.join(", ")
-        )));
+        return Err(DottyError::MachineNotConfigured {
+            detail: format!(
+                "No machine configured. Known machines in repo: {}. Run `dotty config machine <name>` to select one.",
+                known.join(", ")
+            ),
+        });
     }
 
     let name = prompt_machine_selection(&known)?;
