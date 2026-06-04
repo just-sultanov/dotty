@@ -309,18 +309,7 @@ mod tests {
     ///
     /// This is the same logic as the production identity check, kept here
     /// as a test helper since the production path now uses RepoState.
-    fn git_check_identity(dir: &std::path::Path) -> Result<(), crate::error::DottyError> {
-        let name = crate::git::git_run(dir, &["config", "user.name"]);
-        let email = crate::git::git_run(dir, &["config", "user.email"]);
 
-        match (name, email) {
-            (Ok(n), Ok(e)) if !n.trim().is_empty() && !e.trim().is_empty() => Ok(()),
-            _ => Err(crate::error::DottyError::Git {
-                exit_code: 127,
-                stderr: "Git identity is not configured. Run `git config user.name 'Your Name'` and `git config user.email 'you@example.com'`".into(),
-            }),
-        }
-    }
     /// Local config takes precedence over global, so setting empty values ensures
     /// `git config user.name` returns empty regardless of global settings.
     fn create_repo_without_identity() -> tempfile::TempDir {
@@ -347,7 +336,9 @@ mod tests {
     #[test]
     fn git_check_identity_rejects_missing_identity() {
         let repo = create_repo_without_identity();
-        let result = git_check_identity(repo.path());
+        let mut repo_state =
+            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+        let result = repo_state.validate_git_identity();
         assert!(result.is_err());
         let err = result.unwrap_err();
         match err {
@@ -375,7 +366,9 @@ mod tests {
             .args(["config", "--local", "user.email", "test@example.com"])
             .output()
             .unwrap();
-        assert!(git_check_identity(repo.path()).is_ok());
+        let mut repo_state =
+            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+        assert!(repo_state.validate_git_identity().is_ok());
     }
 
     #[test]
