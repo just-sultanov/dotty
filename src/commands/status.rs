@@ -293,11 +293,9 @@ fn find_tier_conflicts(
         }
 
         // Find the highest priority tier
-        let highest = entries
-            .iter()
-            .map(|(tier, _)| tier_priority(tier))
-            .max()
-            .unwrap();
+        let Some(highest) = entries.iter().map(|(tier, _)| tier_priority(tier)).max() else {
+            continue;
+        };
 
         // Report each override
         for (tier, _repo_relative_path) in entries {

@@ -57,10 +57,15 @@ pub fn init(verbosity: Verbosity) {
                 .with_target(false)
                 .with_timer(UtcTime::rfc_3339()),
         )
-        .with(
-            EnvFilter::try_from_default_env()
-                .or_else(|_| EnvFilter::try_new(default_level))
-                .unwrap(),
-        )
+        .with(match EnvFilter::try_from_default_env() {
+            Ok(filter) => filter,
+            Err(_) => match EnvFilter::try_new(default_level) {
+                Ok(filter) => filter,
+                Err(_) => {
+                    eprintln!("warning: invalid log filter level '{}'", default_level);
+                    return;
+                }
+            },
+        })
         .init();
 }

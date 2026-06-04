@@ -17,7 +17,6 @@ pub(crate) fn print_per_file_summary(
 ) {
     let prefix = if dry_run { "[dry-run] " } else { "" };
     let check = crate::symbols::check();
-    let arrow = crate::symbols::arrow();
 
     // Print orphan removals first
     if !orphans.is_empty() {
@@ -46,21 +45,11 @@ pub(crate) fn print_per_file_summary(
             applied_count += 1;
         }
 
-        let override_info = if let Some(ref lower_tier) = result.overrides {
-            override_count += 1;
-            format!(" {} {} {}", arrow, lower_tier, arrow)
-        } else {
-            String::new()
-        };
-
         println!("  {}{} {} ({})", prefix, check, target_str, result.tier);
 
-        if !override_info.is_empty() {
-            println!(
-                "  {}  (overrides {})",
-                prefix,
-                result.overrides.as_ref().unwrap()
-            );
+        if let Some(ref lower_tier) = result.overrides {
+            override_count += 1;
+            println!("  {}  (overrides {})", prefix, lower_tier);
         }
     }
 

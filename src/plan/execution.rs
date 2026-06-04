@@ -443,7 +443,9 @@ fn rollback_completed(
     let mut git_add_paths: Vec<PathBuf> = Vec::new();
 
     for &idx in &indices {
-        let action = &actions[idx];
+        let Some(action) = actions.get(idx) else {
+            continue;
+        };
         if let Some(rb) = RollbackAction::from_action(action) {
             match &rb {
                 RollbackAction::GitResetHead { paths } => {
@@ -558,7 +560,9 @@ fn compute_file_hash(path: &Path) -> Result<String, DottyError> {
         if n == 0 {
             break;
         }
-        hasher.update(&buf[..n]);
+        if let Some(slice) = buf.get(..n) {
+            hasher.update(slice);
+        }
     }
     Ok(hasher
         .finalize()

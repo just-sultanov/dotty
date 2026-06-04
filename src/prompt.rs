@@ -106,7 +106,10 @@ pub(crate) fn prompt_machine_selection(known_machines: &[String]) -> Result<Stri
     if selected == options.len() - 1 {
         prompt_input("Enter a new machine name:")
     } else {
-        Ok(options[selected].clone())
+        match options.get(selected) {
+            Some(option) => Ok(option.clone()),
+            None => unreachable!("dialoguer returned a valid index"),
+        }
     }
 }
 

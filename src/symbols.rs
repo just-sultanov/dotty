@@ -7,7 +7,6 @@ use std::sync::OnceLock;
 struct Symbols {
     check: &'static str,
     warn: &'static str,
-    arrow: &'static str,
 }
 
 static SYMBOLS: OnceLock<Symbols> = OnceLock::new();
@@ -18,13 +17,11 @@ fn get() -> &'static Symbols {
             Symbols {
                 check: "✓",
                 warn: "⚠️",
-                arrow: "→",
             }
         } else {
             Symbols {
                 check: "[+]",
                 warn: "[!]",
-                arrow: "->",
             }
         }
     })
@@ -85,11 +82,6 @@ pub fn warn() -> &'static str {
     get().warn
 }
 
-/// Return the arrow symbol (→ or ->).
-pub fn arrow() -> &'static str {
-    get().arrow
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,7 +92,6 @@ mod tests {
     fn test_symbols_are_nonempty() {
         assert!(!check().is_empty());
         assert!(!warn().is_empty());
-        assert!(!arrow().is_empty());
     }
 
     #[test]

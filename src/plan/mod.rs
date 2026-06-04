@@ -153,7 +153,10 @@ impl fmt::Display for Action {
                 if paths.is_empty() {
                     return write!(f, "git add       (empty)");
                 }
-                write!(f, "git add       {}", paths[0].display())?;
+                let Some(first) = paths.first() else {
+                    return write!(f, "git add       (empty)");
+                };
+                write!(f, "git add       {}", first.display())?;
                 for p in paths.iter().skip(1).take(GIT_ADD_MAX_SHOWN - 1) {
                     write!(f, ", {}", p.display())?;
                 }

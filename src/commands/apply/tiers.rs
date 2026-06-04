@@ -92,11 +92,13 @@ pub(crate) fn build_override_map(
         }
 
         // Determine the highest tier present
-        let highest = entries
+        let Some(highest) = entries
             .iter()
             .map(|(tier, _)| crate::convention::tier_priority(tier))
             .max()
-            .unwrap();
+        else {
+            continue;
+        };
 
         // All entries with lower priority are overridden
         for (tier, _) in entries {

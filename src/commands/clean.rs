@@ -30,7 +30,8 @@ pub(crate) fn filter_backups(
         }
         let num_to_remove = all_backups.len() - count;
         // Backups are sorted chronologically, so remove the oldest
-        return Ok((all_backups[..num_to_remove].to_vec(), None));
+        let (to_remove, _) = all_backups.split_at(num_to_remove);
+        return Ok((to_remove.to_vec(), None));
     }
 
     if let Some(date_str) = before {
