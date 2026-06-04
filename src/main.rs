@@ -3,6 +3,8 @@
 //! Config files are organized by priority tiers (`base/`, `<platform>/`, `<machine>/`)
 //! and linked to their real locations via file-level symlinks.
 
+#![forbid(unsafe_code)]
+
 mod backups;
 mod cli;
 mod commands;
