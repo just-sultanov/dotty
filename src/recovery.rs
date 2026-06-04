@@ -1,24 +1,9 @@
 //! Crash recovery for interrupted dotty operations.
 //!
-//! When a dotty command is killed during plan execution, a pending plan file
-//! remains on disk. On the next run, [`check_pending_plan`] loads this file
-//! and presents the user with recovery options:
-//!
-//! - **Rollback** — execute inverse actions to undo partial work.
-//! - **Discard** — remove the pending plan file and proceed.
-//! - **Ignore** — leave the pending plan on disk and proceed with the command.
-//! - **Abort** — exit without running the current command.
-//!
-//! If the repo referenced by the plan no longer exists (stale plan), the user
-//! is offered **Discard** or **Ignore** only.
-//!
-//! ## Module structure
-//!
-//! - [`RecoveryContext`] — encapsulates the state path, pending plan, and
-//!   recovery action for use in recovery handlers.
-//! - [`handle_valid_plan`] — presents rollback/discard/abort for a valid plan.
-//! - [`handle_stale_plan`] — presents discard/ignore for an invalid plan.
-//! - [`check_pending_plan`] — top-level entry point called from `main()`.
+//! On the next run after a crash, [`check_pending_plan`] loads the leftover
+//! pending plan file and presents the user with recovery options: **Rollback**,
+//! **Discard**, **Ignore**, or **Abort**. Stale plans (repo no longer exists)
+//! offer **Discard** or **Ignore** only.
 
 use std::path::{Path, PathBuf};
 

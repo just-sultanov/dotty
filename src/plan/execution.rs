@@ -237,16 +237,13 @@ pub(crate) fn action_rollback(action: &Action) -> Option<Action> {
 // ---------------------------------------------------------------------------
 
 /// Execution mode for [`execute_plan`].
-///
-/// Controls whether the plan is a dry-run, whether a pending plan is saved
-/// for crash recovery, and whether it is cleared on success.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecuteMode {
-    /// Normal execution: save pending plan, clear on success.
+    /// Save pending plan, clear on success.
     Normal,
     /// Dry-run: no mutations, no pending plan.
     DryRun,
-    /// Rollback: no pending plan (avoids nested pending plans).
+    /// No pending plan (avoids nested pending plans during rollback).
     Rollback,
 }
 
@@ -262,16 +259,8 @@ impl ExecuteMode {
     }
 }
 
-/// Execute all actions in the plan.
-///
-/// The `mode` parameter controls execution behavior:
-/// - [`ExecuteMode::Normal`] — save pending plan for crash recovery, clear on success.
-/// - [`ExecuteMode::DryRun`] — print actions, perform no mutations.
-/// - [`ExecuteMode::Rollback`] — execute without saving pending plan to avoid
-///   nested pending plans (used by crash recovery rollback).
-///
-/// If any action fails, roll back all previously completed actions in
-/// reverse order.
+/// Execute all actions in the plan, rolling back completed actions in reverse
+/// order on failure.
 pub(crate) fn execute_plan(
     plan: &super::Plan,
     mode: ExecuteMode,

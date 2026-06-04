@@ -136,18 +136,8 @@ pub fn would_be_circular(target: &Path, link: &Path) -> bool {
     true
 }
 
-/// Resolve a target path against a known link parent for circular detection.
-///
-/// Relative target paths with `..` components are resolved against the link's
-/// parent directory. This ensures that `../foo` in a target resolves to the
-/// correct location rather than the current working directory.
-///
-/// The function also normalizes paths by:
-/// - Resolving `..` (parent directory) components
-/// - Ignoring `.` (current directory) components
-/// - Preserving other components in order
-///
-/// This prevents false negatives in circular detection for paths like `././path`.
+/// Resolve a target path against the link's parent directory for circular
+/// detection, normalizing `.` and `..` components to avoid false negatives.
 pub fn resolve_target_with_parent(target: &Path, link_parent: &Path) -> PathBuf {
     if target.is_absolute() {
         // Absolute targets are resolved independently
