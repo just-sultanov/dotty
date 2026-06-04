@@ -55,9 +55,10 @@ fn main() -> Result<()> {
         Commands::Remove {
             path,
             machine,
+            platform,
             commit,
             dry_run,
-        } => commands::remove::run(path, machine, commit, dry_run)?,
+        } => commands::remove::run(path, machine, platform, commit, dry_run)?,
         Commands::Apply {
             dry_run,
             platform,

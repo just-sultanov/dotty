@@ -51,6 +51,7 @@ use crate::symlink::is_symlink;
 pub fn run(
     path: String,
     machine: Option<String>,
+    platform: Option<String>,
     commit: Option<String>,
     dry_run: bool,
 ) -> Result<(), DottyError> {
@@ -79,7 +80,12 @@ pub fn run(
     let mut managed_pairs: Vec<(PathBuf, String)> = Vec::new();
 
     for target_file in &target_files {
-        let repo_files = find_managed_repo_files(target_file, &tracked_files, machine.as_deref());
+        let repo_files = find_managed_repo_files(
+            target_file,
+            &tracked_files,
+            machine.as_deref(),
+            platform.as_deref(),
+        );
 
         if repo_files.is_empty() {
             // Check if this target file is covered by a directory prefix match
@@ -108,6 +114,11 @@ pub fn run(
                     && (machine.is_none()
                         || machine.as_ref().is_some_and(|m| {
                             let prefix = format!("{}/", m);
+                            tracked.starts_with(&prefix)
+                        }))
+                    && (platform.is_none()
+                        || platform.as_ref().is_some_and(|p| {
+                            let prefix = format!("{}/", p);
                             tracked.starts_with(&prefix)
                         }))
                 {

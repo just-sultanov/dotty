@@ -129,7 +129,7 @@ pub enum Commands {
 
     /// Remove a file or directory from the repository
     #[command(
-        after_help = "Examples:\n  # Remove a tracked file (restores original if backed up)\n  dotty remove ~/.old-config\n\n  # Remove from a specific machine tier\n  dotty remove ~/.vimrc --machine macbook\n\n  # Remove and commit in one step\n  dotty remove ~/.old-config --commit \"remove old config\""
+        after_help = "Examples:\n  # Remove a tracked file (restores original if backed up)\n  dotty remove ~/.old-config\n\n  # Remove from a specific machine tier\n  dotty remove ~/.vimrc --machine macbook\n\n  # Remove from a specific platform tier\n  dotty remove ~/.bashrc --platform macos\n\n  # Remove and commit in one step\n  dotty remove ~/.old-config --commit \"remove old config\""
     )]
     Remove {
         /// Path to remove
@@ -138,6 +138,10 @@ pub enum Commands {
         /// Limit search to a specific machine tier
         #[arg(long)]
         machine: Option<String>,
+
+        /// Limit search to a specific platform tier
+        #[arg(long)]
+        platform: Option<String>,
 
         /// Commit after removing (with message)
         ///

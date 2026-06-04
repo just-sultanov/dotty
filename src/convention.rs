@@ -179,6 +179,7 @@ pub fn find_managed_repo_files(
     target_path: &Path,
     tracked_files: &[String],
     machine_filter: Option<&str>,
+    platform_filter: Option<&str>,
 ) -> Vec<String> {
     let mut result = Vec::new();
 
@@ -188,6 +189,11 @@ pub fn find_managed_repo_files(
             && target == target_path
         {
             if let Some(filter) = machine_filter {
+                let prefix = format!("{}/", filter);
+                if file.starts_with(&prefix) {
+                    result.push(file.clone());
+                }
+            } else if let Some(filter) = platform_filter {
                 let prefix = format!("{}/", filter);
                 if file.starts_with(&prefix) {
                     result.push(file.clone());
