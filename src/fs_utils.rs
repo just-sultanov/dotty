@@ -127,6 +127,23 @@ pub fn calculate_dir_size(dir: &Path) -> u64 {
     total
 }
 
+/// Atomically rename `src` to `dst`, with Windows compatibility.
+///
+/// On POSIX, this delegates directly to `std::fs::rename`, which is atomic
+/// when source and destination are on the same filesystem.
+///
+/// On Windows, `std::fs::rename` fails if `dst` already exists. This helper
+/// removes `dst` first (if it exists), then performs the rename. The tiny
+/// window where the file is absent is acceptable for a CLI tool with no
+/// concurrent writers by design.
+pub fn atomic_rename(src: &Path, dst: &Path) -> Result<(), DottyError> {
+    if cfg!(target_os = "windows") && dst.exists() {
+        fs::remove_file(dst)?;
+    }
+    fs::rename(src, dst)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,6 +330,54 @@ mod tests {
             "walk_dir should collect files at valid depths"
         );
         assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn test_atomic_rename_basic() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.txt");
+        let dst = dir.path().join("dst.txt");
+        fs::write(&src, "hello").unwrap();
+
+        atomic_rename(&src, &dst).unwrap();
+        assert!(!src.exists());
+        assert!(dst.exists());
+        assert_eq!(fs::read_to_string(&dst).unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_atomic_rename_overwrites_existing_dst() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.txt");
+        let dst = dir.path().join("dst.txt");
+        fs::write(&src, "new_content").unwrap();
+        fs::write(&dst, "old_content").unwrap();
+
+        atomic_rename(&src, &dst).unwrap();
+        assert!(!src.exists());
+        assert!(dst.exists());
+        assert_eq!(fs::read_to_string(&dst).unwrap(), "new_content");
+    }
+
+    #[test]
+    fn test_atomic_rename_same_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("file.txt");
+        fs::write(&p, "content").unwrap();
+
+        atomic_rename(&p, &p).unwrap();
+        assert!(p.exists());
+        assert_eq!(fs::read_to_string(&p).unwrap(), "content");
+    }
+
+    #[test]
+    fn test_atomic_rename_nonexistent_src() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("nonexistent.txt");
+        let dst = dir.path().join("dst.txt");
+
+        let result = atomic_rename(&src, &dst);
+        assert!(result.is_err());
     }
 
     #[test]

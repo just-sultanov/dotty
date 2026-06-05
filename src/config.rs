@@ -60,7 +60,7 @@ pub fn write_config(state_path: &std::path::Path, config: &Config) -> Result<(),
     let tmp_path = state_path.join("config.toml.tmp");
     std::fs::write(&tmp_path, &content)?;
     let dest_path = state_path.join("config.toml");
-    std::fs::rename(&tmp_path, dest_path)?;
+    fs_utils::atomic_rename(&tmp_path, &dest_path)?;
     Ok(())
 }
 

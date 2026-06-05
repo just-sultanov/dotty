@@ -72,7 +72,8 @@ pub(crate) fn save_pending_plan(
     // `fs::rename` is atomic on POSIX when source and dest are on the same filesystem.
     let tmp_path = state_path.join("pending_plan.json.tmp");
     fs::write(&tmp_path, &content)?;
-    fs::rename(&tmp_path, pending_plan_path(state_path))?;
+    let dst_path = pending_plan_path(state_path);
+    fs_utils::atomic_rename(&tmp_path, &dst_path)?;
     debug!(
         "saved pending plan to {}",
         state_path.join(PENDING_PLAN_FILE).display()
