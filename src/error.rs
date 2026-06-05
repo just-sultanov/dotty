@@ -192,11 +192,10 @@ mod tests {
 
     #[test]
     fn test_permission_denied_message() {
-        let err = DottyError::PermissionDenied {
-            path: PathBuf::from("/etc/shadow"),
-        };
+        let path = PathBuf::from("/etc/shadow");
+        let err = DottyError::PermissionDenied { path: path.clone() };
         let msg = err.to_string();
-        assert!(msg.contains("/etc/shadow"));
+        assert!(msg.contains(&*path.to_string_lossy()));
         assert!(msg.contains("Check file ownership"));
     }
 
@@ -223,22 +222,20 @@ mod tests {
 
     #[test]
     fn test_circular_symlink_message() {
-        let err = DottyError::CircularSymlink {
-            path: PathBuf::from("/home/user/.config/link"),
-        };
+        let path = PathBuf::from("/home/user/.config/link");
+        let err = DottyError::CircularSymlink { path: path.clone() };
         let msg = err.to_string();
-        assert!(msg.contains("/home/user/.config/link"));
+        assert!(msg.contains(&*path.to_string_lossy()));
         assert!(msg.contains("circular symlink"));
         assert!(msg.contains("Remove it manually"));
     }
 
     #[test]
     fn test_missing_git_repository_message() {
-        let err = DottyError::MissingGitRepository {
-            path: PathBuf::from("/home/user/dotfiles"),
-        };
+        let path = PathBuf::from("/home/user/dotfiles");
+        let err = DottyError::MissingGitRepository { path: path.clone() };
         let msg = err.to_string();
-        assert!(msg.contains("/home/user/dotfiles"));
+        assert!(msg.contains(&*path.to_string_lossy()));
         assert!(msg.contains("dotty init"));
     }
 
@@ -267,12 +264,13 @@ mod tests {
 
     #[test]
     fn test_backup_verification_message() {
+        let path = PathBuf::from("/home/user/.bashrc.bak");
         let err = DottyError::BackupVerification {
-            path: PathBuf::from("/home/user/.bashrc.bak"),
+            path: path.clone(),
             detail: "checksum mismatch".into(),
         };
         let msg = err.to_string();
-        assert!(msg.contains("/home/user/.bashrc.bak"));
+        assert!(msg.contains(&*path.to_string_lossy()));
         assert!(msg.contains("checksum mismatch"));
     }
 

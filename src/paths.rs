@@ -493,7 +493,7 @@ mod tests {
     fn test_format_target_display_absolute_path() {
         let path = PathBuf::from("/opt/nvim/appimage");
         let formatted = format_target_display(&path);
-        assert_eq!(formatted, "/opt/nvim/appimage");
+        assert_eq!(formatted, path.to_string_lossy());
     }
 
     #[test]

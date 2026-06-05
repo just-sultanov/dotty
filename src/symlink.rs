@@ -229,25 +229,28 @@ mod tests {
         fs::write(&path, "content").unwrap();
 
         // Remove all permissions from parent dir to trigger PermissionDenied
-        let mut perms = fs::metadata(dir.path()).unwrap().permissions();
+        let perms = fs::metadata(dir.path()).unwrap().permissions();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o000);
+            let mut p = perms;
+            p.set_mode(0o000);
+            fs::set_permissions(dir.path(), p).unwrap();
         }
+        #[cfg(not(unix))]
         fs::set_permissions(dir.path(), perms).unwrap();
 
         let result = is_symlink(&path);
         assert!(!result);
 
         // Restore permissions so tempdir cleanup succeeds
-        let mut perms = fs::metadata(dir.path()).unwrap().permissions();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
+            let mut p = fs::metadata(dir.path()).unwrap().permissions();
+            p.set_mode(0o755);
+            fs::set_permissions(dir.path(), p).unwrap();
         }
-        fs::set_permissions(dir.path(), perms).unwrap();
     }
 
     #[test]
