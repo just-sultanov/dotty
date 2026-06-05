@@ -137,6 +137,9 @@ pub fn calculate_dir_size(dir: &Path) -> u64 {
 /// window where the file is absent is acceptable for a CLI tool with no
 /// concurrent writers by design.
 pub fn atomic_rename(src: &Path, dst: &Path) -> Result<(), DottyError> {
+    if src == dst {
+        return Ok(());
+    }
     if cfg!(target_os = "windows") && dst.exists() {
         fs::remove_file(dst)?;
     }
