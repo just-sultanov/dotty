@@ -108,6 +108,10 @@ pub(crate) enum Action {
     GitCommit {
         message: String,
     },
+    Confirm {
+        prompt: Option<String>,
+        actions: Vec<Action>,
+    },
 }
 
 impl fmt::Display for Action {
@@ -162,6 +166,24 @@ impl fmt::Display for Action {
                 Ok(())
             }
             Action::GitCommit { message } => write!(f, "git commit    {message}"),
+            Action::Confirm { prompt, actions } => {
+                if let Some(p) = prompt {
+                    writeln!(f, "confirm       {p}")?;
+                }
+                for (i, action) in actions.iter().enumerate() {
+                    let prefix = if prompt.is_some() {
+                        if i == actions.len() - 1 {
+                            "  └ "
+                        } else {
+                            "  ├ "
+                        }
+                    } else {
+                        ""
+                    };
+                    writeln!(f, "{prefix}{action}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -1487,5 +1509,128 @@ mod tests {
             }
             other => panic!("expected CreateSymlink, got {:?}", other),
         }
+    }
+
+    // -------------------------------------------------------------------
+    // Confirm tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_confirm_then_skips_in_ci() {
+        let (_dir, base) = setup();
+        let target = base.join("should_not_be_removed.txt");
+        std::fs::write(&target, "content").unwrap();
+
+        let action = Action::Confirm {
+            prompt: Some("test".into()),
+            actions: vec![Action::RemoveFile {
+                path: target.clone(),
+            }],
+        };
+
+        temp_env::with_var("CI", Some("1"), || {
+            action_execute(
+                &action,
+                &mut RepoState::new_for_git(base.clone(), base.clone()),
+            )
+            .unwrap();
+            assert!(target.exists(), "file should not be removed in CI");
+        });
+    }
+
+    #[test]
+    fn test_confirm_then_executes_without_prompt() {
+        let (_dir, base) = setup();
+        let target = base.join("to_remove.txt");
+        std::fs::write(&target, "content").unwrap();
+
+        let action = Action::Confirm {
+            prompt: None,
+            actions: vec![Action::RemoveFile {
+                path: target.clone(),
+            }],
+        };
+
+        action_execute(
+            &action,
+            &mut RepoState::new_for_git(base.clone(), base.clone()),
+        )
+        .unwrap();
+        assert!(!target.exists(), "file should be removed when prompt=None");
+    }
+
+    #[test]
+    fn test_confirm_then_rollback() {
+        let (_dir, base) = setup();
+        let target = base.join("test.txt");
+
+        let action = Action::Confirm {
+            prompt: Some("test".into()),
+            actions: vec![Action::CreateDir {
+                path: target.clone(),
+            }],
+        };
+
+        let rollback = action.rollback().unwrap();
+        match &rollback {
+            Action::Confirm {
+                prompt: None,
+                actions,
+            } => {
+                assert_eq!(actions.len(), 1);
+                assert!(matches!(&actions[0], Action::RemoveDir { .. }));
+            }
+            other => panic!("expected Confirm with prompt=None, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_confirm_then_no_rollbackable() {
+        let action = Action::Confirm {
+            prompt: Some("test".into()),
+            actions: vec![Action::RemoveFile {
+                path: PathBuf::from("/tmp/test"),
+            }],
+        };
+
+        assert!(
+            action.rollback().is_none(),
+            "non-rollbackable actions should return None"
+        );
+    }
+
+    #[test]
+    fn test_confirm_then_display_with_prompt() {
+        let action = Action::Confirm {
+            prompt: Some("Remove 2 orphan(s)?".into()),
+            actions: vec![
+                Action::RemoveSymlink {
+                    path: PathBuf::from("/home/user/.old"),
+                },
+                Action::RemoveFile {
+                    path: PathBuf::from("/home/user/.backup"),
+                },
+            ],
+        };
+
+        let display = format!("{action}");
+        assert!(display.contains("confirm"));
+        assert!(display.contains("Remove 2 orphan(s)"));
+        assert!(display.contains("├"));
+        assert!(display.contains("└"));
+    }
+
+    #[test]
+    fn test_confirm_then_display_without_prompt() {
+        let action = Action::Confirm {
+            prompt: None,
+            actions: vec![Action::RemoveFile {
+                path: PathBuf::from("/tmp/test"),
+            }],
+        };
+
+        let display = format!("{action}");
+        assert!(!display.contains("confirm"));
+        assert!(display.contains("remove file"));
     }
 }

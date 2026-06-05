@@ -183,6 +183,44 @@ pub(crate) fn action_execute(
         }
         Action::GitAdd { paths } => git::git_add(&repo_state.repo_path, paths)?,
         Action::GitCommit { message } => git::git_commit(repo_state, message)?,
+        Action::Confirm { prompt, actions } => match prompt {
+            None => {
+                for action in actions {
+                    action_execute(action, repo_state)?;
+                }
+            }
+            Some(p) => {
+                if !crate::prompt::is_interactive() {
+                    warn!(
+                        "non-interactive context: skipping {} action(s) guarded by confirm",
+                        actions.len()
+                    );
+                    return Ok(());
+                }
+                let confirmed = crate::prompt::prompt_confirm(p)?;
+                if !confirmed {
+                    return Ok(());
+                }
+                let mut completed: Vec<usize> = Vec::new();
+                for (i, action) in actions.iter().enumerate() {
+                    match action_execute(action, repo_state) {
+                        Ok(()) => {
+                            completed.push(i);
+                        }
+                        Err(e) => {
+                            for &idx in completed.iter().rev() {
+                                if let Some(action) = actions.get(idx)
+                                    && let Some(rollback) = action_rollback(action)
+                                {
+                                    let _ = action_execute(&rollback, repo_state);
+                                }
+                            }
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+        },
     }
     Ok(())
 }
@@ -231,6 +269,18 @@ pub(crate) fn action_rollback(action: &Action) -> Option<Action> {
         Action::RestoreDir { dest, .. } => Some(Action::RemoveDir { path: dest.clone() }),
         Action::GitAdd { .. } => None,
         Action::GitCommit { .. } => None,
+        Action::Confirm { actions, .. } => {
+            let rollback_actions: Vec<Action> =
+                actions.iter().rev().filter_map(action_rollback).collect();
+            if rollback_actions.is_empty() {
+                None
+            } else {
+                Some(Action::Confirm {
+                    prompt: None,
+                    actions: rollback_actions,
+                })
+            }
+        }
     }
 }
 
