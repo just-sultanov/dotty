@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PREFIX="${DOTTY_INSTALL_PREFIX:-${PREFIX:-$HOME/.local/bin}}"
+
+cargo build --release
+mkdir -p "$PREFIX"
+cp -f target/release/dotty "$PREFIX/dotty"
+chmod +x "$PREFIX/dotty"
+
+echo "dotty installed to ${PREFIX}/dotty"
+echo "Make sure ${PREFIX} is in your PATH."

@@ -2,7 +2,7 @@
 _.path = [{ path = "./bin", tools = true }]
 
 [tools]
-rust = { version = "1.95.0", components = "rustfmt,clippy,llvm-tools-preview" }
+rust = { version = "1.96.0", components = "rustfmt,clippy,llvm-tools-preview" }
 
 ##
 # General
@@ -106,6 +106,14 @@ file = "bin/setup-windows"
 description = "Build release binary for Windows x86_64"
 depends = ["setup-windows"]
 file = "bin/build-windows"
+
+##
+# Install
+##
+
+[tasks.install]
+description = "Build and install dotty locally from source"
+file = "bin/install"
 
 ##
 # Dist
