@@ -53,7 +53,8 @@ fn main() -> Result<()> {
             platform,
             commit,
             dry_run,
-        } => commands::add::run(path, machine, platform, commit, dry_run)?,
+            force,
+        } => commands::add::run(path, machine, platform, commit, dry_run, force)?,
         Commands::Remove {
             path,
             machine,

@@ -102,7 +102,7 @@ pub enum Commands {
 
     /// Add a file or directory to the repository
     #[command(
-        after_help = "Examples:\n  # Add a config file to the base tier\n  dotty add ~/.vimrc\n\n  # Add to a machine-specific tier\n  dotty add ~/.vimrc --machine macbook\n\n  # Add to a platform-specific tier\n  dotty add ~/.bashrc --platform linux\n\n  # Add and commit in one step\n  dotty add ~/.config/alacritty --commit \"add alacritty config\"\n\nNotes:\n  Symlinks to directories are expanded: all files from the target directory\n  are collected recursively (matching real directory behavior).\n  Symlinks to files are added as-is (the symlink file itself)."
+        after_help = "Examples:\n  # Add a config file to the base tier\n  dotty add ~/.vimrc\n\n  # Add to a machine-specific tier\n  dotty add ~/.vimrc --machine macbook\n\n  # Add to a platform-specific tier\n  dotty add ~/.bashrc --platform linux\n\n  # Add and commit in one step\n  dotty add ~/.config/alacritty --commit \"add alacritty config\"\n\n  # Skip all confirmation prompts\n  dotty add ~/.vimrc --force\n\nNotes:\n  Symlinks to directories are expanded: all files from the target directory\n  are collected recursively (matching real directory behavior).\n  Symlinks to files are added as-is (the symlink file itself)."
     )]
     Add {
         /// Path to add (file or directory)
@@ -125,6 +125,10 @@ pub enum Commands {
         /// Show what would be done without making changes
         #[arg(long)]
         dry_run: bool,
+
+        /// Skip all confirmation prompts
+        #[arg(long)]
+        force: bool,
     },
 
     /// Remove a file or directory from the repository

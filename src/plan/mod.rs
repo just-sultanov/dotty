@@ -112,6 +112,16 @@ pub(crate) enum Action {
         prompt: Option<String>,
         actions: Vec<Action>,
     },
+    /// Gate that aborts the entire plan execution if the user declines.
+    ///
+    /// Unlike `Confirm` (which skips guarded actions on decline), `AbortGate`
+    /// returns an error that propagates up and triggers rollback of all
+    /// previously completed actions.
+    ///
+    /// Used for pre-condition checks where declining means "cancel everything".
+    AbortGate {
+        prompt: String,
+    },
 }
 
 impl fmt::Display for Action {
@@ -183,6 +193,9 @@ impl fmt::Display for Action {
                     writeln!(f, "{prefix}{action}")?;
                 }
                 Ok(())
+            }
+            Action::AbortGate { prompt } => {
+                write!(f, "abort gate    {prompt}")
             }
         }
     }
@@ -973,11 +986,14 @@ mod tests {
         plan.add(Action::GitCommit {
             message: "test commit".to_string(),
         });
+        plan.add(Action::AbortGate {
+            prompt: "continue?".to_string(),
+        });
 
         save_pending_plan(&plan, &state).unwrap();
         let loaded = load_pending_plan(&state).unwrap().unwrap();
 
-        assert_eq!(loaded.actions.len(), 9);
+        assert_eq!(loaded.actions.len(), 10);
 
         // Verify each action type roundtrips correctly
         match &loaded.actions[0] {
@@ -987,6 +1003,10 @@ mod tests {
         match &loaded.actions[8] {
             Action::GitCommit { message } => assert_eq!(message, "test commit"),
             other => panic!("expected GitCommit, got {:?}", other),
+        }
+        match &loaded.actions[9] {
+            Action::AbortGate { prompt } => assert_eq!(prompt, "continue?"),
+            other => panic!("expected AbortGate, got {:?}", other),
         }
     }
 

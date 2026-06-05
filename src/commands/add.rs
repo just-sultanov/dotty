@@ -13,7 +13,7 @@ use crate::paths::{
 };
 use crate::plan::{self, Action, Plan};
 use crate::platform::KNOWN_PLATFORMS;
-use crate::prompt::{prompt_confirm, prompt_select};
+use crate::prompt::prompt_confirm;
 use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
 use tracing::warn;
@@ -25,6 +25,7 @@ pub fn run(
     platform: Option<String>,
     commit: Option<String>,
     dry_run: bool,
+    force: bool,
 ) -> Result<(), DottyError> {
     let mut repo = RepoState::new()?;
 
@@ -77,35 +78,20 @@ pub fn run(
         }
     }
 
-    // Validate platform if specified
-    if let Some(plat) = &platform
-        && !KNOWN_PLATFORMS.contains(&plat.as_str())
-    {
-        let ok = prompt_confirm(&format!(
-            "Platform '{}' is not recognized. Valid: {}. Continue?",
-            plat,
-            KNOWN_PLATFORMS.join(", "),
-        ))?;
-        if !ok {
-            println!("Aborted.");
-            return Ok(());
-        }
-    }
+    // Detect unrecognized platform
+    let platform_unknown = if let Some(plat) = &platform {
+        !KNOWN_PLATFORMS.contains(&plat.as_str())
+    } else {
+        false
+    };
 
-    // Validate / create machine directory if --machine is used
-    if machine.is_some() {
-        let machine_dir = repo_path.join(&scope);
-        if !machine_dir.exists() {
-            let ok = prompt_confirm(&format!(
-                "Machine '{}' not found in repo. Create directory?",
-                scope
-            ))?;
-            if !ok {
-                println!("Aborted.");
-                return Ok(());
-            }
-        }
-    }
+    // Detect missing machine directory
+    let machine_dir = if machine.is_some() {
+        let dir = repo_path.join(&scope);
+        if !dir.exists() { Some(dir) } else { None }
+    } else {
+        None
+    };
 
     // Collect all files to add (recursively for directories)
     let files_to_add = collect_files(&target_path)?;
@@ -130,8 +116,19 @@ pub fn run(
         indexmap::IndexMap::new()
     };
 
-    // Resolve conflicts interactively
-    let files_to_override = resolve_conflicts(&files_to_add, &conflict_map)?;
+    // Find conflicting files (no interactive resolution — handled at execution time)
+    let conflicts = resolve_conflicts(&files_to_add, &conflict_map);
+    if !conflicts.is_empty() {
+        println!("\nConflicts detected:");
+        for target in &conflicts {
+            if let Some(repos) = conflict_map.get(target) {
+                println!("  {} is already managed via:", target.display());
+                for repo in repos {
+                    println!("    {}", repo);
+                }
+            }
+        }
+    }
 
     let home = crate::paths::home_dir()?;
     let has_git = repo.is_git_repo;
@@ -143,9 +140,14 @@ pub fn run(
         state_path: state_path.clone(),
         home,
         scope,
-        files_to_add: files_to_override,
+        files_to_add,
         commit: commit.clone(),
         has_git,
+        force,
+        platform,
+        platform_unknown,
+        machine_dir,
+        conflicts,
     };
     let output = build_add_plan(&input, &config)?;
 
@@ -182,6 +184,11 @@ pub(crate) struct AddPlanInput {
     pub files_to_add: Vec<PathBuf>,
     pub commit: Option<String>,
     pub has_git: bool,
+    pub force: bool,
+    pub platform: Option<String>,
+    pub platform_unknown: bool,
+    pub machine_dir: Option<PathBuf>,
+    pub conflicts: Vec<PathBuf>,
 }
 
 /// Output of `build_add_plan`.
@@ -201,21 +208,66 @@ pub(crate) fn build_add_plan(
 ) -> Result<AddPlanOutput, DottyError> {
     let mut plan = Plan::new(&input.repo_path);
     let mut config = config.clone();
-
-    // Backup timestamp
     let backup_ts = backup_timestamp();
 
-    // Collect repo-relative paths for git add alongside plan building
+    // Collect repo-relative paths for git add alongside plan building.
+    // Paths for conflicting files (without --force) are pushed into per-file
+    // Confirm's GitAdd action instead.
     let mut git_add_paths: Vec<PathBuf> = Vec::new();
 
+    // ── Candidate #1: Unrecognized platform gate ──
+    if input.platform_unknown && !input.force {
+        let plat = input.platform.as_deref().unwrap_or("?");
+        plan.add(Action::AbortGate {
+            prompt: format!(
+                "Platform '{}' is not recognized. Valid: {}. Continue?",
+                plat,
+                KNOWN_PLATFORMS.join(", "),
+            ),
+        });
+    }
+
+    // ── Candidate #2: Machine directory creation ──
+    if let Some(machine_dir) = &input.machine_dir {
+        let dir_name = machine_dir
+            .file_name()
+            .unwrap_or(machine_dir.as_os_str())
+            .to_string_lossy()
+            .into_owned();
+        let action = Action::CreateDir {
+            path: machine_dir.clone(),
+        };
+        if input.force {
+            plan.add(action);
+        } else {
+            plan.add(Action::Confirm {
+                prompt: Some(format!(
+                    "Machine '{}' not found in repo. Create directory?",
+                    dir_name,
+                )),
+                actions: vec![action],
+            });
+        }
+    }
+
+    // ── Candidate #3: Conflicts gate + per-file Confirm ──
+    let has_conflicts = !input.conflicts.is_empty();
+    if has_conflicts && !input.force {
+        plan.add(Action::AbortGate {
+            prompt: "Conflicts detected with existing tracked files. Continue?".into(),
+        });
+    }
+
     for target_file in &input.files_to_add {
-        // Compute repo-relative path (without scope prefix)
         let rel_path = target_to_repo(target_file)?;
         let repo_absolute_path = input.repo_path.join(&input.scope).join(&rel_path);
+        let is_conflicting = input.conflicts.contains(target_file);
+
+        let mut file_actions: Vec<Action> = Vec::new();
 
         // Create parent directories in repo
         if let Some(parent) = repo_absolute_path.parent() {
-            plan.add(Action::CreateDir {
+            file_actions.push(Action::CreateDir {
                 path: parent.to_path_buf(),
             });
         }
@@ -228,7 +280,7 @@ pub(crate) fn build_add_plan(
                 &input.state_path,
                 &backup_ts,
             );
-            plan.add(Action::Backup {
+            file_actions.push(Action::Backup {
                 source: target_file.clone(),
                 dest: dest.clone(),
             });
@@ -236,22 +288,47 @@ pub(crate) fn build_add_plan(
         } else {
             None
         };
+
         // Copy file to repo (dereference symlinks)
-        plan.add(Action::CopyFile {
+        file_actions.push(Action::CopyFile {
             source: target_file.clone(),
             dest: repo_absolute_path.clone(),
         });
 
         // Create symlink at target location pointing to repo file
-        plan.add(Action::CreateSymlink {
+        file_actions.push(Action::CreateSymlink {
             target: repo_absolute_path.clone(),
             link: target_file.clone(),
             backup_path,
         });
 
-        // Track path for git add
+        // Git add: for conflicting files without --force, include in Confirm;
+        // otherwise collect into the global batch.
         if let Ok(rel) = repo_absolute_path.strip_prefix(&input.repo_path) {
-            git_add_paths.push(rel.to_path_buf());
+            let rel_path = rel.to_path_buf();
+            if is_conflicting && !input.force {
+                file_actions.push(Action::GitAdd {
+                    paths: vec![rel_path],
+                });
+            } else {
+                git_add_paths.push(rel_path);
+            }
+        }
+
+        // Add to plan — conflicting files (without --force) are wrapped in Confirm
+        if is_conflicting && !input.force {
+            let target_display = format_target_display(target_file);
+            plan.add(Action::Confirm {
+                prompt: Some(format!(
+                    "Override {} (already managed by another tier)?",
+                    target_display,
+                )),
+                actions: file_actions,
+            });
+        } else {
+            for action in file_actions {
+                plan.add(action);
+            }
         }
 
         // Update managed map (normalize separators to `/` for cross-platform keys and values)
@@ -269,7 +346,7 @@ pub(crate) fn build_add_plan(
         config.managed.insert(repo_relative_path, target_rel);
     }
 
-    // Git add (stage the copied files)
+    // Global Git add (for files not wrapped in individual Confirm)
     if !git_add_paths.is_empty() && input.has_git {
         plan.add(Action::GitAdd {
             paths: git_add_paths,
@@ -497,73 +574,25 @@ fn build_conflict_map(files: git::TrackedFiles) -> indexmap::IndexMap<PathBuf, V
         })
 }
 
-/// Resolve conflicts for the files being added.
+/// Find files that conflict with existing tracked files.
 ///
-/// Returns the subset of files that should proceed (after user confirmation).
+/// Conflict resolution (gate + per-file confirm) is handled at execution
+/// time via `AbortGate` and `Confirm` actions in the plan.
 fn resolve_conflicts(
     files_to_add: &[PathBuf],
     conflict_map: &indexmap::IndexMap<PathBuf, Vec<String>>,
-) -> Result<Vec<PathBuf>, DottyError> {
-    let mut conflicting: Vec<(&PathBuf, &Vec<String>)> = Vec::new();
+) -> Vec<PathBuf> {
+    let mut conflicting: Vec<PathBuf> = Vec::new();
 
     for file in files_to_add {
         if let Some(existing) = conflict_map.get(file)
             && !existing.is_empty()
         {
-            conflicting.push((file, existing));
+            conflicting.push(file.clone());
         }
     }
 
-    if conflicting.is_empty() {
-        // No conflicts — all files can be added
-        return Ok(files_to_add.to_vec());
-    }
-
-    // Show conflict summary
-    println!("\nConflicts detected:");
-    for (target, repos) in &conflicting {
-        println!("  {} is already managed via:", target.display());
-        for repo in *repos {
-            println!("    {}", repo);
-        }
-    }
-
-    let options = vec!["Ask per-file", "Override all", "Cancel"];
-    let choice = prompt_select("How to resolve?", &options)?;
-
-    let mut result = Vec::new();
-
-    match choice {
-        0 => {
-            // Ask per-file for conflicting ones
-            for (target, _repos) in &conflicting {
-                let ok = prompt_confirm(&format!(
-                    "Override {} (already managed by another tier)?",
-                    target.display()
-                ))?;
-                if ok {
-                    result.push((*target).to_path_buf());
-                }
-            }
-            // Always include non-conflicting files
-            for file in files_to_add {
-                if !conflict_map.contains_key(file) {
-                    result.push(file.clone());
-                }
-            }
-        }
-        1 => {
-            // Override all
-            result = files_to_add.to_vec();
-        }
-        2 => {
-            println!("Aborted.");
-            return Ok(Vec::new());
-        }
-        _ => unreachable!(),
-    }
-
-    Ok(result)
+    conflicting
 }
 
 #[cfg(test)]
@@ -834,6 +863,11 @@ mod tests {
                 files_to_add: vec![target.clone()],
                 commit: None,
                 has_git: false,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: None,
+                conflicts: vec![],
             };
             let config = Config::new();
             let output = build_add_plan(&input, &config).unwrap();
@@ -867,6 +901,11 @@ mod tests {
                 files_to_add: vec![target.clone()],
                 commit: Some("add gitconfig".to_string()),
                 has_git: true,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: None,
+                conflicts: vec![],
             };
             let config = Config::new();
             let output = build_add_plan(&input, &config).unwrap();
@@ -906,6 +945,11 @@ mod tests {
                 files_to_add: vec![f1.clone(), f2.clone()],
                 commit: None,
                 has_git: false,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: None,
+                conflicts: vec![],
             };
             let config = Config::new();
             let output = build_add_plan(&input, &config).unwrap();
@@ -939,6 +983,11 @@ mod tests {
                 files_to_add: vec![target.clone()],
                 commit: None,
                 has_git: false,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: None,
+                conflicts: vec![],
             };
             let config = Config::new();
             let output = build_add_plan(&input, &config).unwrap();
@@ -976,6 +1025,11 @@ mod tests {
                 files_to_add: vec![target.clone()],
                 commit: None,
                 has_git: false,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: None,
+                conflicts: vec![],
             };
             let config = Config::new();
             let output = build_add_plan(&input, &config).unwrap();
@@ -1014,6 +1068,11 @@ mod tests {
                 files_to_add: vec![target.clone()],
                 commit: None,
                 has_git: false,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: None,
+                conflicts: vec![],
             };
             let config = Config::new();
             let output = build_add_plan(&input, &config).unwrap();
@@ -1059,6 +1118,11 @@ mod tests {
                 files_to_add: vec![target.clone()],
                 commit: None,
                 has_git: false,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: None,
+                conflicts: vec![],
             };
             let config = Config::new();
             let output = build_add_plan(&input, &config).unwrap();
@@ -1399,6 +1463,11 @@ mod tests {
                 files_to_add: vec![target],
                 commit: None,
                 has_git: false,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: None,
+                conflicts: vec![],
             };
             let config = Config::new();
             let output = build_add_plan(&input, &config).unwrap();
@@ -1438,6 +1507,11 @@ mod tests {
                 files_to_add: vec![target],
                 commit: None,
                 has_git: false,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: None,
+                conflicts: vec![],
             };
             let config = Config::new();
             let output = build_add_plan(&input, &config).unwrap();
@@ -1473,6 +1547,11 @@ mod tests {
                 files_to_add: vec![target.clone()],
                 commit: None,
                 has_git: false,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: None,
+                conflicts: vec![],
             };
             let config = Config::new();
             let output = build_add_plan(&input, &config).unwrap();
@@ -1719,5 +1798,207 @@ mod tests {
 
         // Restore working directory
         std::env::set_current_dir(&dir).unwrap();
+    }
+
+    // ── AbortGate tests ──
+
+    #[test]
+    fn test_abort_gate_skips_in_ci() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let action = Action::AbortGate {
+            prompt: "continue?".to_string(),
+        };
+
+        temp_env::with_var("CI", Some("1"), || {
+            let result = crate::plan::action_execute(
+                &action,
+                &mut RepoState::new_for_git(base.clone(), base.clone()),
+            );
+            assert!(result.is_ok(), "AbortGate should skip in CI");
+        });
+    }
+
+    // ── build_add_plan — force mode ──
+
+    #[test]
+    fn test_build_add_plan_force_skips_all_guards() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        fs::write(&target, "set nocompatible").unwrap();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "macbook".to_string(),
+                files_to_add: vec![target.clone()],
+                commit: None,
+                has_git: true,
+                force: true,
+                platform: None,
+                platform_unknown: true,
+                machine_dir: Some(repo.join("macbook")),
+                conflicts: vec![target.clone()],
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            // —force should produce NO AbortGate or Confirm actions
+            for action in &output.plan.actions {
+                assert!(
+                    !matches!(action, Action::AbortGate { .. }),
+                    "force should not produce AbortGate"
+                );
+                assert!(
+                    !matches!(action, Action::Confirm { .. }),
+                    "force should not produce Confirm"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn test_build_add_plan_platform_unknown_adds_abort_gate() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        fs::write(&target, "content").unwrap();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "base".to_string(),
+                files_to_add: vec![target.clone()],
+                commit: None,
+                has_git: false,
+                force: false,
+                platform: Some("unknown_os".to_string()),
+                platform_unknown: true,
+                machine_dir: None,
+                conflicts: vec![],
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            assert!(
+                output
+                    .plan
+                    .actions
+                    .iter()
+                    .any(|a| matches!(a, Action::AbortGate { .. })),
+                "platform_unknown should add AbortGate"
+            );
+        });
+    }
+
+    #[test]
+    fn test_build_add_plan_machine_dir_adds_confirm() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        fs::write(&target, "content").unwrap();
+        let machine_dir = repo.join("macbook");
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "macbook".to_string(),
+                files_to_add: vec![target.clone()],
+                commit: None,
+                has_git: false,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: Some(machine_dir.clone()),
+                conflicts: vec![],
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            let has_confirm_with_createdir = output.plan.actions.iter().any(|a| {
+                matches!(a, Action::Confirm { actions, .. }
+                    if actions.iter().any(|inner| matches!(inner, Action::CreateDir { path } if path == &machine_dir)))
+            });
+            assert!(
+                has_confirm_with_createdir,
+                "machine_dir should produce Confirm wrapping CreateDir"
+            );
+        });
+    }
+
+    #[test]
+    fn test_build_add_plan_conflicts_add_abort_gate_and_confirm() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        fs::write(&target, "content").unwrap();
+
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            let input = AddPlanInput {
+                repo_path: repo.clone(),
+                state_path: state.clone(),
+                home: home.clone(),
+                scope: "base".to_string(),
+                files_to_add: vec![target.clone()],
+                commit: None,
+                has_git: false,
+                force: false,
+                platform: None,
+                platform_unknown: false,
+                machine_dir: None,
+                conflicts: vec![target.clone()],
+            };
+            let config = Config::new();
+            let output = build_add_plan(&input, &config).unwrap();
+
+            let has_abort_gate = output
+                .plan
+                .actions
+                .iter()
+                .any(|a| matches!(a, Action::AbortGate { .. }));
+            let has_confirm = output
+                .plan
+                .actions
+                .iter()
+                .any(|a| matches!(a, Action::Confirm { .. }));
+
+            assert!(has_abort_gate, "conflicts should add AbortGate");
+            assert!(has_confirm, "conflicts should add per-file Confirm");
+        });
     }
 }

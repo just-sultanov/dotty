@@ -221,6 +221,16 @@ pub(crate) fn action_execute(
                 }
             }
         },
+        Action::AbortGate { prompt } => {
+            if !crate::prompt::is_interactive() {
+                warn!("non-interactive context: abort gate skipped — \"{prompt}\"");
+                return Ok(());
+            }
+            let confirmed = crate::prompt::prompt_confirm(prompt)?;
+            if !confirmed {
+                return Err(DottyError::Cancelled);
+            }
+        }
     }
     Ok(())
 }
@@ -281,6 +291,7 @@ pub(crate) fn action_rollback(action: &Action) -> Option<Action> {
                 })
             }
         }
+        Action::AbortGate { .. } => None,
     }
 }
 
