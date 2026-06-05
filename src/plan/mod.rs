@@ -240,6 +240,7 @@ impl Plan {
     }
 
     /// Add an action to the plan.
+    #[allow(dead_code)]
     pub fn add(&mut self, action: Action) {
         self.actions.push(action);
     }
@@ -247,6 +248,49 @@ impl Plan {
     /// Check if the plan has no actions (nothing to do).
     pub fn is_empty(&self) -> bool {
         self.actions.is_empty()
+    }
+
+    /// Create a [`PlanBuilder`] for chainable plan construction.
+    pub fn builder(repo_path: &Path) -> PlanBuilder {
+        PlanBuilder::new(repo_path)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PlanBuilder
+// ---------------------------------------------------------------------------
+
+/// A builder for constructing a [`Plan`] via a chainable API.
+///
+/// Eliminates `mut` bindings and repeated `.add()` calls at call sites.
+/// Finalize with [`build`](PlanBuilder::build).
+#[derive(Debug)]
+pub(crate) struct PlanBuilder {
+    plan: Plan,
+}
+
+impl PlanBuilder {
+    pub fn new(repo_path: &Path) -> Self {
+        Self {
+            plan: Plan::new(repo_path),
+        }
+    }
+
+    /// Add an action and return the builder for chaining.
+    pub fn with(mut self, action: Action) -> Self {
+        self.plan.actions.push(action);
+        self
+    }
+
+    /// Add multiple actions from an iterator.
+    pub fn extend(mut self, actions: impl IntoIterator<Item = Action>) -> Self {
+        self.plan.actions.extend(actions);
+        self
+    }
+
+    /// Finalize and return the built [`Plan`].
+    pub fn build(self) -> Plan {
+        self.plan
     }
 }
 

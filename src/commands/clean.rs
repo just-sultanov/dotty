@@ -127,8 +127,7 @@ pub fn run(keep: Option<usize>, before: Option<String>, yes: bool) -> Result<()>
         actions: remove_actions,
     };
 
-    let mut plan = Plan::new(&repo.repo_path);
-    plan.add(confirm_action);
+    let plan = Plan::builder(&repo.repo_path).with(confirm_action).build();
     plan::execute_plan(&plan, ExecuteMode::Normal, &mut repo)?;
 
     // Count actually removed (handles both confirmed and skipped cases)

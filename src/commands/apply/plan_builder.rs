@@ -67,7 +67,7 @@ pub(crate) struct FileResult {
 /// Propagates `DottyError` for filesystem I/O errors encountered during
 /// target inspection (e.g., permission denied, broken FS).
 pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput, DottyError> {
-    let mut plan = Plan::new(&input.repo_path);
+    let mut plan = Plan::builder(&input.repo_path);
     let mut file_results: Vec<FileResult> = Vec::new();
 
     // Collect unique parent directories to avoid duplicate CreateDir actions
@@ -98,13 +98,13 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
             }
             TargetState::CircularSymlink => {
                 // Remove the circular symlink first, then create the correct one.
-                plan.add(Action::RemoveSymlink {
+                plan = plan.with(Action::RemoveSymlink {
                     path: target.clone(),
                 });
                 if let Some(parent) = target.parent() {
                     created_parents.insert(parent.to_path_buf());
                 }
-                plan.add(Action::CreateSymlink {
+                plan = plan.with(Action::CreateSymlink {
                     target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: None,
@@ -115,7 +115,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 if let Some(parent) = target.parent() {
                     created_parents.insert(parent.to_path_buf());
                 }
-                plan.add(Action::CreateSymlink {
+                plan = plan.with(Action::CreateSymlink {
                     target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: None,
@@ -133,11 +133,11 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                     &input.state_path,
                     &backup_ts,
                 );
-                plan.add(Action::Backup {
+                plan = plan.with(Action::Backup {
                     source: target.clone(),
                     dest: backup_dest.clone(),
                 });
-                plan.add(Action::CreateSymlink {
+                plan = plan.with(Action::CreateSymlink {
                     target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: Some(backup_dest.clone()),
@@ -171,12 +171,12 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                     &input.state_path,
                     &backup_ts,
                 );
-                plan.add(Action::BackupDir {
+                plan = plan.with(Action::BackupDir {
                     source: target.clone(),
                     dest: backup_dest.clone(),
                     follow_symlinks: input.follow_symlinks,
                 });
-                plan.add(Action::CreateSymlink {
+                plan = plan.with(Action::CreateSymlink {
                     target: repo_absolute_path.clone(),
                     link: target.clone(),
                     backup_path: Some(backup_dest.clone()),
@@ -201,7 +201,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
 
     // Add deduplicated CreateDir actions for all unique parent directories.
     for parent in created_parents {
-        plan.add(Action::CreateDir { path: parent });
+        plan = plan.with(Action::CreateDir { path: parent });
     }
 
     // Orphan detection delegated to dedicated module.
@@ -218,11 +218,11 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
     if !orphan_output.removal_actions.is_empty() {
         if input.force {
             for action in orphan_output.removal_actions {
-                plan.add(action);
+                plan = plan.with(action);
             }
         } else {
             let prompt = format!("Remove {} orphan(s)?", orphan_output.orphans.len());
-            plan.add(Action::Confirm {
+            plan = plan.with(Action::Confirm {
                 prompt: Some(prompt),
                 actions: orphan_output.removal_actions,
             });
@@ -230,7 +230,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
     }
 
     Ok(ApplyPlanOutput {
-        plan,
+        plan: plan.build(),
         file_results,
         orphans: orphan_output.orphans,
     })

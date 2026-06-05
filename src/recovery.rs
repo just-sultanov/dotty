@@ -58,12 +58,14 @@ pub(crate) fn handle_valid_plan(ctx: &RecoveryContext) -> Result<(), DottyError>
             // Rollback: execute inverse actions
             println!("Rolling back pending plan...");
             // Build rollback actions in reverse
-            let mut rollback_plan = plan::Plan::new(&ctx.plan.repo_path);
-            for action in ctx.plan.actions.iter().rev() {
-                if let Some(rollback_action) = action.rollback() {
-                    rollback_plan.add(rollback_action);
-                }
-            }
+            let rollback_plan = ctx
+                .plan
+                .actions
+                .iter()
+                .rev()
+                .filter_map(|action| action.rollback())
+                .fold(plan::Plan::builder(&ctx.plan.repo_path), |b, a| b.with(a))
+                .build();
             if !rollback_plan.is_empty() {
                 // Execute rollback without saving a pending plan to avoid
                 // nested pending plan confusion if rollback fails partway.

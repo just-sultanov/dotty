@@ -206,7 +206,7 @@ pub(crate) fn build_add_plan(
     input: &AddPlanInput,
     config: &Config,
 ) -> Result<AddPlanOutput, DottyError> {
-    let mut plan = Plan::new(&input.repo_path);
+    let mut plan = Plan::builder(&input.repo_path);
     let mut config = config.clone();
     let backup_ts = backup_timestamp();
 
@@ -218,7 +218,7 @@ pub(crate) fn build_add_plan(
     // ── Candidate #1: Unrecognized platform gate ──
     if input.platform_unknown && !input.force {
         let plat = input.platform.as_deref().unwrap_or("?");
-        plan.add(Action::AbortGate {
+        plan = plan.with(Action::AbortGate {
             prompt: format!(
                 "Platform '{}' is not recognized. Valid: {}. Continue?",
                 plat,
@@ -238,9 +238,9 @@ pub(crate) fn build_add_plan(
             path: machine_dir.clone(),
         };
         if input.force {
-            plan.add(action);
+            plan = plan.with(action);
         } else {
-            plan.add(Action::Confirm {
+            plan = plan.with(Action::Confirm {
                 prompt: Some(format!(
                     "Machine '{}' not found in repo. Create directory?",
                     dir_name,
@@ -253,7 +253,7 @@ pub(crate) fn build_add_plan(
     // ── Candidate #3: Conflicts gate + per-file Confirm ──
     let has_conflicts = !input.conflicts.is_empty();
     if has_conflicts && !input.force {
-        plan.add(Action::AbortGate {
+        plan = plan.with(Action::AbortGate {
             prompt: "Conflicts detected with existing tracked files. Continue?".into(),
         });
     }
@@ -318,7 +318,7 @@ pub(crate) fn build_add_plan(
         // Add to plan — conflicting files (without --force) are wrapped in Confirm
         if is_conflicting && !input.force {
             let target_display = format_target_display(target_file);
-            plan.add(Action::Confirm {
+            plan = plan.with(Action::Confirm {
                 prompt: Some(format!(
                     "Override {} (already managed by another tier)?",
                     target_display,
@@ -327,7 +327,7 @@ pub(crate) fn build_add_plan(
             });
         } else {
             for action in file_actions {
-                plan.add(action);
+                plan = plan.with(action);
             }
         }
 
@@ -348,19 +348,22 @@ pub(crate) fn build_add_plan(
 
     // Global Git add (for files not wrapped in individual Confirm)
     if !git_add_paths.is_empty() && input.has_git {
-        plan.add(Action::GitAdd {
+        plan = plan.with(Action::GitAdd {
             paths: git_add_paths,
         });
     }
 
     // Git commit (if --commit specified)
     if let Some(msg) = &input.commit {
-        plan.add(Action::GitCommit {
+        plan = plan.with(Action::GitCommit {
             message: msg.clone(),
         });
     }
 
-    Ok(AddPlanOutput { plan, config })
+    Ok(AddPlanOutput {
+        plan: plan.build(),
+        config,
+    })
 }
 
 // ---------------------------------------------------------------------------

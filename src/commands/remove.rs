@@ -402,20 +402,20 @@ pub(crate) fn build_remove_plan(
     input: &RemovePlanInput,
     mut config: Config,
 ) -> Result<RemovePlanOutput, DottyError> {
-    let mut plan = Plan::new(&input.repo_path);
+    let mut plan = Plan::builder(&input.repo_path);
 
     // Phase 1: Restore files from repo to target (non-confirm pairs only).
     // Safety: Must run first to ensure data exists before symlinks are removed.
-    plan.actions.extend(build_restore_file_phase(input));
+    plan = plan.extend(build_restore_file_phase(input));
 
     // Phase 2: Remove symlinks at target locations (non-confirm pairs only).
     // Safety: Runs after restore, so target content exists even if this fails.
-    plan.actions.extend(build_remove_symlink_phase(input));
+    plan = plan.extend(build_remove_symlink_phase(input));
 
     // Phase 3: Remove files from repo and update config (non-confirm pairs only).
     // Safety: Runs last, so no active symlinks point to deleted repo files.
     let (cleanup_actions, mut git_rm_paths) = build_repo_cleanup_phase(&mut config, input);
-    plan.actions.extend(cleanup_actions);
+    plan = plan.extend(cleanup_actions);
 
     // Phase 4: Confirm actions for pairs that need user confirmation.
     // Each pair is wrapped in an Action::Confirm so the user can choose.
@@ -466,7 +466,7 @@ pub(crate) fn build_remove_plan(
             path: repo_absolute_path,
         });
 
-        plan.add(Action::Confirm {
+        plan = plan.with(Action::Confirm {
             prompt: Some(format!(
                 "Override existing file at {}?",
                 target_file.display()
@@ -480,20 +480,20 @@ pub(crate) fn build_remove_plan(
 
     // Stage deletions in git
     if !git_rm_paths.is_empty() {
-        plan.add(Action::GitAdd {
+        plan = plan.with(Action::GitAdd {
             paths: git_rm_paths,
         });
     }
 
     // Git commit (if --commit specified)
     if let Some(ref msg) = input.commit {
-        plan.add(Action::GitCommit {
+        plan = plan.with(Action::GitCommit {
             message: msg.clone(),
         });
     }
 
     Ok(RemovePlanOutput {
-        plan,
+        plan: plan.build(),
         config,
         pending_confirm: confirm_repo_paths,
     })
