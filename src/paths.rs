@@ -121,23 +121,11 @@ fn validate_no_dotdot(result: &Path, original: &Path) -> Result<(), DottyError> 
 
 /// Return the user's home directory.
 ///
-/// Checks `$HOME` first (for cross-platform consistency and testability),
-/// then falls back to `home::home_dir()` which consults platform-specific
+/// Delegates to `home::home_dir()` which consults platform-specific
 /// mechanisms (`USERPROFILE` on Windows, `$HOME` on Unix).
 pub fn home_dir() -> Result<PathBuf, DottyError> {
-    // Check $HOME first for cross-platform consistency.
-    // On Windows home::home_dir() reads USERPROFILE, not HOME,
-    // so tests that set HOME to a temp dir would fail without this.
-    if let Ok(home) = env::var("HOME") {
-        let path = PathBuf::from(home);
-        if path.is_absolute() {
-            return Ok(path);
-        }
-    }
     home::home_dir().ok_or_else(|| {
-        DottyError::MissingHomeDirectory(
-            "HOME environment variable not set and unable to determine user home directory".into(),
-        )
+        DottyError::MissingHomeDirectory("unable to determine user home directory".into())
     })
 }
 
