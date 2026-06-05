@@ -395,7 +395,14 @@ pub(crate) fn execute_plan(
         crate::plan::clear_pending_plan(&repo_state.state_path)?;
     }
 
+    let has_staged = plan
+        .actions
+        .iter()
+        .any(|a| matches!(a, Action::GitAdd { .. }));
     println!("\ndone");
+    if has_staged {
+        println!("\nhint: run `git commit` to save your changes");
+    }
 
     Ok(())
 }
