@@ -1,11 +1,8 @@
-use std::fs;
-
 use anyhow::Result;
-use tracing::warn;
 
 use crate::backups::{date_to_backup_prefix, list_backups};
-use crate::paths::resolve_state_path;
-use crate::prompt::prompt_confirm;
+use crate::plan::{self, Action, ExecuteMode, Plan};
+use crate::repo_state::RepoState;
 
 /// Determine which backups to remove based on filtering criteria.
 ///
@@ -84,15 +81,15 @@ pub(crate) fn filter_backups(
 
 /// Run the `clean` command.
 pub fn run(keep: Option<usize>, before: Option<String>, yes: bool) -> Result<()> {
-    let state_path = resolve_state_path()?;
-    let backup_dir = state_path.join("backups");
+    let mut repo = RepoState::new()?;
+    let backup_dir = repo.state_path.join("backups");
 
     if !backup_dir.is_dir() {
         println!("No backups found.");
         return Ok(());
     }
 
-    let all_backups = list_backups(&state_path);
+    let all_backups = list_backups(&repo.state_path);
 
     if all_backups.is_empty() {
         println!("No backups to clean.");
@@ -113,20 +110,32 @@ pub fn run(keep: Option<usize>, before: Option<String>, yes: bool) -> Result<()>
         return Ok(());
     }
 
-    // Interactive confirmation for each backup (skipped with --yes)
-    let mut removed_count = 0usize;
+    // Build a plan with a single group Confirm wrapping all RemoveDir actions
+    let remove_actions: Vec<Action> = to_remove
+        .iter()
+        .map(|b| Action::RemoveDir {
+            path: backup_dir.join(b),
+        })
+        .collect();
 
-    for backup in &to_remove {
-        if yes || prompt_confirm(&format!("Remove backup '{}'", backup))? {
-            let backup_path = backup_dir.join(backup);
-            if let Err(e) = fs::remove_dir_all(&backup_path) {
-                warn!("failed to remove '{}': {}", backup, e);
-            } else {
-                removed_count += 1;
-            }
-        }
-    }
+    let confirm_action = Action::Confirm {
+        prompt: if yes {
+            None
+        } else {
+            Some(format!("Remove {} backup(s)?", remove_actions.len()))
+        },
+        actions: remove_actions,
+    };
 
+    let mut plan = Plan::new(&repo.repo_path);
+    plan.add(confirm_action);
+    plan::execute_plan(&plan, ExecuteMode::Normal, &mut repo)?;
+
+    // Count actually removed (handles both confirmed and skipped cases)
+    let removed_count = to_remove
+        .iter()
+        .filter(|b| !backup_dir.join(b).exists())
+        .count();
     println!(
         "Removed {} of {} backup(s).",
         removed_count,
@@ -139,9 +148,99 @@ pub fn run(keep: Option<usize>, before: Option<String>, yes: bool) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan::action_execute;
+    use std::path::PathBuf;
 
     // Tests for backup utilities (date_to_backup_prefix, list_backups) live in backups.rs.
     // This module's integration-level tests live in tests/test_remove_status_clean.rs.
+
+    fn test_dir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
+    }
+
+    fn init_git_repo(path: &PathBuf) {
+        std::process::Command::new("git")
+            .current_dir(path)
+            .args(["init"])
+            .output()
+            .expect("git init should work in test env");
+    }
+
+    /// Test that plan with Confirm { prompt: None } removes all backups.
+    #[test]
+    fn test_clean_removes_with_yes() {
+        let dir = test_dir();
+        let backup_dir = dir.path().join("backups");
+        std::fs::create_dir_all(backup_dir.join("2024-01-10T10-00-00-000")).unwrap();
+        std::fs::create_dir_all(backup_dir.join("2024-01-11T10-00-00-000")).unwrap();
+        std::fs::create_dir_all(backup_dir.join("2024-01-12T10-00-00-000")).unwrap();
+
+        init_git_repo(&dir.path().to_path_buf());
+
+        let to_remove = vec![
+            "2024-01-10T10-00-00-000".to_string(),
+            "2024-01-11T10-00-00-000".to_string(),
+        ];
+
+        let remove_actions: Vec<Action> = to_remove
+            .iter()
+            .map(|b| Action::RemoveDir {
+                path: backup_dir.join(b),
+            })
+            .collect();
+
+        let confirm_action = Action::Confirm {
+            prompt: None,
+            actions: remove_actions,
+        };
+
+        let mut plan = Plan::new(dir.path());
+        plan.add(confirm_action);
+
+        let repo_path = dir.path().to_path_buf();
+        let state_path = dir.path().join("state");
+        std::fs::create_dir_all(&state_path).unwrap();
+        let mut repo = RepoState::new_for_git(repo_path, state_path);
+
+        plan::execute_plan(&plan, ExecuteMode::Normal, &mut repo).unwrap();
+
+        // Targeted backups should be removed
+        assert!(!backup_dir.join("2024-01-10T10-00-00-000").exists());
+        assert!(!backup_dir.join("2024-01-11T10-00-00-000").exists());
+        // Untargeted backup should remain
+        assert!(backup_dir.join("2024-01-12T10-00-00-000").exists());
+    }
+
+    /// Test that Confirm with prompt in non-interactive context skips removal.
+    #[test]
+    fn test_clean_skips_when_not_confirmed() {
+        let dir = test_dir();
+        let backup_dir = dir.path().join("backups");
+        let target = backup_dir.join("2024-01-10T10-00-00-000");
+        std::fs::create_dir_all(&target).unwrap();
+
+        init_git_repo(&dir.path().to_path_buf());
+
+        let action = Action::Confirm {
+            prompt: Some("Remove 1 backup(s)?".into()),
+            actions: vec![Action::RemoveDir {
+                path: target.clone(),
+            }],
+        };
+
+        let repo_path = dir.path().to_path_buf();
+        let state_path = dir.path().join("state");
+        std::fs::create_dir_all(&state_path).unwrap();
+        let mut repo = RepoState::new_for_git(repo_path, state_path);
+
+        // In CI (non-interactive), Confirm with prompt skips execution
+        temp_env::with_var("CI", Some("1"), || {
+            action_execute(&action, &mut repo).unwrap();
+        });
+
+        // Backup should not be removed (prompt was skipped in CI)
+        assert!(target.exists());
+    }
 
     #[test]
     fn test_filter_backups_keep_n() {
