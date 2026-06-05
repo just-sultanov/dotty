@@ -116,6 +116,9 @@ pub(crate) enum DottyError {
     #[error("user cancelled operation")]
     Cancelled,
 
+    #[error("specify a target tier with --machine <name> or --platform <name>")]
+    MissingTier,
+
     #[error("pending plan is invalid: {reason}")]
     PendingPlanInvalid {
         reason: String,

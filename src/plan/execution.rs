@@ -197,7 +197,7 @@ pub(crate) fn action_execute(
                     );
                     return Ok(());
                 }
-                let confirmed = crate::prompt::prompt_confirm(p)?;
+                let confirmed = crate::prompt::prompt_confirm(p, true)?;
                 if !confirmed {
                     return Ok(());
                 }
@@ -226,7 +226,7 @@ pub(crate) fn action_execute(
                 warn!("non-interactive context: abort gate skipped — \"{prompt}\"");
                 return Ok(());
             }
-            let confirmed = crate::prompt::prompt_confirm(prompt)?;
+            let confirmed = crate::prompt::prompt_confirm(prompt, true)?;
             if !confirmed {
                 return Err(DottyError::Cancelled);
             }
@@ -333,13 +333,13 @@ pub(crate) fn execute_plan(
         return Ok(());
     }
 
+    let check = crate::symbols::check();
+
     if mode.is_dry_run() {
         debug!("dry-run: {} actions", plan.actions.len());
-        println!("[dry-run] Plan ({} actions):", plan.actions.len());
-        for (i, action) in plan.actions.iter().enumerate() {
-            println!("[dry-run]  {}. {}", i + 1, action);
+        for action in &plan.actions {
+            println!("{check} {action}");
         }
-        println!("[dry-run] no changes made");
         return Ok(());
     }
 
@@ -349,38 +349,28 @@ pub(crate) fn execute_plan(
     }
 
     /// Minimum number of actions to use a progress bar.
-    ///
-    /// For small plans (< 20 actions), simple "action ... ✓" output is faster
-    /// and less noisy. Progress bars add overhead and are more appropriate
-    /// for larger plans where they provide useful visual feedback.
     const PLAN_PROGRESS_BAR_THRESHOLD: usize = 20;
 
     let mut completed: Vec<usize> = Vec::new();
-    let check = crate::symbols::check();
-    let use_progress_bar = plan.actions.len() > PLAN_PROGRESS_BAR_THRESHOLD;
+    let total = plan.actions.len();
+    let use_progress_bar = total > PLAN_PROGRESS_BAR_THRESHOLD;
     let mut pb: Option<ProgressBar> = if use_progress_bar {
-        Some(ProgressBar::new(plan.actions.len() as u64))
+        Some(ProgressBar::new(total as u64))
     } else {
         None
     };
 
     for (i, action) in plan.actions.iter().enumerate() {
         trace!("executing action {}: {}", i + 1, action);
-        if use_progress_bar {
-            if let Some(ref bar) = pb {
-                bar.set_message(format!("{action}"));
-            }
-        } else {
-            print!("  {}. {} ... ", i + 1, action);
-        }
         match action_execute(action, repo_state) {
             Ok(()) => {
                 if use_progress_bar {
                     if let Some(ref bar) = pb {
+                        bar.set_message(format!("{check} {action}"));
                         bar.inc(1);
                     }
                 } else {
-                    println!("{check}");
+                    println!("{check} {action}");
                 }
                 completed.push(i);
             }
@@ -404,6 +394,8 @@ pub(crate) fn execute_plan(
     if mode.save_pending() {
         crate::plan::clear_pending_plan(&repo_state.state_path)?;
     }
+
+    println!("\ndone");
 
     Ok(())
 }

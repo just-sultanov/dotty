@@ -47,11 +47,11 @@ fn require_interactive() -> Result<(), DottyError> {
 ///
 /// Returns `true` if the user confirms, `false` otherwise.
 /// Returns `DottyError::NotInteractive` when not running in a TTY.
-pub(crate) fn prompt_confirm(prompt: &str) -> Result<bool, DottyError> {
+pub(crate) fn prompt_confirm(prompt: &str, default: bool) -> Result<bool, DottyError> {
     require_interactive()?;
     let answer = Confirm::new()
         .with_prompt(prompt)
-        .default(true)
+        .default(default)
         .interact()
         .map_err(map_dialoguer_error)?;
     Ok(answer)
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn test_prompt_confirm_non_interactive() {
         temp_env::with_var("CI", Some("1"), || {
-            let result = prompt_confirm("test prompt");
+            let result = prompt_confirm("test prompt", true);
             assert!(result.is_err());
             assert!(matches!(
                 result.unwrap_err(),

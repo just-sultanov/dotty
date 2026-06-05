@@ -437,6 +437,7 @@ fn is_standard_xdg_path(target_path: &Path) -> bool {
         || rel_str.starts_with(".local/")
         || rel_str.starts_with(".ssh/")
         || (rel_str.starts_with('.') && !rel_str.starts_with(".."))
+        || (!rel_str.starts_with("..") && !rel_str.contains('/'))
 }
 
 /// Check whether a path is under a sensitive system directory.
@@ -486,15 +487,12 @@ fn warn_non_xdg_interactive(target_path: &Path) -> Result<(), DottyError> {
             "Warning: '{}' doesn't look like a standard config location.",
             target_path.display()
         );
-        // Prompt semantics: "yes" = bail and ask user to re-run with --machine/--platform,
-        // "no" = proceed to base tier without error. The "yes" path bails because the `add`
-        // command does not support interactive tier selection — the user must re-run with
-        // --machine <name> or --platform <name> to target a specific tier.
         let ok = prompt_confirm(
             "Add this file to a specific machine or platform tier instead of base? (yes = specify tier, no = add to base)",
+            false,
         )?;
         if ok {
-            return Err(DottyError::Cancelled);
+            return Err(DottyError::MissingTier);
         }
     }
 
@@ -503,7 +501,7 @@ fn warn_non_xdg_interactive(target_path: &Path) -> Result<(), DottyError> {
             "Warning: '{}' is under a sensitive system directory.",
             target_path.display()
         );
-        let ok = prompt_confirm("Proceed anyway?")?;
+        let ok = prompt_confirm("Proceed anyway?", true)?;
         if !ok {
             return Err(DottyError::Cancelled);
         }
@@ -1206,6 +1204,17 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             // ..something should NOT be treated as a dotfile
             assert!(!is_standard_xdg_path(&home.join("..hidden")));
+        });
+    }
+
+    #[test]
+    fn test_is_standard_xdg_top_level_home_file() {
+        let dir = test_dir();
+        let home = dir.path().to_path_buf();
+        temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
+            assert!(is_standard_xdg_path(&home.join("bb.edn")));
+            assert!(is_standard_xdg_path(&home.join("README.md")));
+            assert!(is_standard_xdg_path(&home.join(".vimrc")));
         });
     }
 

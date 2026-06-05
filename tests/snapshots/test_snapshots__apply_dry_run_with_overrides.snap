@@ -3,10 +3,8 @@ source: tests/test_snapshots.rs
 assertion_line: 120
 expression: normalized
 ---
-[dry-run] Plan (2 actions):
-[dry-run]  1. create link   [HOME]/.vimrc → [REPO]/testbox/home/.vimrc
-[dry-run]  2. create dir    [HOME]
-[dry-run] no changes made
+✓ symlink created - ~/.vimrc → [REPO]/testbox/home/.vimrc
+✓ directory created - ~/
   [dry-run] ✓ ~/.vimrc (testbox)
   [dry-run]   (overrides base)
   [dry-run] ────────────────────────────────────────

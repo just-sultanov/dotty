@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::paths::format_target_display;
+
 pub(crate) use execution::{ExecuteMode, execute_plan};
 
 #[cfg(test)]
@@ -124,49 +126,81 @@ pub(crate) enum Action {
     },
 }
 
+/// Extract a short display path for backup destinations.
+///
+/// From e.g. `/home/user/.local/state/dotty/backups/2026-06-05T23-10-18-305/bb.edn`
+/// produces `backups/2026-06-05T23-10-18-305/bb.edn`.
+fn backup_display(dest: &Path) -> String {
+    dest.to_string_lossy()
+        .split("backups/")
+        .nth(1)
+        .map(|s| format!("backups/{s}"))
+        .unwrap_or_else(|| dest.display().to_string())
+}
+
 impl fmt::Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Action::CreateDir { path } => write!(f, "create dir    {}", path.display()),
-            Action::Backup { source, dest } => {
-                write!(f, "backup        {} → {}", source.display(), dest.display())
+            Action::CreateDir { path } => {
+                write!(f, "directory created - {}", format_target_display(path))
             }
-            Action::BackupDir { source, dest, .. } => {
-                write!(f, "backup dir    {} → {}", source.display(), dest.display())
+            Action::Backup { source: _, dest } => {
+                write!(f, "backup created - {}", backup_display(dest))
+            }
+            Action::BackupDir {
+                source: _, dest, ..
+            } => {
+                write!(f, "backup created - {}", backup_display(dest))
             }
             Action::CopyFile { source, dest } => {
-                write!(f, "copy file     {} → {}", source.display(), dest.display())
+                write!(
+                    f,
+                    "file copied - {} → {}",
+                    format_target_display(source),
+                    format_target_display(dest),
+                )
             }
             Action::CreateSymlink { target, link, .. } => {
-                write!(f, "create link   {} → {}", link.display(), target.display())
+                write!(
+                    f,
+                    "symlink created - {} → {}",
+                    format_target_display(link),
+                    format_target_display(target),
+                )
             }
-            Action::RemoveFile { path } => write!(f, "remove file   {}", path.display()),
-            Action::RemoveDir { path } => write!(f, "remove dir    {}", path.display()),
-            Action::RemoveSymlink { path } => write!(f, "remove link   {}", path.display()),
+            Action::RemoveFile { path } => {
+                write!(f, "file removed - {}", format_target_display(path))
+            }
+            Action::RemoveDir { path } => {
+                write!(f, "directory removed - {}", format_target_display(path))
+            }
+            Action::RemoveSymlink { path } => {
+                write!(f, "symlink removed - {}", format_target_display(path))
+            }
             Action::RestoreBackup { source, dest } => {
                 write!(
                     f,
-                    "restore backup {} → {}",
-                    source.display(),
-                    dest.display()
+                    "backup restored - {} → {}",
+                    format_target_display(source),
+                    format_target_display(dest),
                 )
             }
             Action::RestoreDir { source, dest } => {
                 write!(
                     f,
-                    "restore dir     {} → {}",
-                    source.display(),
-                    dest.display()
+                    "directory restored - {} → {}",
+                    format_target_display(source),
+                    format_target_display(dest),
                 )
             }
             Action::GitAdd { paths } => {
                 if paths.is_empty() {
-                    return write!(f, "git add       (empty)");
+                    return write!(f, "file staged - (empty)");
                 }
                 let Some(first) = paths.first() else {
-                    return write!(f, "git add       (empty)");
+                    return write!(f, "file staged - (empty)");
                 };
-                write!(f, "git add       {}", first.display())?;
+                write!(f, "file staged - {}", first.display())?;
                 for p in paths.iter().skip(1).take(GIT_ADD_MAX_SHOWN - 1) {
                     write!(f, ", {}", p.display())?;
                 }
@@ -175,28 +209,23 @@ impl fmt::Display for Action {
                 }
                 Ok(())
             }
-            Action::GitCommit { message } => write!(f, "git commit    {message}"),
+            Action::GitCommit { message } => write!(f, "changes committed - {message}"),
             Action::Confirm { prompt, actions } => {
                 if let Some(p) = prompt {
-                    writeln!(f, "confirm       {p}")?;
+                    writeln!(f, "confirm - {p}")?;
                 }
-                for (i, action) in actions.iter().enumerate() {
+                let check = crate::symbols::check();
+                for action in actions.iter() {
                     let prefix = if prompt.is_some() {
-                        if i == actions.len() - 1 {
-                            "  └ "
-                        } else {
-                            "  ├ "
-                        }
+                        format!("  {check} ")
                     } else {
-                        ""
+                        String::new()
                     };
                     writeln!(f, "{prefix}{action}")?;
                 }
                 Ok(())
             }
-            Action::AbortGate { prompt } => {
-                write!(f, "abort gate    {prompt}")
-            }
+            Action::AbortGate { prompt } => write!(f, "abort gate - {prompt}"),
         }
     }
 }
@@ -809,14 +838,14 @@ mod tests {
             path: PathBuf::from("/tmp/test"),
         };
         let display = format!("{}", action);
-        assert!(display.contains("create dir"));
+        assert!(display.contains("directory created"));
         assert!(display.contains("/tmp/test"));
 
         let action = Action::GitCommit {
             message: "add vimrc".to_string(),
         };
         let display = format!("{}", action);
-        assert!(display.contains("git commit"));
+        assert!(display.contains("changes committed"));
         assert!(display.contains("add vimrc"));
     }
 
@@ -1680,8 +1709,8 @@ mod tests {
         let display = format!("{action}");
         assert!(display.contains("confirm"));
         assert!(display.contains("Remove 2 orphan(s)"));
-        assert!(display.contains("├"));
-        assert!(display.contains("└"));
+        assert!(display.contains("symlink removed"));
+        assert!(display.contains("file removed"));
     }
 
     #[test]
@@ -1695,6 +1724,6 @@ mod tests {
 
         let display = format!("{action}");
         assert!(!display.contains("confirm"));
-        assert!(display.contains("remove file"));
+        assert!(display.contains("file removed"));
     }
 }
