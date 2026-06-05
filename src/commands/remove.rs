@@ -193,13 +193,16 @@ pub fn run(
             total
         );
         println!("[dry-run] no changes made");
-    } else if commit.is_some() {
-        println!("Removed {} file(s) from management.", total);
     } else {
-        println!(
-            "Removed {} file(s) from management. Run `git rm` + `git commit` to finalize.",
-            total
-        );
+        println!("\nRemoved {} file(s) from management.", total);
+        if output
+            .plan
+            .actions
+            .iter()
+            .any(|a| matches!(a, Action::GitAdd { .. }))
+        {
+            println!("hint: run `git commit` to save your changes");
+        }
     }
 
     Ok(())
