@@ -164,6 +164,17 @@ pub fn run(
         write_config(&state_path, &output.config)?;
     }
 
+    if !dry_run
+        && commit.is_none()
+        && output
+            .plan
+            .actions
+            .iter()
+            .any(|a| matches!(a, Action::GitAdd { .. }))
+    {
+        println!("\nhint: run `git commit` to save your changes");
+    }
+
     Ok(())
 }
 

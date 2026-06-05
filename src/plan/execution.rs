@@ -333,15 +333,15 @@ pub(crate) fn execute_plan(
         return Ok(());
     }
 
-    let check = crate::symbols::check();
-
     if mode.is_dry_run() {
         debug!("dry-run: {} actions", plan.actions.len());
         for action in &plan.actions {
-            println!("{check} {action}");
+            println!("[dry-run] {action}");
         }
         return Ok(());
     }
+
+    let check = crate::symbols::check();
 
     // Save pending plan for crash recovery (skipped for rollback/dry-run)
     if mode.save_pending() {
@@ -362,14 +362,20 @@ pub(crate) fn execute_plan(
 
     for (i, action) in plan.actions.iter().enumerate() {
         trace!("executing action {}: {}", i + 1, action);
+        let is_noop = matches!(
+            action,
+            Action::RemoveSymlink { path } if !is_symlink(path)
+        );
         match action_execute(action, repo_state) {
             Ok(()) => {
                 if use_progress_bar {
                     if let Some(ref bar) = pb {
-                        bar.set_message(format!("{check} {action}"));
+                        if !is_noop {
+                            bar.set_message(format!("{check} {action}"));
+                        }
                         bar.inc(1);
                     }
-                } else {
+                } else if !is_noop {
                     println!("{check} {action}");
                 }
                 completed.push(i);
@@ -395,14 +401,7 @@ pub(crate) fn execute_plan(
         crate::plan::clear_pending_plan(&repo_state.state_path)?;
     }
 
-    let has_staged = plan
-        .actions
-        .iter()
-        .any(|a| matches!(a, Action::GitAdd { .. }));
     println!("\ndone");
-    if has_staged {
-        println!("\nhint: run `git commit` to save your changes");
-    }
 
     Ok(())
 }

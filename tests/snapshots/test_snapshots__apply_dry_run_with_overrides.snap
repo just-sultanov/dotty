@@ -1,10 +1,9 @@
 ---
 source: tests/test_snapshots.rs
-assertion_line: 120
 expression: normalized
 ---
-✓ symlink created - ~/.vimrc → [REPO]/testbox/home/.vimrc
-✓ directory created - ~/
+[dry-run] symlink created - ~/.vimrc → [REPO]/testbox/home/.vimrc
+[dry-run] directory created - ~/
   [dry-run] ✓ ~/.vimrc (testbox)
   [dry-run]   (overrides base)
   [dry-run] ────────────────────────────────────────
