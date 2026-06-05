@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::DottyError;
 
+use crate::backups::backup_timestamp;
 use crate::config::Config;
 use crate::config::write_config;
 use crate::convention::find_managed_repo_files;
@@ -11,7 +12,6 @@ use crate::fs_utils::walk_dir;
 use crate::git;
 use crate::paths::{expand_tilde, repo_to_target};
 use crate::plan::{self, Action, Plan};
-use crate::prompt::prompt_confirm;
 use crate::repo_state::RepoState;
 use crate::symlink::is_symlink;
 
@@ -142,15 +142,23 @@ pub fn run(
     // Read current config (to update managed map)
     let config = repo.config.clone();
 
-    // Resolve user prompts for files that need override confirmation
-    let skipped = resolve_remove_skipped(&managed_pairs, &repo_path)?;
+    // Identify pairs where the target is a regular file that would be
+    // overwritten — these need user confirmation during execution.
+    let pending_confirm: HashSet<String> = managed_pairs
+        .iter()
+        .filter(|(target_file, repo_relative_path)| {
+            let repo_absolute_path = repo_path.join(repo_relative_path);
+            repo_absolute_path.exists() && target_file.exists() && !is_symlink(target_file)
+        })
+        .map(|(_, repo_relative_path)| repo_relative_path.clone())
+        .collect();
 
     // Build the plan (pure function — no side effects)
     let input = RemovePlanInput {
         repo_path: repo_path.clone(),
         state_path: state_path.clone(),
         managed_pairs,
-        skipped,
+        pending_confirm,
         commit: commit.clone(),
     };
     let output = build_remove_plan(&input, config)?;
@@ -163,9 +171,18 @@ pub fn run(
     };
     plan::execute_plan(&output.plan, mode, &mut repo)?;
 
-    // Write updated config only after successful plan execution
+    // Write updated config only after successful plan execution.
+    // For pending_confirm pairs, the config entry is only removed if the
+    // user accepted the prompt (repo file was actually deleted).
     if !dry_run && !output.plan.is_empty() {
-        write_config(&state_path, &output.config)?;
+        let mut updated_config = output.config;
+        for repo_relative_path in &output.pending_confirm {
+            let repo_absolute_path = repo_path.join(repo_relative_path);
+            if !repo_absolute_path.exists() {
+                updated_config.managed.shift_remove(repo_relative_path);
+            }
+        }
+        write_config(&state_path, &updated_config)?;
     }
 
     // Print summary
@@ -213,7 +230,9 @@ pub(crate) struct RemovePlanInput {
     pub repo_path: PathBuf,
     pub state_path: PathBuf,
     pub managed_pairs: Vec<(PathBuf, String)>,
-    pub skipped: HashSet<String>,
+    /// Pairs where the repo file exists and the target is a regular file
+    /// (not a symlink). These get a `Confirm` prompt during execution.
+    pub pending_confirm: HashSet<String>,
     pub commit: Option<String>,
 }
 
@@ -221,6 +240,9 @@ pub(crate) struct RemovePlanInput {
 pub(crate) struct RemovePlanOutput {
     pub plan: Plan,
     pub config: Config,
+    /// Repo-relative paths for pairs wrapped in `Confirm` actions.
+    /// Used after execution to determine which were accepted.
+    pub pending_confirm: Vec<String>,
 }
 
 /// Phase 1: Copy files from repo back to target (restore as regular files).
@@ -251,7 +273,7 @@ pub(crate) struct RemovePlanOutput {
 pub(crate) fn build_restore_file_phase(input: &RemovePlanInput) -> Vec<Action> {
     let mut actions = Vec::new();
     for (target_file, repo_relative_path) in &input.managed_pairs {
-        if input.skipped.contains(repo_relative_path) {
+        if input.pending_confirm.contains(repo_relative_path) {
             continue;
         }
         let repo_absolute_path = input.repo_path.join(repo_relative_path);
@@ -259,7 +281,7 @@ pub(crate) fn build_restore_file_phase(input: &RemovePlanInput) -> Vec<Action> {
             // Backup user modifications before overwriting with repo version.
             // Only backup regular files (not symlinks — those are handled in Phase 2).
             if target_file.exists() && !is_symlink(target_file) {
-                let backup_ts = crate::backups::backup_timestamp();
+                let backup_ts = backup_timestamp();
                 let backup_dest = input
                     .state_path
                     .join("backups")
@@ -309,7 +331,7 @@ pub(crate) fn build_restore_file_phase(input: &RemovePlanInput) -> Vec<Action> {
 pub(crate) fn build_remove_symlink_phase(input: &RemovePlanInput) -> Vec<Action> {
     let mut actions = Vec::new();
     for (target_file, repo_relative_path) in &input.managed_pairs {
-        if input.skipped.contains(repo_relative_path) {
+        if input.pending_confirm.contains(repo_relative_path) {
             continue;
         }
         if is_symlink(target_file) {
@@ -346,7 +368,7 @@ pub(crate) fn build_repo_cleanup_phase(
     let mut actions = Vec::new();
     let mut git_rm_paths = Vec::new();
     for (_target_file, repo_relative_path) in &input.managed_pairs {
-        if input.skipped.contains(repo_relative_path) {
+        if input.pending_confirm.contains(repo_relative_path) {
             continue;
         }
         let repo_absolute_path = input.repo_path.join(repo_relative_path);
@@ -382,18 +404,79 @@ pub(crate) fn build_remove_plan(
 ) -> Result<RemovePlanOutput, DottyError> {
     let mut plan = Plan::new(&input.repo_path);
 
-    // Phase 1: Restore files from repo to target.
+    // Phase 1: Restore files from repo to target (non-confirm pairs only).
     // Safety: Must run first to ensure data exists before symlinks are removed.
     plan.actions.extend(build_restore_file_phase(input));
 
-    // Phase 2: Remove symlinks at target locations.
+    // Phase 2: Remove symlinks at target locations (non-confirm pairs only).
     // Safety: Runs after restore, so target content exists even if this fails.
     plan.actions.extend(build_remove_symlink_phase(input));
 
-    // Phase 3: Remove files from repo and update config.
+    // Phase 3: Remove files from repo and update config (non-confirm pairs only).
     // Safety: Runs last, so no active symlinks point to deleted repo files.
-    let (cleanup_actions, git_rm_paths) = build_repo_cleanup_phase(&mut config, input);
+    let (cleanup_actions, mut git_rm_paths) = build_repo_cleanup_phase(&mut config, input);
     plan.actions.extend(cleanup_actions);
+
+    // Phase 4: Confirm actions for pairs that need user confirmation.
+    // Each pair is wrapped in an Action::Confirm so the user can choose.
+    // If accepted: backup + copy file + remove symlink (if applicable) + remove repo file.
+    // If declined: nothing happens — the file stays managed.
+    let mut confirm_repo_paths = Vec::new();
+    for (target_file, repo_relative_path) in &input.managed_pairs {
+        if !input.pending_confirm.contains(repo_relative_path) {
+            continue;
+        }
+        let repo_absolute_path = input.repo_path.join(repo_relative_path);
+        let mut file_actions: Vec<Action> = Vec::new();
+
+        // Backup user modifications
+        if target_file.exists() && !is_symlink(target_file) {
+            let backup_ts = backup_timestamp();
+            let backup_dest = input
+                .state_path
+                .join("backups")
+                .join(&backup_ts)
+                .join(target_file.file_name().unwrap_or_default());
+            file_actions.push(Action::Backup {
+                source: target_file.clone(),
+                dest: backup_dest,
+            });
+        }
+
+        // Copy repo file to target (skip for symlinks to directories —
+        // CopyFile would replace the symlink + directory with a file).
+        let skip_copy =
+            is_symlink(target_file) && fs::read_link(target_file).ok().is_some_and(|t| t.is_dir());
+        if !skip_copy {
+            file_actions.push(Action::CopyFile {
+                source: repo_absolute_path.clone(),
+                dest: target_file.clone(),
+            });
+        }
+
+        // Remove symlink if target is a symlink
+        if is_symlink(target_file) {
+            file_actions.push(Action::RemoveSymlink {
+                path: target_file.clone(),
+            });
+        }
+
+        // Remove repo file
+        file_actions.push(Action::RemoveFile {
+            path: repo_absolute_path,
+        });
+
+        plan.add(Action::Confirm {
+            prompt: Some(format!(
+                "Override existing file at {}?",
+                target_file.display()
+            )),
+            actions: file_actions,
+        });
+
+        confirm_repo_paths.push(repo_relative_path.clone());
+    }
+    git_rm_paths.extend(confirm_repo_paths.iter().map(PathBuf::from));
 
     // Stage deletions in git
     if !git_rm_paths.is_empty() {
@@ -409,35 +492,11 @@ pub(crate) fn build_remove_plan(
         });
     }
 
-    Ok(RemovePlanOutput { plan, config })
-}
-
-/// Resolve which files the user wants to skip during removal.
-///
-/// For each managed pair where the repo file exists and the target already
-/// exists as a regular file (not a symlink), ask the user for override
-/// confirmation. Returns the set of repo-relative paths the user declined.
-fn resolve_remove_skipped(
-    managed_pairs: &[(PathBuf, String)],
-    repo_path: &Path,
-) -> Result<HashSet<String>, DottyError> {
-    let mut skipped = HashSet::new();
-
-    for (target_file, repo_relative_path) in managed_pairs {
-        let repo_absolute_path = repo_path.join(repo_relative_path);
-
-        if repo_absolute_path.exists() && target_file.exists() && !is_symlink(target_file) {
-            let ok = prompt_confirm(&format!(
-                "Override existing file at {}?",
-                target_file.display()
-            ))?;
-            if !ok {
-                skipped.insert(repo_relative_path.clone());
-            }
-        }
-    }
-
-    Ok(skipped)
+    Ok(RemovePlanOutput {
+        plan,
+        config,
+        pending_confirm: confirm_repo_paths,
+    })
 }
 
 #[cfg(test)]
@@ -567,18 +626,24 @@ mod tests {
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
+        // Target is a regular file + repo exists → it's a pending_confirm pair.
+        // Plan: Confirm{Backup + CopyFile + RemoveFile} + GitAdd = 2 actions
+        let mut pending = HashSet::new();
+        pending.insert("base/home/.vimrc".to_string());
+
         let input = RemovePlanInput {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: pending,
             commit: None,
         };
         let output = build_remove_plan(&input, config.clone()).unwrap();
 
-        // Backup + CopyFile + RemoveFile + GitAdd = 4 actions (target exists as regular file)
-        assert_eq!(output.plan.actions.len(), 4);
-        assert!(!output.config.managed.contains_key("base/home/.vimrc"));
+        assert_eq!(output.plan.actions.len(), 2);
+        // Config is NOT mutated for pending_confirm pairs in plan build
+        assert!(output.config.managed.contains_key("base/home/.vimrc"));
+        assert_eq!(output.pending_confirm.len(), 1);
     }
 
     #[test]
@@ -607,7 +672,7 @@ mod tests {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let output = build_remove_plan(&input, config.clone()).unwrap();
@@ -617,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_remove_plan_with_skipped() {
+    fn test_build_remove_plan_with_pending_confirm() {
         let dir = test_dir();
         let base = dir.path().to_path_buf();
         let repo = base.join("repo");
@@ -630,26 +695,47 @@ mod tests {
         let target = home.join(".vimrc");
         std::fs::write(&target, "content").unwrap();
 
+        // Repo file exists — makes this a pending_confirm pair
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "content").unwrap();
+
         let mut config = Config::new();
         config
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
-        let mut skipped = HashSet::new();
-        skipped.insert("base/home/.vimrc".to_string());
+        let mut pending_confirm = HashSet::new();
+        pending_confirm.insert("base/home/.vimrc".to_string());
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped,
+            pending_confirm,
             commit: None,
         };
         let output = build_remove_plan(&input, config.clone()).unwrap();
 
-        // Skipped: no actions, managed map unchanged
-        assert!(output.plan.is_empty());
+        // Pending_confirm pair: Confirm{Backup + CopyFile + RemoveFile} + GitAdd = 2
+        assert_eq!(output.plan.actions.len(), 2);
+        match &output.plan.actions[0] {
+            Action::Confirm { prompt, actions } => {
+                assert!(
+                    prompt
+                        .as_deref()
+                        .unwrap()
+                        .contains("Override existing file")
+                );
+                // Backup + CopyFile + RemoveFile
+                assert_eq!(actions.len(), 3);
+            }
+            other => panic!("expected Confirm, got: {:?}", other),
+        }
+        // Config should NOT be mutated for pending_confirm pairs
         assert!(output.config.managed.contains_key("base/home/.vimrc"));
+        // Output tracks which pairs are pending confirm
+        assert_eq!(output.pending_confirm.len(), 1);
     }
 
     #[test]
@@ -675,17 +761,20 @@ mod tests {
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
+        let mut pending = HashSet::new();
+        pending.insert("base/home/.vimrc".to_string());
+
         let input = RemovePlanInput {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: pending,
             commit: Some("remove vimrc".to_string()),
         };
         let output = build_remove_plan(&input, config.clone()).unwrap();
 
-        // Backup + CopyFile + RemoveFile + GitAdd + GitCommit = 5
-        assert_eq!(output.plan.actions.len(), 5);
+        // Confirm{Backup + CopyFile + RemoveFile} + GitAdd + GitCommit = 3
+        assert_eq!(output.plan.actions.len(), 3);
 
         match &output.plan.actions.last().unwrap() {
             Action::GitCommit { message } => assert_eq!(message, "remove vimrc"),
@@ -723,7 +812,7 @@ mod tests {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let output = build_remove_plan(&input, config.clone()).unwrap();
@@ -752,9 +841,10 @@ mod tests {
         assert!(found_remove_symlink, "expected RemoveSymlink action");
     }
 
-    /// Verify that skipped files are excluded from both CopyFile and RemoveSymlink.
+    /// Verify that symlink pairs are NOT treated as pending_confirm
+    /// and produce CopyFile + RemoveSymlink + RemoveFile + GitAdd.
     #[test]
-    fn test_build_remove_plan_skipped_excludes_both_phases() {
+    fn test_build_remove_plan_symlink_not_pending_confirm() {
         let dir = test_dir();
         let base = dir.path().to_path_buf();
         let repo = base.join("repo");
@@ -775,21 +865,19 @@ mod tests {
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
-        let mut skipped = HashSet::new();
-        skipped.insert("base/home/.vimrc".to_string());
-
+        // Symlink target — NOT pending_confirm
         let input = RemovePlanInput {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped,
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let output = build_remove_plan(&input, config.clone()).unwrap();
 
-        // Skipped: no CopyFile, no RemoveSymlink, no RemoveFile
-        assert!(output.plan.is_empty());
-        assert!(output.config.managed.contains_key("base/home/.vimrc"));
+        // CopyFile + RemoveSymlink + RemoveFile + GitAdd = 4
+        assert_eq!(output.plan.actions.len(), 4);
+        assert!(!output.config.managed.contains_key("base/home/.vimrc"));
     }
 
     // -- phase extraction unit tests --
@@ -815,7 +903,7 @@ mod tests {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let actions = build_restore_file_phase(&input);
@@ -849,7 +937,7 @@ mod tests {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let actions = build_restore_file_phase(&input);
@@ -859,7 +947,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_restore_file_phase_skipped() {
+    fn test_build_restore_file_phase_pending_confirm() {
         let dir = test_dir();
         let base = dir.path().to_path_buf();
         let repo = base.join("repo");
@@ -872,21 +960,22 @@ mod tests {
         std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
         std::fs::write(&repo_absolute_path, "content").unwrap();
 
-        let mut skipped = HashSet::new();
-        skipped.insert("base/home/.vimrc".to_string());
-
         let state = base.join("state");
         std::fs::create_dir_all(&state).unwrap();
+
+        let mut pending_confirm = HashSet::new();
+        pending_confirm.insert("base/home/.vimrc".to_string());
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped,
+            pending_confirm,
             commit: None,
         };
         let actions = build_restore_file_phase(&input);
 
+        // Pending_confirm pairs are handled by Confirm actions, not by restore phase
         assert!(actions.is_empty());
     }
 
@@ -912,7 +1001,7 @@ mod tests {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let actions = build_remove_symlink_phase(&input);
@@ -943,7 +1032,7 @@ mod tests {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let actions = build_remove_symlink_phase(&input);
@@ -953,7 +1042,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_remove_symlink_phase_skipped() {
+    fn test_build_remove_symlink_phase_pending_confirm_excluded() {
         let dir = test_dir();
         let base = dir.path().to_path_buf();
         let repo = base.join("repo");
@@ -967,17 +1056,18 @@ mod tests {
         std::fs::write(&repo_absolute_path, "content").unwrap();
         crate::symlink::create_symlink(&repo_absolute_path, &target).unwrap();
 
-        let mut skipped = HashSet::new();
-        skipped.insert("base/home/.vimrc".to_string());
-
         let state = base.join("state");
         std::fs::create_dir_all(&state).unwrap();
+
+        // Even symlink pairs, if marked pending_confirm, are excluded
+        let mut pending_confirm = HashSet::new();
+        pending_confirm.insert("base/home/.vimrc".to_string());
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped,
+            pending_confirm,
             commit: None,
         };
         let actions = build_remove_symlink_phase(&input);
@@ -1011,7 +1101,7 @@ mod tests {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let (actions, git_paths) = build_repo_cleanup_phase(&mut config, &input);
@@ -1026,7 +1116,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_repo_cleanup_phase_skipped() {
+    fn test_build_repo_cleanup_phase_pending_confirm() {
         let dir = test_dir();
         let base = dir.path().to_path_buf();
         let repo = base.join("repo");
@@ -1044,24 +1134,24 @@ mod tests {
             .managed
             .insert("base/home/.vimrc".into(), "~/.vimrc".into());
 
-        let mut skipped = HashSet::new();
-        skipped.insert("base/home/.vimrc".to_string());
-
         let state = base.join("state");
         std::fs::create_dir_all(&state).unwrap();
+
+        let mut pending_confirm = HashSet::new();
+        pending_confirm.insert("base/home/.vimrc".to_string());
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped,
+            pending_confirm,
             commit: None,
         };
         let (actions, git_paths) = build_repo_cleanup_phase(&mut config, &input);
 
         assert!(actions.is_empty());
         assert!(git_paths.is_empty());
-        // Config should be unchanged for skipped files
+        // Config should be unchanged for pending_confirm files
         assert!(config.managed.contains_key("base/home/.vimrc"));
     }
 
@@ -1105,7 +1195,7 @@ mod tests {
                     "base/home/.config/nvim/init.lua".to_string(),
                 ),
             ],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let (actions, git_paths) = build_repo_cleanup_phase(&mut config, &input);
@@ -1116,7 +1206,7 @@ mod tests {
     }
 
     /// Test that Backup action is created before CopyFile when target exists
-    /// as a regular file (not a symlink).
+    /// as a regular file (not a symlink) and the pair is not pending_confirm.
     #[test]
     fn test_build_restore_file_phase_with_target_file_creates_backup() {
         let dir = test_dir();
@@ -1135,11 +1225,12 @@ mod tests {
         std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
         std::fs::write(&repo_absolute_path, "repo content").unwrap();
 
+        // Not pending_confirm — tests the direct-phase path
         let input = RemovePlanInput {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let actions = build_restore_file_phase(&input);
@@ -1190,7 +1281,7 @@ mod tests {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let actions = build_restore_file_phase(&input);
@@ -1229,7 +1320,7 @@ mod tests {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let actions = build_restore_file_phase(&input);
@@ -1281,7 +1372,7 @@ mod tests {
                 symlink.clone(),
                 "base/home/link_to_dir/file.txt".to_string(),
             )],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let actions = build_restore_file_phase(&input);
@@ -1332,7 +1423,7 @@ mod tests {
                 symlink.clone(),
                 "base/home/link_to_dir/file.txt".to_string(),
             )],
-            skipped: HashSet::new(),
+            pending_confirm: HashSet::new(),
             commit: None,
         };
         let output = build_remove_plan(&input, config.clone()).unwrap();
@@ -1364,9 +1455,9 @@ mod tests {
         );
     }
 
-    /// Test that skipped files produce no actions in build_restore_file_phase.
+    /// Test that pending_confirm files produce no actions in build_restore_file_phase.
     #[test]
-    fn test_build_restore_file_phase_skipped_no_actions() {
+    fn test_build_restore_file_phase_pending_confirm_no_actions() {
         let dir = test_dir();
         let base = dir.path().to_path_buf();
         let repo = base.join("repo");
@@ -1383,18 +1474,151 @@ mod tests {
         std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
         std::fs::write(&repo_absolute_path, "repo content").unwrap();
 
-        let mut skipped = HashSet::new();
-        skipped.insert("base/home/.vimrc".to_string());
+        let mut pending_confirm = HashSet::new();
+        pending_confirm.insert("base/home/.vimrc".to_string());
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
             state_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
-            skipped,
+            pending_confirm,
             commit: None,
         };
         let actions = build_restore_file_phase(&input);
 
         assert!(actions.is_empty());
+    }
+
+    /// Test that build_remove_plan wraps a pending_confirm pair in a Confirm
+    /// action with the expected sub-actions.
+    #[test]
+    fn test_build_remove_plan_confirm_action_structure() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        std::fs::write(&target, "user content").unwrap();
+
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "repo content").unwrap();
+
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        let mut pending = HashSet::new();
+        pending.insert("base/home/.vimrc".to_string());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            state_path: state.clone(),
+            managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
+            pending_confirm: pending,
+            commit: None,
+        };
+        let output = build_remove_plan(&input, config.clone()).unwrap();
+
+        // Confirm{Backup + CopyFile + RemoveFile} + GitAdd = 2
+        assert_eq!(output.plan.actions.len(), 2);
+
+        let confirm = &output.plan.actions[0];
+        match confirm {
+            Action::Confirm { prompt, actions } => {
+                assert!(
+                    prompt
+                        .as_deref()
+                        .unwrap()
+                        .contains("Override existing file")
+                );
+                // Backup + CopyFile + RemoveFile
+                assert_eq!(actions.len(), 3);
+                assert!(matches!(actions[0], Action::Backup { .. }));
+                assert!(matches!(actions[1], Action::CopyFile { .. }));
+                assert!(matches!(actions[2], Action::RemoveFile { .. }));
+            }
+            other => panic!("expected Confirm, got: {:?}", other),
+        }
+    }
+
+    /// Test that pending_confirm pairs are excluded from all three direct phases
+    /// and only appear as a single Confirm action.
+    #[test]
+    fn test_build_remove_plan_pending_confirm_excluded_from_direct_phases() {
+        let dir = test_dir();
+        let base = dir.path().to_path_buf();
+        let repo = base.join("repo");
+        let state = base.join("state");
+        let home = base.join("home");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let target = home.join(".vimrc");
+        std::fs::write(&target, "user content").unwrap();
+
+        let repo_absolute_path = repo.join("base/home/.vimrc");
+        std::fs::create_dir_all(repo_absolute_path.parent().unwrap()).unwrap();
+        std::fs::write(&repo_absolute_path, "repo content").unwrap();
+
+        let mut config = Config::new();
+        config
+            .managed
+            .insert("base/home/.vimrc".into(), "~/.vimrc".into());
+
+        // Also add a non-confirm pair (symlink) to verify phases still process it
+        let symlink_target = home.join(".zshrc");
+        let symlink_repo_absolute = repo.join("base/home/.zshrc");
+        std::fs::create_dir_all(symlink_repo_absolute.parent().unwrap()).unwrap();
+        std::fs::write(&symlink_repo_absolute, "zsh content").unwrap();
+        crate::symlink::create_symlink(&symlink_repo_absolute, &symlink_target).unwrap();
+        config
+            .managed
+            .insert("base/home/.zshrc".into(), "~/.zshrc".into());
+
+        let mut pending = HashSet::new();
+        pending.insert("base/home/.vimrc".to_string());
+
+        let input = RemovePlanInput {
+            repo_path: repo.clone(),
+            state_path: state.clone(),
+            managed_pairs: vec![
+                (target.clone(), "base/home/.vimrc".to_string()),
+                (symlink_target.clone(), "base/home/.zshrc".to_string()),
+            ],
+            pending_confirm: pending,
+            commit: None,
+        };
+        let output = build_remove_plan(&input, config.clone()).unwrap();
+
+        // For .zshrc (non-confirm symlink): CopyFile + RemoveSymlink + RemoveFile = 3
+        // For .vimrc (pending_confirm): Confirm{Backup + CopyFile + RemoveFile} = 1
+        // Then GitAdd = 1 => 5 total actions
+        assert_eq!(output.plan.actions.len(), 5);
+
+        // First 3 actions should be the non-confirm phase (copy, removesymlink, removefile)
+        assert!(matches!(output.plan.actions[0], Action::CopyFile { .. }));
+        assert!(matches!(
+            output.plan.actions[1],
+            Action::RemoveSymlink { .. }
+        ));
+        assert!(matches!(output.plan.actions[2], Action::RemoveFile { .. }));
+
+        // Next should be Confirm for .vimrc
+        assert!(matches!(output.plan.actions[3], Action::Confirm { .. }));
+
+        // Last is GitAdd
+        assert!(matches!(output.plan.actions[4], Action::GitAdd { .. }));
+
+        // Config should have .vimrc still managed, .zshrc removed
+        assert!(output.config.managed.contains_key("base/home/.vimrc"));
+        assert!(!output.config.managed.contains_key("base/home/.zshrc"));
     }
 }
