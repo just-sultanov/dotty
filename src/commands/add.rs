@@ -425,11 +425,11 @@ fn is_standard_xdg_path(target_path: &Path) -> bool {
     let rel_str = match home {
         Some(home) => {
             let relative = target_path.strip_prefix(&home).unwrap_or(target_path);
-            relative.to_string_lossy().into_owned()
+            normalize_path(relative)
         }
         None => {
             // HOME is unset — cannot determine standard-ness; treat as non-standard.
-            target_path.to_string_lossy().into_owned()
+            normalize_path(target_path)
         }
     };
 
@@ -1270,9 +1270,12 @@ mod tests {
 
     #[test]
     fn test_is_standard_xdg_respects_xdg_config_home_outside_home() {
-        // Custom $XDG_CONFIG_HOME outside $HOME should still be recognized
-        let home = test_dir().path().to_path_buf();
-        let outside = Path::new("/tmp/xdg-custom-test");
+        // Custom $XDG_CONFIG_HOME outside $HOME should still be recognized.
+        // Use a sibling directory under the temp root so the path is valid
+        // on all platforms (avoids Unix-specific paths like /tmp).
+        let dir = test_dir();
+        let home = dir.path().join("home");
+        let outside = dir.path().join("outside");
         temp_env::with_vars(
             vec![
                 ("HOME", Some(home.to_str().unwrap())),

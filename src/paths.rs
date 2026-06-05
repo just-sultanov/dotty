@@ -121,9 +121,19 @@ fn validate_no_dotdot(result: &Path, original: &Path) -> Result<(), DottyError> 
 
 /// Return the user's home directory.
 ///
-/// Delegates to `home::home_dir()` which consults platform-specific
-/// mechanisms (`USERPROFILE` on Windows, `$HOME` on Unix).
+/// Checks `$HOME` first (works on all platforms, including Windows when
+/// running under Git Bash, WSL, or cross-platform tooling), then falls
+/// back to `home::home_dir()` which consults platform-specific mechanisms
+/// (`USERPROFILE` on Windows, `$HOME` on Unix).
+///
+/// The explicit `$HOME` check ensures that setting `$HOME` in tests via
+/// `temp_env` is respected on all platforms.
 pub fn home_dir() -> Result<PathBuf, DottyError> {
+    if let Some(home) = std::env::var_os("HOME")
+        && !home.is_empty()
+    {
+        return Ok(PathBuf::from(home));
+    }
     home::home_dir().ok_or_else(|| {
         DottyError::MissingHomeDirectory("unable to determine user home directory".into())
     })
