@@ -2,22 +2,23 @@
 //!
 //! Orphans are files listed in the merged tier map but no longer present in
 //! `config.managed` — typically because they were removed from the dotty
-//! repository. This module detects such orphans and builds removal actions
-//! into the apply plan.
+//! repository. This module detects such orphans and produces `OrphanRemoved`
+//! actions that display as `orphan removed - <target>` and remove the target
+//! from the user's home directory at execution time (detecting symlink/file/
+//! dir types from the live filesystem).
 //!
 //! The detection uses `config.managed` keys as the source of truth for
 //! currently tracked files, ensuring consistent key format (repo_relative_path
 //! strings) across both sources and avoiding mismatches from tuple
 //! extraction in `merged.values()`.
 
+use crate::config::Config;
+use crate::paths::expand_tilde;
+use crate::plan::Action;
 use indexmap::IndexMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use tracing::warn;
-
-use crate::config::Config;
-use crate::paths::expand_tilde;
-use crate::plan::Action;
 
 /// Input data required for orphan detection.
 pub(crate) struct OrphanDetectionInput<'a> {
@@ -30,14 +31,19 @@ pub(crate) struct OrphanDetectionOutput {
     /// Detected orphans as (repo_relative_path, target_path_string) pairs.
     pub orphans: Vec<(String, String)>,
     /// Removal actions to add to the apply plan.
+    ///
+    /// Always `OrphanRemoved` actions. The executor dispatches to the
+    /// appropriate underlying removal (symlink/file/dir) at execution time.
     pub removal_actions: Vec<Action>,
 }
 
 /// Detect orphan managed entries and produce removal actions.
 ///
 /// Orphans are files whose `repo_relative_path` appears in `merged` but not in
-/// `config.managed`. For each orphan, the function determines the correct
-/// removal action (RemoveSymlink, RemoveFile) based on the file type on disk.
+/// `config.managed`. For each orphan that still exists on disk, an
+/// `OrphanRemoved` action is produced. The executor determines the file
+/// type (symlink, file, directory) at execution time from the live
+/// filesystem.
 pub(crate) fn detect_orphans_and_build_removals(
     input: &OrphanDetectionInput,
 ) -> OrphanDetectionOutput {
@@ -55,7 +61,9 @@ pub(crate) fn detect_orphans_and_build_removals(
         }
     }
 
-    // Build removal actions for each orphan target.
+    // Build removal actions for each orphan target that still exists on disk.
+    // Type detection is deferred to execution time — only existence is
+    // checked here so we can skip already-removed orphans early.
     let mut removal_actions: Vec<Action> = Vec::new();
     for (_repo_relative_path, target_rel) in &orphans {
         let target = match expand_tilde(target_rel) {
@@ -66,32 +74,16 @@ pub(crate) fn detect_orphans_and_build_removals(
             }
         };
 
-        let metadata = match std::fs::symlink_metadata(&target) {
-            Ok(m) => m,
+        match std::fs::symlink_metadata(&target) {
+            Ok(_) => {
+                removal_actions.push(Action::OrphanRemoved { path: target });
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // Target already gone — nothing to remove.
-                continue;
             }
             Err(e) => {
-                warn!(
-                    "cannot determine type of orphan target {}: {}",
-                    target.display(),
-                    e
-                );
-                continue;
+                warn!("cannot stat orphan target {}: {}", target.display(), e);
             }
-        };
-
-        let file_type = metadata.file_type();
-        if file_type.is_symlink() {
-            removal_actions.push(Action::RemoveSymlink { path: target });
-        } else if file_type.is_file() {
-            removal_actions.push(Action::RemoveFile { path: target });
-        } else if file_type.is_dir() {
-            removal_actions.push(Action::RemoveDir { path: target });
-        } else {
-            // Special files (sockets, fifos, etc.) — best-effort RemoveFile.
-            removal_actions.push(Action::RemoveFile { path: target });
         }
     }
 
@@ -183,8 +175,8 @@ mod tests {
         assert_eq!(output.orphans.len(), 1);
         assert_eq!(output.removal_actions.len(), 1);
         assert!(
-            matches!(&output.removal_actions[0], Action::RemoveSymlink { path } if path == &target),
-            "expected RemoveSymlink for orphan symlink"
+            matches!(&output.removal_actions[0], Action::OrphanRemoved { path } if path == &target),
+            "expected OrphanRemoved for orphan symlink"
         );
     }
 
@@ -213,8 +205,8 @@ mod tests {
         assert_eq!(output.orphans.len(), 1);
         assert_eq!(output.removal_actions.len(), 1);
         assert!(
-            matches!(&output.removal_actions[0], Action::RemoveFile { path } if path == &target),
-            "expected RemoveFile for orphan regular file"
+            matches!(&output.removal_actions[0], Action::OrphanRemoved { path } if path == &target),
+            "expected OrphanRemoved for orphan regular file"
         );
     }
 

@@ -1,8 +1,12 @@
 //! Tier merge algorithm.
 //!
-//! Higher tiers override lower tiers because we iterate in order:
-//! base → platform → machine. IndexMap::insert() overwrites,
-//! so the last insertion (highest priority) wins.
+//! The winning tier for each target path is determined by [`tier_priority`]
+//! (machine > platform > base), not by iteration order. This is critical
+//! because `git ls-files` returns files in lexicographic order, which does
+//! not match priority order: e.g., `macbook/...` sorts before `macos/...`,
+//! and `base/...` sorts before both. A naive "last write wins" approach
+//! would let `macos` incorrectly win over `macbook` simply because it
+//! appears later in the lexicographic output.
 //!
 //! # Priority Order (lowest to highest)
 //!
@@ -16,16 +20,18 @@ use std::path::PathBuf;
 /// Classify tracked files into tiers and merge by priority.
 ///
 /// Returns a map from target path → (tier name, repo-relative path).
-/// Higher tiers override lower tiers for the same target path.
-/// Uses `IndexMap` to preserve insertion order (base → platform → machine)
-/// for deterministic iteration during plan building.
+/// The winning tier for each target is the one with the highest
+/// [`tier_priority`] (machine > platform > base), independent of the order
+/// in which files appear in `tracked_files`. Uses `IndexMap` to preserve
+/// insertion order for deterministic iteration during plan building.
 ///
 /// # Algorithm
 ///
-/// Iterates through files in order, classifying each into its tier. Since
-/// we process files in the order they appear in `tracked_files`, and
-/// `IndexMap::insert()` overwrites existing keys, the last tier processed
-/// for a given target path wins. This enforces priority: machine > platform > base.
+/// Single pass over `tracked_files`. For each file, classify its tier and
+/// look up the priority. Insert/replace the entry only if no entry exists
+/// for the target, or if the new tier's priority is strictly greater than
+/// the existing one. This enforces `machine > platform > base` regardless
+/// of iteration order.
 ///
 /// # Complexity
 ///
@@ -37,9 +43,6 @@ pub(crate) fn merge_tiers(
 ) -> IndexMap<PathBuf, (String, String)> {
     let mut merged: IndexMap<PathBuf, (String, String)> = IndexMap::new();
 
-    // Iterate through tracked files, classifying each into its tier.
-    // Files from higher tiers (machine > platform > base) will overwrite
-    // lower tier entries for the same target path.
     for file in tracked_files {
         let tier_name =
             match crate::convention::classify_tier(file, &Some(machine.to_string()), platform) {
@@ -50,9 +53,20 @@ pub(crate) fn merge_tiers(
         let repo_path = PathBuf::from(file);
 
         // Convert repo path to target path and insert into merged map.
-        // If target already exists, this overwrites with the higher priority tier.
+        // Use tier_priority to decide whether to overwrite, so the winning
+        // tier is independent of iteration order (e.g., the lexicographic
+        // order produced by `git ls-files`).
         if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
-            merged.insert(target, (tier_name, file.clone()));
+            let new_priority = crate::convention::tier_priority(&tier_name);
+            let should_insert = match merged.get(&target) {
+                Some((existing_tier, _)) => {
+                    new_priority > crate::convention::tier_priority(existing_tier)
+                }
+                None => true,
+            };
+            if should_insert {
+                merged.insert(target, (tier_name, file.clone()));
+            }
         }
     }
 
@@ -124,6 +138,22 @@ mod tests {
         "[a-zA-Z][a-zA-Z0-9_-]{0,20}".prop_map(|s| s.to_string())
     }
 
+    /// Generator for known platform names (macos, linux, freebsd, windows).
+    ///
+    /// `tier_priority` only returns priority 2 for `KNOWN_PLATFORMS`; any
+    /// other name gets priority 3 (machine tier). When a proptest wants
+    /// to verify the platform-vs-machine priority ordering, it must use
+    /// a known platform name, otherwise both tiers collapse to priority 3
+    /// and priority becomes a tie.
+    fn platform_name() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("macos".to_string()),
+            Just("linux".to_string()),
+            Just("freebsd".to_string()),
+            Just("windows".to_string()),
+        ]
+    }
+
     // ── Unit tests ──
 
     #[test]
@@ -157,6 +187,36 @@ mod tests {
 
             assert_eq!(merged.len(), 1);
             assert_eq!(merged.get(&target).unwrap().0, "macbook");
+        });
+    }
+
+    /// Regression test for the lexicographic-order bug.
+    ///
+    /// `git ls-files` returns tracked files in lexicographic order, so a file
+    /// in `macos/` (e.g., `macos/home/yyy.edn`) can appear AFTER a file in
+    /// `macbook/` (e.g., `macbook/home/yyy.edn`) even though `macbook` has
+    /// higher priority. A naive "last write wins" implementation would let
+    /// `macos` incorrectly win. The fix uses `tier_priority` for the merge.
+    #[test]
+    fn test_merge_tiers_three_tiers_lexicographic_order() {
+        crate::tests::with_test_home(|home| {
+            // Real `git ls-files` order: base < macbook < macos
+            let files = vec![
+                "base/home/yyy.edn".into(),
+                "macbook/home/yyy.edn".into(),
+                "macos/home/yyy.edn".into(),
+            ];
+            let merged = merge_tiers(&files, "macbook", &Some("macos".into()));
+
+            let target = home.join("yyy.edn");
+
+            assert_eq!(merged.len(), 1);
+            let (tier, repo_path) = merged.get(&target).unwrap();
+            assert_eq!(
+                tier, "macbook",
+                "machine tier must win regardless of iteration order"
+            );
+            assert_eq!(repo_path, "macbook/home/yyy.edn");
         });
     }
 
@@ -254,7 +314,7 @@ mod tests {
         #[test]
         fn proptest_merge_tiers_three_tier_priority(
             target_file in "home/[.a-zA-Z0-9_@-]{2,20}".prop_map(|s| s.to_string()),
-            platform in tier_name(),
+            platform in platform_name(),
             machine in tier_name(),
         ) {
             crate::tests::with_test_home(|_home| {
@@ -271,6 +331,57 @@ mod tests {
                 let (tier, repo_path) = merged.get(&target).unwrap();
                 assert_eq!(tier, &machine, "machine tier should have highest priority");
                 assert_eq!(repo_path, &mach_path);
+            });
+        }
+    }
+
+    /// Invariant: the winning tier is determined by priority, not iteration order.
+    /// This is a regression test for the bug where `git ls-files`'s lexicographic
+    /// order could place a lower-priority tier AFTER a higher-priority one
+    /// (e.g., `macos/` after `macbook/`), causing naive "last write wins" to
+    /// pick the wrong tier. All 6 permutations of the three tiers must produce
+    /// the same winner: the machine tier.
+    proptest! {
+        #[test]
+        fn proptest_merge_tiers_priority_independent_of_order(
+            target_file in "home/[.a-zA-Z0-9_@-]{2,20}".prop_map(|s| s.to_string()),
+            platform in platform_name(),
+            machine in tier_name(),
+        ) {
+            crate::tests::with_test_home(|_home| {
+                let base_path = format!("base/{}", target_file);
+                let plat_path = format!("{}/{}", platform, target_file);
+                let mach_path = format!("{}/{}", machine, target_file);
+
+                let all = vec![base_path, plat_path.clone(), mach_path.clone()];
+                // Generate all 6 permutations via swap-based approach.
+                let mut permutations: Vec<Vec<String>> = Vec::new();
+                for i in 0..all.len() {
+                    for j in 0..all.len() {
+                        if j == i { continue; }
+                        for k in 0..all.len() {
+                            if k == i || k == j { continue; }
+                            permutations.push(vec![all[i].clone(), all[j].clone(), all[k].clone()]);
+                        }
+                    }
+                }
+                // De-duplicate permutations (each appears multiple times above).
+                permutations.sort();
+                permutations.dedup();
+                assert_eq!(permutations.len(), 6, "expected 6 unique permutations");
+
+                let target = crate::paths::repo_to_target(&std::path::PathBuf::from(&all[2])).unwrap();
+
+                for perm in &permutations {
+                    let merged = merge_tiers(perm, &machine, &Some(platform.clone()));
+                    assert!(merged.contains_key(&target), "target should exist for perm {perm:?}");
+                    let (tier, repo_path) = merged.get(&target).unwrap();
+                    assert_eq!(
+                        tier, &machine,
+                        "machine tier must win regardless of iteration order, perm={perm:?}"
+                    );
+                    assert_eq!(repo_path, &mach_path, "winning repo path should be from machine tier");
+                }
             });
         }
     }

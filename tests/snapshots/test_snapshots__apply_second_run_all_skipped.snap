@@ -2,5 +2,4 @@
 source: tests/test_snapshots.rs
 expression: normalized
 ---
-  ────────────────────────────────────────
-  0 applied, 0 override, 1 skipped (unchanged)
+0 applied, 0 override, 1 skipped (unchanged)

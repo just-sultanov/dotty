@@ -217,6 +217,56 @@ fn apply_platform_tier_overrides_base() {
     );
 }
 
+/// Regression test for the lexicographic-order bug in `merge_tiers`.
+///
+/// `git ls-files` returns tracked files in lexicographic order, so for the
+/// tier set {base, macos, macbook} the order is `base < macbook < macos`.
+/// A naive "last write wins" merge would let `macos` incorrectly win over
+/// `macbook` (priority 2 vs 3) just because `macos` is processed last in
+/// the iteration. This test forces `--platform macos` so the platform tier
+/// is active on any CI runner, then asserts the symlink points to the
+/// `macbook` (machine) tier file.
+#[test]
+fn apply_three_tier_machine_wins_over_platform() {
+    let env = TestEnv::new();
+
+    env.run_ok(&["init", "--machine", "macbook"]);
+    env.git_config_identity();
+
+    // Same target path across all three tiers.
+    let base_file = env.repo.join("base/home/.config/app.conf");
+    std::fs::create_dir_all(base_file.parent().unwrap()).unwrap();
+    std::fs::write(&base_file, "base config").unwrap();
+
+    let plat_file = env.repo.join("macos/home/.config/app.conf");
+    std::fs::create_dir_all(plat_file.parent().unwrap()).unwrap();
+    std::fs::write(&plat_file, "macos config").unwrap();
+
+    let machine_file = env.repo.join("macbook/home/.config/app.conf");
+    std::fs::create_dir_all(machine_file.parent().unwrap()).unwrap();
+    std::fs::write(&machine_file, "macbook config").unwrap();
+
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["add", "-A"])
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["commit", "-m", "add three-tier config", "--allow-empty"])
+        .output()
+        .unwrap();
+
+    // Force platform=macos so the test exercises the 3-tier merge on any
+    // CI runner, regardless of the host's actual platform.
+    env.run_ok(&["apply", "--platform", "macos"]);
+
+    // Machine tier must win, even though the macos file was iterated last
+    // by `git ls-files` (lexicographic: base < macbook < macos).
+    let target = env.home.join(".config/app.conf");
+    env.assert_symlink(&target, &machine_file);
+}
+
 // ---------------------------------------------------------------------------
 // apply — backup on conflict
 // ---------------------------------------------------------------------------

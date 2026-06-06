@@ -276,8 +276,13 @@ pub(crate) fn build_add_plan(
 
         let mut file_actions: Vec<Action> = Vec::new();
 
-        // Create parent directories in repo
-        if let Some(parent) = repo_absolute_path.parent() {
+        // Create parent directories in repo.
+        // Skip if parent already exists — `fs::create_dir_all` is idempotent,
+        // but adding the action would print a misleading "directory created"
+        // line for dirs that already exist (matching apply behavior).
+        if let Some(parent) = repo_absolute_path.parent()
+            && !parent.is_dir()
+        {
             file_actions.push(Action::CreateDir {
                 path: parent.to_path_buf(),
             });

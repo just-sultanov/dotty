@@ -199,9 +199,16 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
         });
     }
 
-    // Add deduplicated CreateDir actions for all unique parent directories.
+    // Add deduplicated CreateDir actions for all unique parent directories
+    // that don't already exist. This avoids misleading "directory created"
+    // output for parent dirs (like `~/`) that already exist on the target
+    // system. `fs::create_dir_all` is idempotent, so skipping existing
+    // dirs is a pure display optimization — the actual filesystem state
+    // is identical.
     for parent in created_parents {
-        plan = plan.with(Action::CreateDir { path: parent });
+        if !parent.is_dir() {
+            plan = plan.with(Action::CreateDir { path: parent });
+        }
     }
 
     // Orphan detection delegated to dedicated module.
@@ -446,7 +453,9 @@ mod tests {
             };
             let output = build_apply_plan(&input).unwrap();
 
-            assert_eq!(output.plan.actions.len(), 2);
+            // 1 action: CreateSymlink. CreateDir for parent is skipped because
+            // the parent (`home`) already exists on disk.
+            assert_eq!(output.plan.actions.len(), 1);
             assert_eq!(output.file_results.len(), 1);
             assert!(output.file_results[0].applied);
         });
@@ -492,7 +501,9 @@ mod tests {
             };
             let output = build_apply_plan(&input).unwrap();
 
-            assert_eq!(output.plan.actions.len(), 3);
+            // 2 actions: RemoveSymlink (circular) + CreateSymlink.
+            // CreateDir for parent is skipped because the parent exists.
+            assert_eq!(output.plan.actions.len(), 2);
             assert_eq!(output.file_results.len(), 1);
             assert!(output.file_results[0].applied);
         });
@@ -538,7 +549,9 @@ mod tests {
             };
             let output = build_apply_plan(&input).unwrap();
 
-            assert_eq!(output.plan.actions.len(), 3);
+            // 2 actions: Backup + CreateSymlink.
+            // CreateDir for parent is skipped because the parent exists.
+            assert_eq!(output.plan.actions.len(), 2);
             assert_eq!(output.file_results.len(), 1);
             assert!(output.file_results[0].applied);
         });
@@ -637,16 +650,9 @@ mod tests {
             let output = build_apply_plan(&input).unwrap();
 
             // With --force, directory replacement should proceed.
-            // CreateDir is now deduplicated and added after per-file actions.
-            assert_eq!(output.plan.actions.len(), 3);
-            assert!(
-                output
-                    .plan
-                    .actions
-                    .iter()
-                    .any(|a| matches!(a, Action::CreateDir { .. })),
-                "plan should contain CreateDir"
-            );
+            // 2 actions: BackupDir + CreateSymlink.
+            // CreateDir for parent is skipped because the parent exists.
+            assert_eq!(output.plan.actions.len(), 2);
             assert!(
                 output
                     .plan
@@ -735,8 +741,8 @@ mod tests {
                     assert!(prompt.contains("1 orphan"), "prompt: {prompt}");
                     assert_eq!(actions.len(), 1);
                     assert!(
-                        matches!(&actions[0], Action::RemoveSymlink { .. }),
-                        "should have RemoveSymlink for orphan symlink"
+                        matches!(&actions[0], Action::OrphanRemoved { .. }),
+                        "should have OrphanRemoved for orphan symlink"
                     );
                 }
                 other => panic!("expected Confirm, got {other:?}"),
@@ -1027,7 +1033,8 @@ mod tests {
         });
     }
 
-    /// Tests that orphan symlinks are removed via RemoveSymlink action.
+    /// Tests that orphan symlinks are removed via OrphanRemoved action
+    /// (the underlying removal type is detected at execution time).
     #[test]
     fn test_orphan_removal_symlink() {
         let dir = tempfile::tempdir().unwrap();
@@ -1076,8 +1083,8 @@ mod tests {
                     actions,
                 } => {
                     assert!(
-                        matches!(&actions[0], Action::RemoveSymlink { path } if path == &target),
-                        "plan should contain Confirm with RemoveSymlink for orphan symlink"
+                        matches!(&actions[0], Action::OrphanRemoved { path } if path == &target),
+                        "plan should contain Confirm with OrphanRemoved for orphan symlink"
                     );
                 }
                 other => panic!("expected Confirm, got {other:?}"),
@@ -1085,8 +1092,8 @@ mod tests {
         });
     }
 
-    /// Tests that orphan regular files are removed via RemoveFile action
-    /// (not RemoveSymlink, which would silently do nothing).
+    /// Tests that orphan regular files are removed via OrphanRemoved action
+    /// (the underlying removal type is detected at execution time).
     #[test]
     fn test_orphan_removal_regular_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -1132,17 +1139,17 @@ mod tests {
                 Action::Confirm {
                     prompt: Some(_),
                     actions,
-                } if matches!(&actions[0], Action::RemoveFile { .. }) => Some(actions),
+                } if matches!(&actions[0], Action::OrphanRemoved { .. }) => Some(actions),
                 _ => None,
             });
             assert!(
                 confirm_then.is_some(),
-                "plan should contain Confirm with RemoveFile"
+                "plan should contain Confirm with OrphanRemoved"
             );
             let actions = confirm_then.unwrap();
             assert!(
-                matches!(&actions[0], Action::RemoveFile { path } if path == &target),
-                "orphan should use RemoveFile, not RemoveSymlink"
+                matches!(&actions[0], Action::OrphanRemoved { path } if path == &target),
+                "orphan should use OrphanRemoved"
             );
         });
     }
@@ -1192,14 +1199,7 @@ mod tests {
                 .plan
                 .actions
                 .iter()
-                .filter(|a| {
-                    matches!(
-                        a,
-                        Action::RemoveFile { .. }
-                            | Action::RemoveDir { .. }
-                            | Action::RemoveSymlink { .. }
-                    )
-                })
+                .filter(|a| matches!(a, Action::OrphanRemoved { .. }))
                 .collect();
             assert!(
                 removal_actions.is_empty(),
@@ -1250,13 +1250,13 @@ mod tests {
 
             assert_eq!(output.orphans.len(), 1);
             // With force, orphan removal should be in a raw action, not Confirm
-            let has_remove_file = output
+            let has_orphan_removed = output
                 .plan
                 .actions
                 .iter()
-                .any(|a| matches!(a, Action::RemoveFile { path } if path == &target));
+                .any(|a| matches!(a, Action::OrphanRemoved { path } if path == &target));
             assert!(
-                has_remove_file,
+                has_orphan_removed,
                 "with --force, orphan removal should be a direct action"
             );
         });
@@ -1265,6 +1265,11 @@ mod tests {
     /// Tests that CreateDir actions are deduplicated when multiple files
     /// share the same parent directory. Only one CreateDir action should
     /// be produced per unique parent.
+    ///
+    /// Note: parent directories are intentionally NOT pre-created here —
+    /// the build_apply_plan function only emits a CreateDir action when
+    /// the parent is missing. Pre-existing parents are skipped to avoid
+    /// misleading "directory created" output for dirs that already exist.
     #[test]
     fn test_build_apply_plan_deduplicate_createdir() {
         let dir = tempfile::tempdir().unwrap();
@@ -1276,9 +1281,9 @@ mod tests {
         std::fs::create_dir_all(&state).unwrap();
         std::fs::create_dir_all(&home).unwrap();
 
-        // Create 3 repo files in the same parent directory
+        // Create 3 repo files in the same parent directory.
+        // Do NOT create the parent (`~/.config/nvim`) so CreateDir is needed.
         let common_parent = home.join(".config/nvim");
-        std::fs::create_dir_all(&common_parent).unwrap();
 
         let target1 = common_parent.join("init.lua");
         let repo_absolute_path1 = repo.join("base/home/.config/nvim/init.lua");
@@ -1295,9 +1300,9 @@ mod tests {
         std::fs::create_dir_all(repo_absolute_path3.parent().unwrap()).unwrap();
         std::fs::write(&repo_absolute_path3, "settings").unwrap();
 
-        // Create 1 file in a different parent directory
+        // Create 1 file in a different parent directory.
+        // Do NOT create the parent (`~/.config/skhd`) so CreateDir is needed.
         let other_parent = home.join(".config/skhd");
-        std::fs::create_dir_all(&other_parent).unwrap();
         let target4 = other_parent.join("skhdrc");
         let repo_absolute_path4 = repo.join("base/home/.config/skhd/skhdrc");
         std::fs::create_dir_all(repo_absolute_path4.parent().unwrap()).unwrap();
@@ -1398,23 +1403,22 @@ mod tests {
         std::fs::create_dir_all(&state).unwrap();
         std::fs::create_dir_all(&home).unwrap();
 
-        // Create files in 3 different parent directories
+        // Create files in 3 different parent directories.
+        // Do NOT pre-create the parent dirs — CreateDir is only emitted for
+        // missing parents (see plan_builder.rs).
         let parent_a = home.join(".config/a");
-        std::fs::create_dir_all(&parent_a).unwrap();
         let target_a = parent_a.join("file.txt");
         let repo_absolute_path_a = repo.join("base/home/.config/a/file.txt");
         std::fs::create_dir_all(repo_absolute_path_a.parent().unwrap()).unwrap();
         std::fs::write(&repo_absolute_path_a, "a").unwrap();
 
         let parent_b = home.join(".config/b");
-        std::fs::create_dir_all(&parent_b).unwrap();
         let target_b = parent_b.join("file.txt");
         let repo_absolute_path_b = repo.join("base/home/.config/b/file.txt");
         std::fs::create_dir_all(repo_absolute_path_b.parent().unwrap()).unwrap();
         std::fs::write(&repo_absolute_path_b, "b").unwrap();
 
         let parent_c = home.join(".config/c");
-        std::fs::create_dir_all(&parent_c).unwrap();
         let target_c = parent_c.join("file.txt");
         let repo_absolute_path_c = repo.join("base/home/.config/c/file.txt");
         std::fs::create_dir_all(repo_absolute_path_c.parent().unwrap()).unwrap();

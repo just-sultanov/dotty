@@ -80,7 +80,12 @@ pub fn run(
     plan::execute_plan(&output.plan, mode, &mut repo)?;
 
     // 7. Print per-file summary
-    print_per_file_summary(&output.file_results, &output.orphans, dry_run);
+    print_per_file_summary(
+        &output.file_results,
+        &output.orphans,
+        dry_run,
+        !output.plan.actions.is_empty(),
+    );
 
     // 8. Write updated config (managed map was rebuilt in step 4b).
     //

@@ -136,6 +136,30 @@ pub(crate) fn action_execute(
                 remove_symlink_file(path).map_err(|e| io_error_with_path(e, path))?;
             }
         }
+        Action::OrphanRemoved { path } => {
+            // Detect file type at execution time so the action remains correct
+            // even if the orphan changed between plan-build and execution.
+            // Use symlink_metadata to detect symlinks without following them.
+            match fs::symlink_metadata(path) {
+                Ok(meta) => {
+                    let file_type = meta.file_type();
+                    if file_type.is_symlink() {
+                        remove_symlink_file(path).map_err(|e| io_error_with_path(e, path))?;
+                    } else if file_type.is_dir() {
+                        fs::remove_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
+                    } else {
+                        // Regular file, or special (socket/fifo) — best-effort removal.
+                        fs::remove_file(path).map_err(|e| io_error_with_path(e, path))?;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // Target already gone — nothing to do, treat as success.
+                }
+                Err(e) => {
+                    return Err(io_error_with_path(e, path));
+                }
+            }
+        }
         Action::RestoreBackup { source, dest } => {
             if is_symlink(dest) {
                 remove_symlink_file(dest).map_err(|e| io_error_with_path(e, dest))?;
@@ -275,6 +299,7 @@ pub(crate) fn action_rollback(action: &Action) -> Option<Action> {
         Action::RemoveFile { path: _ } => None,
         Action::RemoveDir { path: _ } => None,
         Action::RemoveSymlink { path: _, .. } => None,
+        Action::OrphanRemoved { path: _ } => None,
         Action::RestoreBackup { dest, .. } => Some(Action::RemoveFile { path: dest.clone() }),
         Action::RestoreDir { dest, .. } => Some(Action::RemoveDir { path: dest.clone() }),
         Action::GitAdd { .. } => None,
@@ -401,7 +426,9 @@ pub(crate) fn execute_plan(
         crate::plan::clear_pending_plan(&repo_state.state_path)?;
     }
 
-    println!("\ndone");
+    // Note: the trailing `done` line is printed by the summary (after
+    // override annotations, before counts) — not by the executor. The
+    // executor only prints per-action lines.
 
     Ok(())
 }

@@ -124,14 +124,30 @@ Machine tiers (`work`, `macbook`) are set by the user via `dotty config machine 
 
 ```
 $ dotty apply --dry-run
-[dry-run] Plan (2 actions):
-[dry-run]  1. create link   ~/.vimrc → ~/.dotty/base/home/.vimrc
-[dry-run]  2. create dir    ~
-[dry-run] no changes made
-[dry-run] ✓ ~/.vimrc (base)
-[dry-run] ────────────────────────────────────────
-[dry-run] 1 would be applied, 0 override, 0 skipped (unchanged)
-[dry-run] no changes made
+[dry-run] symlink created - ~/.vimrc → ~/.dotty/macos/home/.vimrc
+
+Overrides:
+[dry-run] macos - ~/.vimrc
+
+1 would be applied, 1 override, 0 skipped (unchanged)
+```
+
+The `Overrides:` block lists files that override lower-priority tiers
+(in the example above, the `macos` platform tier replaces `base` for
+`~/.vimrc`). The actual symlink action is shown in the regular
+`[dry-run] <action>` line; the override block highlights which tier
+wins. Run without `--dry-run` to actually apply — output looks similar
+but adds a `done` line and drops the `[dry-run]` prefix:
+
+```
+$ dotty apply
+✓ symlink created - ~/.vimrc → ~/.dotty/macos/home/.vimrc
+
+Overrides:
+macos - ~/.vimrc
+
+done
+1 applied, 1 override, 0 skipped (unchanged)
 ```
 
 ## Tier Priority

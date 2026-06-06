@@ -3,9 +3,8 @@ source: tests/test_snapshots.rs
 expression: normalized
 ---
 [dry-run] symlink created - ~/.vimrc → [REPO]/testbox/home/.vimrc
-[dry-run] directory created - ~/
-  [dry-run] ✓ ~/.vimrc (testbox)
-  [dry-run]   (overrides base)
-  [dry-run] ────────────────────────────────────────
-  [dry-run] 1 would be applied, 1 override, 0 skipped (unchanged)
-  [dry-run] no changes made
+
+Overrides:
+[dry-run] testbox - ~/.vimrc
+
+1 would be applied, 1 override, 0 skipped (unchanged)

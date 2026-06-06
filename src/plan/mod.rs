@@ -94,6 +94,20 @@ pub(crate) enum Action {
     RemoveSymlink {
         path: PathBuf,
     },
+    /// Remove an orphan target from the user's home directory.
+    ///
+    /// Orphans are files/dirs/symlinks that were previously managed by dotty
+    /// but are no longer in the repository. The file type (symlink, regular
+    /// file, or directory) is detected at execution time from the live
+    /// filesystem, so this action works regardless of how the orphan appears
+    /// on disk.
+    ///
+    /// Display: `orphan removed - <target>` — distinct from the generic
+    /// `file removed`/`symlink removed`/`directory removed` to signal that
+    /// this is a management-state cleanup, not a user-driven removal.
+    OrphanRemoved {
+        path: PathBuf,
+    },
     RestoreBackup {
         source: PathBuf,
         dest: PathBuf,
@@ -176,6 +190,9 @@ impl fmt::Display for Action {
             }
             Action::RemoveSymlink { path } => {
                 write!(f, "symlink removed - {}", format_target_display(path))
+            }
+            Action::OrphanRemoved { path } => {
+                write!(f, "orphan removed - {}", format_target_display(path))
             }
             Action::RestoreBackup { source, dest } => {
                 write!(
