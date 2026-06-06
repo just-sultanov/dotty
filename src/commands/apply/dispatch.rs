@@ -8,10 +8,10 @@ use crate::platform::detect_platform;
 use crate::repo_state::RepoState;
 
 use super::machine::resolve_machine;
-use super::managed::rebuild_managed_map;
+use super::managed::{add_dir_entry, rebuild_managed_map};
 use super::plan_builder::{ApplyPlanInput, build_apply_plan};
 use super::summary::print_per_file_summary;
-use super::tiers::{build_override_map, merge_tiers};
+use super::tiers::{build_override_map, compute_dir_owners, merge_tiers};
 
 /// Run the `apply` command.
 ///
@@ -52,7 +52,11 @@ pub fn run(
     // 4. Build override map: target_path → lower tier that was overridden
     let override_map = build_override_map(&tracked_files, &Some(machine_name.clone()), &platform);
 
-    // 4b. Rebuild managed map from tracked files so orphan detection has
+    // 4b. Compute dir-owners: directories fully owned by one tier
+    let home = home_dir()?;
+    let dir_owners = compute_dir_owners(&merged, &home);
+
+    // 4c. Rebuild managed map from tracked files so orphan detection has
     //     a complete view of currently tracked files (prevents false
     //     orphans on first apply when config.managed is empty/stale).
     let new_managed = rebuild_managed_map(&tracked_files);
@@ -62,9 +66,10 @@ pub fn run(
     let input = ApplyPlanInput {
         repo_path: repo_path.clone(),
         state_path: state_path.clone(),
-        home: home_dir()?,
+        home,
         merged,
         override_map,
+        dir_owners,
         config: config.clone(),
         force,
         follow_symlinks,
@@ -82,10 +87,22 @@ pub fn run(
     // 7. Print per-file summary
     print_per_file_summary(
         &output.file_results,
+        &output.dir_results,
         &output.orphans,
         dry_run,
         !output.plan.actions.is_empty(),
     );
+
+    // 7b. Add dir-entries to config.managed for applied dir-symlinks.
+    if !dry_run {
+        for dr in &output.dir_results {
+            if dr.applied
+                && let Some(owner) = input.dir_owners.get(&dr.target_dir)
+            {
+                add_dir_entry(&mut config.managed, &owner.repo_dir, &dr.target_dir);
+            }
+        }
+    }
 
     // 8. Write updated config (managed map was rebuilt in step 4b).
     //

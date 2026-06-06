@@ -15,7 +15,8 @@
 //! 3. `<machine>/` — Machine-specific overrides (highest priority)
 
 use indexmap::IndexMap;
-use std::path::PathBuf;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 /// Classify tracked files into tiers and merge by priority.
 ///
@@ -125,11 +126,340 @@ pub(crate) fn build_override_map(
     overrides
 }
 
+/// A directory that can be symlinked as a whole because all its files
+/// belong to the same tier.
+#[derive(Debug, Clone)]
+pub(crate) struct DirOwner {
+    pub tier: String,
+    /// Repo-relative directory path (e.g., `"base/home/.config/nvim"`).
+    pub repo_dir: PathBuf,
+}
+
+/// Check if a target directory is blocked from being a dir-symlink.
+///
+/// The following directories are never dir-symlinked:
+/// - The user's home directory (`~`)
+/// - The root directory (`/`)
+/// - Sensitive system directories (`/etc`, `/usr`, `/sys`, `/proc`)
+pub(crate) fn target_dir_blocked(target_dir: &Path, home: &Path) -> bool {
+    let sensitive: &[&Path] = &[
+        Path::new("/etc"),
+        Path::new("/usr"),
+        Path::new("/sys"),
+        Path::new("/proc"),
+    ];
+    target_dir == home || target_dir == Path::new("/") || sensitive.contains(&target_dir)
+}
+
+/// Compute which directories can be dir-symlinks (fully owned by one tier).
+///
+/// A directory `D` is a dir-owner candidate when all files under `D` in the
+/// merged tier map come from the same tier. Among candidates, the deepest
+/// ones are chosen (`~/.config/nvim` over `~/.config`) to avoid overlapping
+/// dir-owners.
+///
+/// Returns a map from `target_dir` → [`DirOwner`], preserving insertion
+/// order (deepest first).
+pub(crate) fn compute_dir_owners(
+    merged: &IndexMap<PathBuf, (String, String)>,
+    home: &Path,
+) -> IndexMap<PathBuf, DirOwner> {
+    // Phase 1: collect candidate directories with their tier sets and file counts.
+    // A directory must have at least 2 tracked files under it to be a dir-symlink
+    // candidate (a single file is better handled as a regular file-level symlink).
+    struct CandidateInfo {
+        tiers: BTreeSet<String>,
+        file_count: usize,
+    }
+
+    let mut candidates: IndexMap<PathBuf, CandidateInfo> = IndexMap::new();
+
+    for (target, (tier, _)) in merged {
+        let mut current = target.parent();
+        while let Some(ancestor) = current {
+            let entry = candidates
+                .entry(ancestor.to_path_buf())
+                .or_insert(CandidateInfo {
+                    tiers: BTreeSet::new(),
+                    file_count: 0,
+                });
+            entry.tiers.insert(tier.clone());
+            entry.file_count += 1;
+            if ancestor == Path::new("/") {
+                break;
+            }
+            current = ancestor.parent();
+        }
+    }
+
+    // Phase 2: select non-overlapping dir-owners (deepest first)
+    let mut sorted: Vec<(usize, &PathBuf, &CandidateInfo)> = candidates
+        .iter()
+        .map(|(path, info)| (path.components().count(), path, info))
+        .collect();
+    sorted.sort_by_key(|(depth, _, _)| std::cmp::Reverse(*depth));
+
+    let mut dir_owners: IndexMap<PathBuf, DirOwner> = IndexMap::new();
+    let mut covered: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
+    for (_, target_dir, info) in &sorted {
+        if info.tiers.len() != 1 {
+            continue;
+        }
+        // Require at least 2 tracked files under this directory to justify a
+        // dir-symlink. A single file is cleaner as a file-level symlink.
+        if info.file_count < 2 {
+            continue;
+        }
+        if covered.contains(*target_dir) {
+            continue;
+        }
+        if target_dir_blocked(target_dir, home) {
+            continue;
+        }
+
+        let Some(tier) = info.tiers.iter().next().cloned() else {
+            continue;
+        };
+        if let Ok(repo_relative) = crate::paths::target_to_repo(target_dir) {
+            let repo_dir = PathBuf::from(&tier).join(&repo_relative);
+            dir_owners.insert(
+                (*target_dir).clone(),
+                DirOwner {
+                    tier: tier.clone(),
+                    repo_dir,
+                },
+            );
+            // Mark ancestors as covered to avoid overlapping dir-owners
+            let mut current = (*target_dir).parent();
+            while let Some(ancestor) = current {
+                covered.insert(ancestor.to_path_buf());
+                if ancestor == Path::new("/") {
+                    break;
+                }
+                current = ancestor.parent();
+            }
+        }
+    }
+
+    dir_owners
+}
+
 #[cfg(test)]
 #[allow(unused_doc_comments)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    // ── target_dir_blocked tests ──
+
+    #[test]
+    fn test_target_dir_blocked_home() {
+        crate::tests::with_test_home(|home| {
+            assert!(target_dir_blocked(home, home));
+        });
+    }
+
+    #[test]
+    fn test_target_dir_blocked_root() {
+        crate::tests::with_test_home(|home| {
+            assert!(target_dir_blocked(Path::new("/"), home));
+        });
+    }
+
+    #[test]
+    fn test_target_dir_blocked_sensitive() {
+        crate::tests::with_test_home(|home| {
+            assert!(target_dir_blocked(Path::new("/etc"), home));
+            assert!(target_dir_blocked(Path::new("/usr"), home));
+            assert!(target_dir_blocked(Path::new("/sys"), home));
+            assert!(target_dir_blocked(Path::new("/proc"), home));
+        });
+    }
+
+    #[test]
+    fn test_target_dir_not_blocked_subdir() {
+        crate::tests::with_test_home(|home| {
+            assert!(!target_dir_blocked(&home.join(".config"), home));
+            assert!(!target_dir_blocked(&home.join(".config/nvim"), home));
+        });
+    }
+
+    #[test]
+    fn test_target_dir_not_blocked_system_subdir() {
+        crate::tests::with_test_home(|home| {
+            // /etc/ssh is NOT /etc — not blocked
+            assert!(!target_dir_blocked(Path::new("/etc/ssh"), home));
+        });
+    }
+
+    // ── compute_dir_owners tests ──
+
+    #[test]
+    fn test_compute_dir_owners_all_in_one_tier() {
+        crate::tests::with_test_home(|home| {
+            let mut merged = IndexMap::new();
+            let nvim_dir = home.join(".config/nvim");
+            merged.insert(
+                nvim_dir.join("init.lua"),
+                (
+                    "base".to_string(),
+                    "base/home/.config/nvim/init.lua".to_string(),
+                ),
+            );
+            merged.insert(
+                nvim_dir.join("plugins.lua"),
+                (
+                    "base".to_string(),
+                    "base/home/.config/nvim/plugins.lua".to_string(),
+                ),
+            );
+            let dir_owners = compute_dir_owners(&merged, home);
+            assert_eq!(dir_owners.len(), 1);
+            let owner = dir_owners.get(&nvim_dir).unwrap();
+            assert_eq!(owner.tier, "base");
+            assert_eq!(owner.repo_dir, PathBuf::from("base/home/.config/nvim"));
+        });
+    }
+
+    #[test]
+    fn test_compute_dir_owners_mixed_tiers() {
+        crate::tests::with_test_home(|home| {
+            let mut merged = IndexMap::new();
+            let nvim_dir = home.join(".config/nvim");
+            // Same file from different tiers — machine wins in merged
+            merged.insert(
+                nvim_dir.join("init.lua"),
+                (
+                    "macbook".to_string(),
+                    "macbook/home/.config/nvim/init.lua".to_string(),
+                ),
+            );
+            // Different file under same dir from base tier only
+            merged.insert(
+                nvim_dir.join("plugins.lua"),
+                (
+                    "base".to_string(),
+                    "base/home/.config/nvim/plugins.lua".to_string(),
+                ),
+            );
+            let dir_owners = compute_dir_owners(&merged, home);
+            // nvim dir has files from both base and macbook → mixed → no dir-owner
+            let owner = dir_owners.get(&nvim_dir);
+            assert!(owner.is_none(), "mixed tiers should produce no dir-owner");
+        });
+    }
+
+    #[test]
+    fn test_compute_dir_owners_nested_dirs_deepest_wins() {
+        crate::tests::with_test_home(|home| {
+            let mut merged = IndexMap::new();
+            let config_dir = home.join(".config");
+            let nvim_dir = config_dir.join("nvim");
+            merged.insert(
+                nvim_dir.join("init.lua"),
+                (
+                    "base".to_string(),
+                    "base/home/.config/nvim/init.lua".to_string(),
+                ),
+            );
+            merged.insert(
+                nvim_dir.join("plugins.lua"),
+                (
+                    "base".to_string(),
+                    "base/home/.config/nvim/plugins.lua".to_string(),
+                ),
+            );
+            let dir_owners = compute_dir_owners(&merged, home);
+            // Both .config and .config/nvim are candidates, but only deepest (nvim) is selected
+            assert!(
+                dir_owners.get(&nvim_dir).is_some(),
+                "nvim dir should be selected"
+            );
+            assert!(
+                dir_owners.get(&config_dir).is_none(),
+                "config dir should not be selected (covered by nvim)"
+            );
+        });
+    }
+
+    #[test]
+    fn test_compute_dir_owners_single_file_per_dir() {
+        crate::tests::with_test_home(|home| {
+            let mut merged = IndexMap::new();
+            // One file per subdirectory → each subdirectory has 1 file (below threshold)
+            // but .config has 2 files total → selected
+            merged.insert(
+                home.join(".config/a/file.txt"),
+                (
+                    "base".to_string(),
+                    "base/home/.config/a/file.txt".to_string(),
+                ),
+            );
+            merged.insert(
+                home.join(".config/b/file.txt"),
+                (
+                    "base".to_string(),
+                    "base/home/.config/b/file.txt".to_string(),
+                ),
+            );
+            let dir_owners = compute_dir_owners(&merged, home);
+            // Both a/ and b/ have only 1 file each → below threshold → skipped
+            // .config has 2 files, both from base → selected
+            let config_dir = home.join(".config");
+            assert!(
+                dir_owners.contains_key(&config_dir),
+                ".config should be selected with 2 tracked files"
+            );
+            assert_eq!(dir_owners.len(), 1);
+        });
+    }
+
+    #[test]
+    fn test_compute_dir_owners_blocked_at_home() {
+        crate::tests::with_test_home(|home| {
+            let mut merged = IndexMap::new();
+            merged.insert(
+                home.join(".vimrc"),
+                ("base".to_string(), "base/home/.vimrc".to_string()),
+            );
+            merged.insert(
+                home.join(".zshrc"),
+                ("base".to_string(), "base/home/.zshrc".to_string()),
+            );
+            let dir_owners = compute_dir_owners(&merged, home);
+            // Home dir is blocked — no dir-owner
+            assert!(dir_owners.get(home).is_none(), "home dir should be blocked");
+        });
+    }
+
+    #[test]
+    fn test_compute_dir_owners_subdir_of_home_not_blocked() {
+        crate::tests::with_test_home(|home| {
+            let mut merged = IndexMap::new();
+            merged.insert(
+                home.join(".config/nvim/init.lua"),
+                (
+                    "base".to_string(),
+                    "base/home/.config/nvim/init.lua".to_string(),
+                ),
+            );
+            merged.insert(
+                home.join(".config/nvim/plugins.lua"),
+                (
+                    "base".to_string(),
+                    "base/home/.config/nvim/plugins.lua".to_string(),
+                ),
+            );
+            let dir_owners = compute_dir_owners(&merged, home);
+            // .config/nvim is NOT blocked
+            let nvim_dir = home.join(".config/nvim");
+            assert!(
+                dir_owners.contains_key(&nvim_dir),
+                "subdir of home should not be blocked"
+            );
+        });
+    }
 
     // ── Property test generators ──
 

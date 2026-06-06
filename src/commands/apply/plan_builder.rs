@@ -18,6 +18,7 @@ use crate::plan::{Action, Plan};
 
 use super::inspect::{TargetState, inspect_target};
 use super::orphan_detection::{OrphanDetectionInput, detect_orphans_and_build_removals};
+use super::tiers::DirOwner;
 
 /// Input data for building an `apply` plan.
 pub(crate) struct ApplyPlanInput {
@@ -28,6 +29,8 @@ pub(crate) struct ApplyPlanInput {
     /// IndexMap preserves insertion order for deterministic iteration.
     pub merged: IndexMap<PathBuf, (String, String)>,
     pub override_map: IndexMap<PathBuf, String>,
+    /// Directories that can be symlinked as a whole (fully owned by one tier).
+    pub dir_owners: IndexMap<PathBuf, DirOwner>,
     pub config: Config,
     /// When true, allow replacing directories with symlinks (requires backup).
     /// When false, directory replacements are skipped with a warning.
@@ -39,10 +42,20 @@ pub(crate) struct ApplyPlanInput {
     pub follow_symlinks: bool,
 }
 
+/// Per-directory result for console output.
+#[derive(Clone, Debug)]
+pub(crate) struct DirResult {
+    pub(crate) target_dir: PathBuf,
+    pub(crate) tier: String,
+    pub(crate) applied: bool,
+    pub(crate) skipped: bool,
+}
+
 /// Output of `build_apply_plan`.
 pub(crate) struct ApplyPlanOutput {
     pub plan: Plan,
     pub file_results: Vec<FileResult>,
+    pub dir_results: Vec<DirResult>,
     /// Orphan entries: (repo_relative_path, target_path_string).
     pub orphans: Vec<(String, String)>,
 }
@@ -76,8 +89,132 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
     // action ordering in dry-run output across runs.
     let mut created_parents = IndexSet::new();
 
-    // Process each merged file
+    // ── Phase 1: Dir-symlinks (before file-level processing) ──
+    let mut skip_set: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut dir_results: Vec<DirResult> = Vec::new();
+
+    for (target_dir, owner) in &input.dir_owners {
+        // Mark all descendant files as covered by this dir-symlink
+        for (target, _) in &input.merged {
+            if target.starts_with(target_dir) {
+                skip_set.insert(target.clone());
+            }
+        }
+
+        let repo_absolute = input.repo_path.join(&owner.repo_dir);
+        let target = target_dir.to_path_buf();
+
+        let state = match inspect_target(&target, &repo_absolute)? {
+            TargetState::Correct => {
+                dir_results.push(DirResult {
+                    target_dir: target.clone(),
+                    tier: owner.tier.clone(),
+                    applied: false,
+                    skipped: true,
+                });
+                continue;
+            }
+            TargetState::CircularSymlink => {
+                plan = plan.with(Action::RemoveSymlink {
+                    path: target.clone(),
+                });
+                plan = plan.with(Action::CreateSymlink {
+                    target: repo_absolute.clone(),
+                    link: target.clone(),
+                    backup_path: None,
+                });
+                TargetState::CircularSymlink
+            }
+            TargetState::NeedsSymlink => {
+                if let Some(parent) = target.parent() {
+                    created_parents.insert(parent.to_path_buf());
+                }
+                plan = plan.with(Action::CreateSymlink {
+                    target: repo_absolute.clone(),
+                    link: target.clone(),
+                    backup_path: None,
+                });
+                TargetState::NeedsSymlink
+            }
+            TargetState::NeedsBackup => {
+                if let Some(parent) = target.parent() {
+                    created_parents.insert(parent.to_path_buf());
+                }
+                let backup_ts = crate::backups::backup_timestamp();
+                let backup_dest = crate::backups::backup_dest_for(
+                    &target,
+                    &input.home,
+                    &input.state_path,
+                    &backup_ts,
+                );
+                plan = plan.with(Action::Backup {
+                    source: target.clone(),
+                    dest: backup_dest.clone(),
+                });
+                plan = plan.with(Action::CreateSymlink {
+                    target: repo_absolute.clone(),
+                    link: target.clone(),
+                    backup_path: Some(backup_dest.clone()),
+                });
+                TargetState::NeedsBackup
+            }
+            TargetState::NeedsBackupDir(dir_path) => {
+                if !input.force {
+                    warn!(
+                        "skipping directory-to-symlink replacement at {} (use --force to allow)",
+                        dir_path
+                    );
+                    dir_results.push(DirResult {
+                        target_dir: target.clone(),
+                        tier: owner.tier.clone(),
+                        applied: false,
+                        skipped: true,
+                    });
+                    // Remove this dir's files from skip_set since the dir wasn't applied
+                    for (merged_target, _) in &input.merged {
+                        if merged_target.starts_with(&target) {
+                            skip_set.remove(merged_target);
+                        }
+                    }
+                    continue;
+                }
+                if let Some(parent) = target.parent() {
+                    created_parents.insert(parent.to_path_buf());
+                }
+                let backup_ts = crate::backups::backup_timestamp();
+                let backup_dest = crate::backups::backup_dest_for(
+                    &target,
+                    &input.home,
+                    &input.state_path,
+                    &backup_ts,
+                );
+                plan = plan.with(Action::BackupDir {
+                    source: target.clone(),
+                    dest: backup_dest.clone(),
+                    follow_symlinks: input.follow_symlinks,
+                });
+                plan = plan.with(Action::CreateSymlink {
+                    target: repo_absolute.clone(),
+                    link: target.clone(),
+                    backup_path: Some(backup_dest.clone()),
+                });
+                TargetState::NeedsBackupDir(dir_path)
+            }
+        };
+
+        dir_results.push(DirResult {
+            target_dir: target.clone(),
+            tier: owner.tier.clone(),
+            applied: state != TargetState::Correct,
+            skipped: false,
+        });
+    }
+
+    // ── Phase 2: File-level fallback ──
     for (target_path, (tier, repo_relative_path)) in &input.merged {
+        if skip_set.contains(target_path) {
+            continue;
+        }
         let repo_absolute_path = input.repo_path.join(repo_relative_path);
         let target = target_path.to_path_buf();
 
@@ -217,6 +354,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
     let orphan_input = OrphanDetectionInput {
         merged: &input.merged,
         config: &input.config,
+        dir_owners: &input.dir_owners,
     };
     let orphan_output = detect_orphans_and_build_removals(&orphan_input);
 
@@ -239,6 +377,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
     Ok(ApplyPlanOutput {
         plan: plan.build(),
         file_results,
+        dir_results,
         orphans: orphan_output.orphans,
     })
 }
@@ -401,6 +540,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -447,6 +587,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -495,6 +636,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -543,6 +685,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -593,6 +736,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -643,6 +787,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: true,
                 follow_symlinks: false,
@@ -722,6 +867,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -786,6 +932,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -878,6 +1025,7 @@ mod tests {
                 home: home.clone(),
                 merged: merged.clone(),
                 override_map: override_map.clone(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -1011,6 +1159,7 @@ mod tests {
                 home: home.clone(),
                 merged: merged.clone(),
                 override_map: override_map.clone(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -1067,6 +1216,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -1127,6 +1277,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -1187,6 +1338,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -1242,6 +1394,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: true,
                 follow_symlinks: false,
@@ -1362,6 +1515,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -1467,6 +1621,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,
@@ -1547,6 +1702,7 @@ mod tests {
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
+                dir_owners: IndexMap::new(),
                 config,
                 force: false,
                 follow_symlinks: false,

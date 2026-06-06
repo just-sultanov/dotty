@@ -9,7 +9,7 @@ A minimal dotfiles manager for multiple machines.
 ## Features
 
 - **Tier-based organization** — `base/`, `<platform>/`, `<machine>/` directories with priority override
-- **File-level symlinks** — each managed file gets its own symlink, not whole-directory stow-style
+- **File & directory symlinks** — individual files get file-level symlinks; directories with 2+ tracked files from a single tier get a single directory-level symlink
 - **No config files** — the repo structure IS the config
 - **Crash-safe** — atomic operations with automatic rollback on failure
 - **Backup verification** — SHA-256 integrity checks on all backups
@@ -124,31 +124,87 @@ Machine tiers (`work`, `macbook`) are set by the user via `dotty config machine 
 
 ```
 $ dotty apply --dry-run
+[dry-run] dir-symlink created - ~/.config/nvim/ → ~/.dotty/macos/home/.config/nvim/
 [dry-run] symlink created - ~/.vimrc → ~/.dotty/macos/home/.vimrc
 
 Overrides:
 [dry-run] macos - ~/.vimrc
 
-1 would be applied, 1 override, 0 skipped (unchanged)
+Directory symlinks:
+  ~/.config/nvim/  (2 files)
+
+1 would be applied, 1 directory, 1 override, 0 skipped (unchanged)
 ```
 
 The `Overrides:` block lists files that override lower-priority tiers
 (in the example above, the `macos` platform tier replaces `base` for
 `~/.vimrc`). The actual symlink action is shown in the regular
 `[dry-run] <action>` line; the override block highlights which tier
-wins. Run without `--dry-run` to actually apply — output looks similar
+wins. Directory symlinks are listed separately under `Directory symlinks:`.
+
+Run without `--dry-run` to actually apply — output looks similar
 but adds a `done` line and drops the `[dry-run]` prefix:
 
 ```
 $ dotty apply
+✓ dir-symlink created - ~/.config/nvim/ → ~/.dotty/macos/home/.config/nvim/
 ✓ symlink created - ~/.vimrc → ~/.dotty/macos/home/.vimrc
 
 Overrides:
 macos - ~/.vimrc
 
+Directory symlinks:
+  ~/.config/nvim/  (2 files)
+
 done
-1 applied, 1 override, 0 skipped (unchanged)
+1 applied, 1 directory, 1 override, 0 skipped (unchanged)
 ```
+
+## Directory Symlinks
+
+When a directory contains 2+ tracked files from the same tier, `dotty apply` creates a
+single directory-level symlink instead of individual file-level symlinks. This reduces
+the number of symlinks in your home directory and preserves directory structure for
+tools that scan config directories (e.g., `nvim`, `kitty`).
+
+```
+~/.dotty/
+├── base/
+│   └── home/
+│       └── .config/nvim/
+│           ├── init.lua
+│           └── lsp.lua
+└── macos/
+    └── home/
+        └── .config/kitty/
+            ├── kitty.conf
+            └── theme.conf
+```
+
+After `dotty apply`:
+
+```
+~/.config/nvim/  → ~/.dotty/base/home/.config/nvim/   (dir-symlink, 2 files)
+~/.config/kitty/ → ~/.dotty/macos/home/.config/kitty/  (dir-symlink, 2 files)
+```
+
+Directories with only one tracked file still get a file-level symlink. Nested directory
+symlinks are deduplicated — if a parent directory qualifies, child directories are
+skipped automatically.
+
+### Managed entries
+
+Directory symlinks are tracked in `config.managed` with a trailing `/` to distinguish
+them from file entries:
+
+```
+home/.config/nvim/ → /home/user/.config/nvim/
+home/.vimrc        → /home/user/.vimrc
+```
+
+This convention also enables orphan detection for directory entries — stale directory
+entries (files or dirs that are no longer in the repo) are detected and removed on
+`dotty apply`.
 
 ## Tier Priority
 
@@ -165,7 +221,7 @@ done
 | `dotty init [<git_url>] [--machine <name>]`                                        | Bootstrap a new repo or clone an existing one          |
 | `dotty add <path> [--machine <name>] [--platform <os>] [--commit <msg>] [--force]` | Add a file or directory to the repo                    |
 | `dotty remove <path> [--machine <name>] [--platform <os>] [--commit <msg>]`        | Remove a file from management (restores original)      |
-| `dotty apply [--dry-run] [--force] [--follow-symlinks] [--platform <os>]`          | Create symlinks for all tracked files                  |
+| `dotty apply [--dry-run] [--force] [--follow-symlinks] [--platform <os>]`          | Create symlinks (file + directory) for all tracked files |
 | `dotty status`                                                                     | Show repo status, conflicts, broken links, backup size |
 | `dotty clean [--keep <n>] [--before <date>] [-y]`                                  | Remove old backups                                     |
 | `dotty config machine <name>`                                                      | Set the current machine name                           |
@@ -176,7 +232,7 @@ done
 - **Backup verification** — files > 1KB are SHA-256 verified after backup
 - **Circular detection** — symlink chains are checked before creation (max 15 hops)
 - **Rollback** — plan-based execution rolls back completed actions on any failure
-- **Orphan detection** — `dotty apply` detects and removes managed files no longer in the repo
+- **Orphan detection** — `dotty apply` detects and removes managed files and directory entries no longer in the repo
 - **Symlink traversal prevention** — directory walkers skip symlinked directories
 
 ## Environment Variables

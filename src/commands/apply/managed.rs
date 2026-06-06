@@ -1,18 +1,36 @@
 use indexmap::IndexMap;
+use std::path::Path;
 
 /// Rebuild the managed map from tracked files.
 pub(crate) fn rebuild_managed_map(tracked_files: &[String]) -> IndexMap<String, String> {
     let mut managed = IndexMap::new();
 
     for file in tracked_files {
-        let repo_path = std::path::PathBuf::from(file);
-        if let Ok(target) = crate::paths::repo_to_target(&repo_path) {
+        let repo_path = Path::new(file);
+        if let Ok(target) = crate::paths::repo_to_target(repo_path) {
             let target_str = crate::paths::format_target_display(&target);
             managed.insert(file.clone(), target_str);
         }
     }
 
     managed
+}
+
+/// Add a directory entry to the managed map.
+///
+/// Key format: `"<repo-relative-dir>/"` (trailing `/`).
+/// Value format: `"<target-dir>/"` (trailing `/`).
+///
+/// These trailing-slash entries distinguish directory symlinks from
+/// file-level symlinks during orphan detection and plan building.
+pub(crate) fn add_dir_entry(
+    managed: &mut IndexMap<String, String>,
+    repo_dir: &Path,
+    target_dir: &Path,
+) {
+    let key = format!("{}/", repo_dir.to_string_lossy());
+    let value = format!("{}/", target_dir.to_string_lossy());
+    managed.insert(key, value);
 }
 
 #[cfg(test)]

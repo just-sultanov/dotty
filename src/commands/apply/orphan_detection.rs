@@ -11,7 +11,26 @@
 //! currently tracked files, ensuring consistent key format (repo_relative_path
 //! strings) across both sources and avoiding mismatches from tuple
 //! extraction in `merged.values()`.
+//!
+//! ## Dir-entry coverage
+//!
+//! A file is also considered tracked if its `repo_relative_path` starts with a
+//! dir-entry key (keys ending with `/`) in `config.managed`. This accounts
+//! for cases where a directory symlink was applied in a previous run and the
+//! individual file entries are no longer stored in the managed map.
+//!
+//! Additionally, `dir_owners` from the current run provide in-flight coverage:
+//! files whose target path is a descendant of a dir-owner's target dir are
+//! not orphans, even if the dir-entry hasn't been written to config yet.
+//!
+//! ## Stale dir-entries
+//!
+//! A dir-entry `D` in `config.managed` is stale if no tracked file in `merged`
+//! has a `repo_relative_path` that starts with `D`'s key. Stale dir-entries
+//! are reported as orphans so the corresponding directory symlinks are
+//! cleaned up on the next apply.
 
+use crate::commands::apply::tiers::DirOwner;
 use crate::config::Config;
 use crate::paths::expand_tilde;
 use crate::plan::Action;
@@ -24,6 +43,9 @@ use tracing::warn;
 pub(crate) struct OrphanDetectionInput<'a> {
     pub merged: &'a IndexMap<PathBuf, (String, String)>,
     pub config: &'a Config,
+    /// Dir-owners for this run (in-flight coverage before entries are written
+    /// to `config.managed`). Files under these dirs are not orphans.
+    pub dir_owners: &'a IndexMap<PathBuf, DirOwner>,
 }
 
 /// Output of orphan detection.
@@ -40,24 +62,71 @@ pub(crate) struct OrphanDetectionOutput {
 /// Detect orphan managed entries and produce removal actions.
 ///
 /// Orphans are files whose `repo_relative_path` appears in `merged` but not in
-/// `config.managed`. For each orphan that still exists on disk, an
-/// `OrphanRemoved` action is produced. The executor determines the file
-/// type (symlink, file, directory) at execution time from the live
-/// filesystem.
+/// `config.managed`, and not covered by any dir-entry or dir-owner.
+/// For each orphan that still exists on disk, an `OrphanRemoved` action is
+/// produced. The executor determines the file type (symlink, file, directory)
+/// at execution time from the live filesystem.
+///
+/// Stale dir-entries in `config.managed` are also detected: a dir-entry whose
+/// key has no descendant in `merged` is reported as an orphan and removed.
 pub(crate) fn detect_orphans_and_build_removals(
     input: &OrphanDetectionInput,
 ) -> OrphanDetectionOutput {
     // Build tracked_set from config.managed keys to ensure consistent
     // key format (repo_relative_path strings) across both sources.
     let tracked_set: HashSet<&String> = input.config.managed.keys().collect();
+
+    // Collect dir-entry prefixes from config.managed (keys ending with '/').
+    let dir_entry_prefixes: Vec<&str> = input
+        .config
+        .managed
+        .keys()
+        .filter(|k| k.ends_with('/'))
+        .map(|s| s.as_str())
+        .collect();
+
+    // Collect dir_owner target prefixes for in-flight coverage.
+    let dir_owner_targets: Vec<&PathBuf> = input.dir_owners.keys().collect();
+
     let mut orphans: Vec<(String, String)> = Vec::new();
 
     for (target_path, (_tier, repo_relative_path)) in input.merged {
-        if !tracked_set.contains(repo_relative_path) {
-            orphans.push((
-                repo_relative_path.clone(),
-                target_path.to_string_lossy().to_string(),
-            ));
+        if tracked_set.contains(repo_relative_path) {
+            continue;
+        }
+        // Check if covered by a dir-entry in config.managed
+        if dir_entry_prefixes
+            .iter()
+            .any(|prefix| repo_relative_path.starts_with(*prefix))
+        {
+            continue;
+        }
+        // Check if covered by an in-flight dir-owner
+        if dir_owner_targets
+            .iter()
+            .any(|d| target_path.starts_with(*d))
+        {
+            continue;
+        }
+        orphans.push((
+            repo_relative_path.clone(),
+            target_path.to_string_lossy().to_string(),
+        ));
+    }
+
+    // ── Stale dir-entry detection ──
+    // A dir-entry (key ending with '/') is stale if no merged file's
+    // repo_relative_path starts with its key.
+    let merged_repo_paths: HashSet<&String> = input.merged.values().map(|(_, rp)| rp).collect();
+
+    for (key, value) in &input.config.managed {
+        if !key.ends_with('/') {
+            continue;
+        }
+        let covered = merged_repo_paths.iter().any(|rp| rp.starts_with(key));
+        if !covered {
+            let target_dir = value.trim_end_matches('/');
+            orphans.push((key.clone(), target_dir.to_string()));
         }
     }
 
@@ -112,6 +181,7 @@ mod tests {
         let input = OrphanDetectionInput {
             merged: &merged,
             config: &config,
+            dir_owners: &IndexMap::new(),
         };
         let output = detect_orphans_and_build_removals(&input);
 
@@ -139,6 +209,7 @@ mod tests {
         let input = OrphanDetectionInput {
             merged: &merged,
             config: &config,
+            dir_owners: &IndexMap::new(),
         };
         let output = detect_orphans_and_build_removals(&input);
 
@@ -169,6 +240,7 @@ mod tests {
         let input = OrphanDetectionInput {
             merged: &merged,
             config: &config,
+            dir_owners: &IndexMap::new(),
         };
         let output = detect_orphans_and_build_removals(&input);
 
@@ -199,6 +271,7 @@ mod tests {
         let input = OrphanDetectionInput {
             merged: &merged,
             config: &config,
+            dir_owners: &IndexMap::new(),
         };
         let output = detect_orphans_and_build_removals(&input);
 
@@ -229,6 +302,7 @@ mod tests {
         let input = OrphanDetectionInput {
             merged: &merged,
             config: &config,
+            dir_owners: &IndexMap::new(),
         };
         let output = detect_orphans_and_build_removals(&input);
 
