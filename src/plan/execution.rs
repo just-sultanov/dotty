@@ -766,7 +766,8 @@ pub(crate) fn verify_backup_integrity(
     }
 
     const HASH_VERIFICATION_THRESHOLD: u64 = 1024;
-    if source_size > HASH_VERIFICATION_THRESHOLD {
+    let needs_hash = dest_size > HASH_VERIFICATION_THRESHOLD;
+    if needs_hash {
         let source_hash = match expected_source_hash {
             Some(h) => h.to_string(),
             None => compute_file_hash(source)?,
