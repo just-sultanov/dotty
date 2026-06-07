@@ -52,7 +52,7 @@ pub fn run() -> Result<(), DottyError> {
     }
 
     // Broken symlinks
-    let broken = find_broken_symlinks(repo_path, config);
+    let broken = find_broken_symlinks(config);
     if broken.is_empty() {
         println!("Broken:    0");
     } else {
@@ -176,7 +176,7 @@ fn git_status_summary(repo_path: &Path) -> Result<String, DottyError> {
 /// Find broken symlinks from the managed map.
 ///
 /// Returns a list of (target_path, repo_relative_path, reason).
-fn find_broken_symlinks(_repo_path: &Path, config: &Config) -> Vec<(String, String, String)> {
+fn find_broken_symlinks(config: &Config) -> Vec<(String, String, String)> {
     let mut broken = Vec::new();
 
     for (repo_relative_path, target_ref) in &config.managed {
