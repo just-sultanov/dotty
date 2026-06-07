@@ -3,6 +3,7 @@ _.path = [{ path = "./bin", tools = true }]
 
 [tools]
 rust = { version = "1.96.0", components = "rustfmt,clippy,llvm-tools-preview" }
+rust-analyzer = "latest"
 
 ##
 # General
