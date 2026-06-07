@@ -1,18 +1,23 @@
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
 /// Terminal symbols with ASCII fallback.
 ///
 /// When the terminal doesn't support Unicode (detected via `TERM` env var),
 /// falls back to ASCII equivalents.
+#[derive(Copy, Clone)]
 struct Symbols {
     check: &'static str,
     warn: &'static str,
 }
 
-static SYMBOLS: OnceLock<Symbols> = OnceLock::new();
+static SYMBOLS: Mutex<Option<Symbols>> = Mutex::new(None);
 
-fn get() -> &'static Symbols {
-    SYMBOLS.get_or_init(|| {
+fn get() -> Symbols {
+    let mut lock = match SYMBOLS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *lock.get_or_insert_with(|| {
         if supports_unicode() {
             Symbols {
                 check: "✓",
@@ -25,6 +30,19 @@ fn get() -> &'static Symbols {
             }
         }
     })
+}
+
+/// Reset cached symbols (test-only).
+///
+/// Allows tests to reinitialize symbols with a different terminal
+/// environment without requiring serial execution.
+#[cfg(test)]
+pub fn reset() {
+    let mut lock = match SYMBOLS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *lock = None;
 }
 
 /// Check if the terminal likely supports Unicode.
@@ -85,27 +103,34 @@ pub fn warn() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
 
     #[test]
-    // Requires serial execution: OnceLock initialization in SYMBOLS depends on
-    // TERM env var which may differ across parallel threads.
-    #[serial]
     fn test_symbols_are_nonempty() {
+        reset();
         assert!(!check().is_empty());
         assert!(!warn().is_empty());
     }
 
     #[test]
-    fn test_dumb_terminal_ascii() {
-        // Note: OnceLock can't be reset, so we test the heuristic directly.
-        let result = temp_env::with_var("TERM", Some("dumb"), || !supports_unicode());
-        assert!(result);
+    fn test_dumb_terminal_ascii_symbols() {
+        temp_env::with_var("TERM", Some("dumb"), || {
+            reset();
+            assert_eq!(check(), "[+]");
+            assert_eq!(warn(), "[!]");
+        });
+    }
+
+    #[test]
+    fn test_dumb_terminal_ascii_heuristic() {
+        temp_env::with_var("TERM", Some("dumb"), || {
+            assert!(!supports_unicode());
+        });
     }
 
     #[test]
     fn test_xterm_unicode() {
-        let result = temp_env::with_var("TERM", Some("xterm-256color"), supports_unicode);
-        assert!(result);
+        temp_env::with_var("TERM", Some("xterm-256color"), || {
+            assert!(supports_unicode());
+        });
     }
 }

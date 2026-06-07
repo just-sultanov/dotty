@@ -35,7 +35,6 @@ percent-encoding = "2"
 insta = "1"
 nix = { version = "0.31", features = ["fs"] }
 proptest = "1"
-serial_test = "3"
 temp-env = "0.3"
 tempfile = "3"
 
