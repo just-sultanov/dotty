@@ -286,7 +286,7 @@ impl Plan {
     }
 
     /// Add an action to the plan.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn add(&mut self, action: Action) {
         self.actions.push(action);
     }
