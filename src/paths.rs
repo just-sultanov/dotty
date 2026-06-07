@@ -121,23 +121,29 @@ fn validate_no_dotdot(result: &Path, original: &Path) -> Result<(), DottyError> 
 
 /// Return the user's home directory.
 ///
-/// Checks `$HOME` first (works on all platforms, including Windows when
-/// running under Git Bash, WSL, or cross-platform tooling), then falls
-/// back to `home::home_dir()` which consults platform-specific mechanisms
-/// (`USERPROFILE` on Windows, `$HOME` on Unix).
+/// Reads the `$HOME` environment variable directly. This ensures that
+/// tests modifying `$HOME` via `temp_env` reliably observe the new value
+/// on every call, unlike cached approaches.
 ///
-/// The explicit `$HOME` check ensures that setting `$HOME` in tests via
-/// `temp_env` is respected on all platforms.
+/// Returns `MissingHomeDirectory` error if `$HOME` is unset or empty.
+///
+/// ## Platform Support
+///
+/// Relies on `$HOME` being set. This is the case on all supported targets
+/// (Linux, macOS, Windows with Git Bash/WSL/MSYS2). Unsupported platforms
+/// fail at compile time.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub fn home_dir() -> Result<PathBuf, DottyError> {
-    if let Some(home) = std::env::var_os("HOME")
-        && !home.is_empty()
-    {
-        return Ok(PathBuf::from(home));
+    match std::env::var_os("HOME") {
+        Some(home) if !home.is_empty() => Ok(PathBuf::from(home)),
+        _ => Err(DottyError::MissingHomeDirectory(
+            "$HOME is unset or empty".into(),
+        )),
     }
-    home::home_dir().ok_or_else(|| {
-        DottyError::MissingHomeDirectory("unable to determine user home directory".into())
-    })
 }
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+compile_error!("dotty requires $HOME to be set; only Linux, macOS, and Windows are supported");
 
 /// Normalize path separators to forward slashes (`/`).
 ///
@@ -508,11 +514,10 @@ mod tests {
 
     #[test]
     fn test_format_target_display_home_dir_failure() {
-        // When HOME is unset and home::home_dir() returns None,
-        // format_target_display falls back to the full path.
+        // When HOME is unset, format_target_display falls back to the full path.
         let path = PathBuf::from("/home/user/.vimrc");
         let formatted = temp_env::with_var_unset("HOME", || format_target_display(&path));
-        // Falls back to full path (or whatever home_dir resolves to)
+        // Falls back to full path
         assert!(!formatted.is_empty());
     }
 
