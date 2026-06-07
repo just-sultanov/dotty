@@ -33,228 +33,289 @@ pub(crate) fn action_execute(
     repo_state: &mut RepoState,
 ) -> Result<(), DottyError> {
     match action {
-        Action::CreateDir { path } => {
-            fs::create_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
-        }
-        Action::Backup { source, dest } => {
-            let parent = dest.parent().ok_or_else(|| DottyError::PathResolution {
-                path: dest.to_path_buf(),
-                reason: format!("cannot determine parent of backup path: {}", dest.display()),
-            })?;
-            fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
-            // Compute source hash *before* copy_file to avoid false-positive
-            // BackupHashMismatch when the source file is modified concurrently
-            // (e.g., editor autosave) between copy and verification.
-            let source_hash = compute_file_hash(source).ok();
-            copy_file(source, dest)?;
-            verify_backup_integrity(source, dest, source_hash.as_deref())?;
-        }
+        Action::CreateDir { path } => exec_create_dir(path)?,
+        Action::Backup { source, dest } => exec_backup(source, dest)?,
         Action::BackupDir {
             source,
             dest,
             follow_symlinks,
-        } => {
-            let parent = dest.parent().ok_or_else(|| DottyError::PathResolution {
-                path: dest.to_path_buf(),
-                reason: format!(
-                    "cannot determine parent of backup dir path: {}",
-                    dest.display()
-                ),
-            })?;
-            fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
-            copy_dir(source, dest, *follow_symlinks)?;
-        }
-        Action::CopyFile { source, dest } => {
-            let parent = dest.parent();
-            if let Some(p) = parent {
-                fs::create_dir_all(p).map_err(|e| io_error_with_path(e, p))?;
-            }
-            // Remove existing symlink so fs::copy creates a regular file
-            // (fs::copy follows symlinks, writing to the target instead of
-            // replacing the symlink itself).
-            if is_symlink(dest) {
-                fs::remove_file(dest).map_err(|e| io_error_with_path(e, dest))?;
-            }
-            copy_file(source, dest)?;
-        }
-        Action::CreateSymlink { target, link, .. } => {
-            let parent = link.parent();
-            if let Some(p) = parent {
-                fs::create_dir_all(p).map_err(|e| io_error_with_path(e, p))?;
-            }
-            if symlink::would_be_circular(target, link) {
-                return Err(DottyError::CircularSymlink { path: link.clone() });
-            }
+        } => exec_backup_dir(source, dest, *follow_symlinks)?,
+        Action::CopyFile { source, dest } => exec_copy_file(source, dest)?,
+        Action::CreateSymlink { target, link, .. } => exec_create_symlink(target, link)?,
+        Action::RemoveFile { path } => exec_remove_file(path)?,
+        Action::RemoveDir { path } => exec_remove_dir(path)?,
+        Action::RemoveSymlink { path } => exec_remove_symlink(path)?,
+        Action::OrphanRemoved { path } => exec_orphan_removed(path)?,
+        Action::RestoreBackup { source, dest } => exec_restore_backup(source, dest)?,
+        Action::RestoreDir { source, dest } => exec_restore_dir(source, dest)?,
+        Action::GitAdd { paths } => git::git_add(&repo_state.repo_path, paths)?,
+        Action::GitCommit { message } => git::git_commit(repo_state, message)?,
+        Action::Confirm { prompt, actions } => exec_confirm(prompt, actions, repo_state)?,
+        Action::AbortGate { prompt } => exec_abort_gate(prompt)?,
+    }
+    Ok(())
+}
 
-            // Create symlink at a temp path first to avoid data loss.
-            // If this fails, the original file at `link` is untouched.
-            let temp_name = format!(
-                ".{}_dotty_tmp",
-                link.file_name().unwrap_or_default().to_string_lossy()
+// ---------------------------------------------------------------------------
+// Extracted action execution functions
+// ---------------------------------------------------------------------------
+
+/// Create a directory (and all parents).
+fn exec_create_dir(path: &Path) -> Result<(), DottyError> {
+    fs::create_dir_all(path).map_err(|e| io_error_with_path(e, path))
+}
+
+/// Backup a file to the backup directory with integrity verification.
+///
+/// Computes the source hash *before* `copy_file` to avoid false-positive
+/// `BackupHashMismatch` when the source file is modified concurrently
+/// (e.g., editor autosave) between copy and verification.
+fn exec_backup(source: &Path, dest: &Path) -> Result<(), DottyError> {
+    let parent = dest.parent().ok_or_else(|| DottyError::PathResolution {
+        path: dest.to_path_buf(),
+        reason: format!("cannot determine parent of backup path: {}", dest.display()),
+    })?;
+    fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
+    let source_hash = compute_file_hash(source).ok();
+    copy_file(source, dest)?;
+    verify_backup_integrity(source, dest, source_hash.as_deref())
+}
+
+/// Recursively backup a directory to the backup location.
+fn exec_backup_dir(source: &Path, dest: &Path, follow_symlinks: bool) -> Result<(), DottyError> {
+    let parent = dest.parent().ok_or_else(|| DottyError::PathResolution {
+        path: dest.to_path_buf(),
+        reason: format!(
+            "cannot determine parent of backup dir path: {}",
+            dest.display()
+        ),
+    })?;
+    fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
+    copy_dir(source, dest, follow_symlinks)
+}
+
+/// Copy a file, creating parent directories and replacing existing symlinks first.
+///
+/// Removes an existing symlink at `dest` before copying so `fs::copy` creates
+/// a regular file (fs::copy follows symlinks, writing to the target instead of
+/// replacing the symlink itself).
+fn exec_copy_file(source: &Path, dest: &Path) -> Result<(), DottyError> {
+    let parent = dest.parent();
+    if let Some(p) = parent {
+        fs::create_dir_all(p).map_err(|e| io_error_with_path(e, p))?;
+    }
+    if is_symlink(dest) {
+        fs::remove_file(dest).map_err(|e| io_error_with_path(e, dest))?;
+    }
+    copy_file(source, dest)
+}
+
+/// Create a symlink, with data-loss protection via a temp path.
+///
+/// Creates the symlink at a temp path first to avoid data loss. If creation
+/// fails, the original file at `link` is untouched. For non-symlink directories,
+/// `rename(2)` cannot replace atomically on Unix (ENOTEMPTY), so the directory
+/// is removed first. Then the symlink is atomically renamed into place.
+fn exec_create_symlink(target: &Path, link: &Path) -> Result<(), DottyError> {
+    let parent = link.parent();
+    if let Some(p) = parent {
+        fs::create_dir_all(p).map_err(|e| io_error_with_path(e, p))?;
+    }
+    if symlink::would_be_circular(target, link) {
+        return Err(DottyError::CircularSymlink {
+            path: link.to_path_buf(),
+        });
+    }
+    let temp_name = format!(
+        ".{}_dotty_tmp",
+        link.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let temp_path = link.with_file_name(temp_name);
+    if let Err(e) = crate::symlink::create_symlink(target, &temp_path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(io_error_with_path(e, link));
+    }
+    if fs::symlink_metadata(link).is_ok() && link.is_dir() && !crate::symlink::is_symlink(link) {
+        fs::remove_dir_all(link).map_err(|e| io_error_with_path(e, link))?;
+    }
+    fs::rename(&temp_path, link).map_err(|e| io_error_with_path(e, link))?;
+    Ok(())
+}
+
+/// Remove a file, if it exists.
+fn exec_remove_file(path: &Path) -> Result<(), DottyError> {
+    if path.exists() {
+        fs::remove_file(path).map_err(|e| io_error_with_path(e, path))?;
+    }
+    Ok(())
+}
+
+/// Remove a directory (recursively), if it exists.
+fn exec_remove_dir(path: &Path) -> Result<(), DottyError> {
+    if path.exists() {
+        fs::remove_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
+    }
+    Ok(())
+}
+
+/// Remove a symlink, warning if it points to a directory (content preserved).
+fn exec_remove_symlink(path: &Path) -> Result<(), DottyError> {
+    if is_symlink(path) {
+        if let Ok(target) = fs::read_link(path)
+            && target.is_dir()
+        {
+            warn!(
+                "Removing symlink to directory: {} → {} (directory content preserved)",
+                path.display(),
+                target.display()
             );
-            let temp_path = link.with_file_name(temp_name);
-            if let Err(e) = crate::symlink::create_symlink(target, &temp_path) {
-                let _ = fs::remove_file(&temp_path);
-                return Err(io_error_with_path(e, link));
-            }
-
-            // For non-symlink directories, rename(2) cannot replace
-            // atomically on Unix (ENOTEMPTY). Remove the directory.
-            if fs::symlink_metadata(link).is_ok()
-                && link.is_dir()
-                && !crate::symlink::is_symlink(link)
-            {
-                fs::remove_dir_all(link).map_err(|e| io_error_with_path(e, link))?;
-            }
-
-            // Atomically place the symlink at the target location.
-            // For files and symlinks, rename unlinks the destination
-            // and replaces it in one atomic operation.
-            fs::rename(&temp_path, link).map_err(|e| io_error_with_path(e, link))?;
         }
-        Action::RemoveFile { path } => {
-            if path.exists() {
+        remove_symlink_file(path).map_err(|e| io_error_with_path(e, path))?;
+    }
+    Ok(())
+}
+
+/// Remove an orphan target (file/dir/symlink), detecting the file type at
+/// execution time.
+///
+/// File type is determined at execution time so the action remains correct even
+/// if the orphan changed between plan-build and execution. Uses
+/// `symlink_metadata` to detect symlinks without following them.
+fn exec_orphan_removed(path: &Path) -> Result<(), DottyError> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            let file_type = meta.file_type();
+            if file_type.is_symlink() {
+                remove_symlink_file(path).map_err(|e| io_error_with_path(e, path))?;
+            } else if file_type.is_dir() {
+                fs::remove_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
+            } else {
                 fs::remove_file(path).map_err(|e| io_error_with_path(e, path))?;
             }
         }
-        Action::RemoveDir { path } => {
-            if path.exists() {
-                fs::remove_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(io_error_with_path(e, path));
+        }
+    }
+    Ok(())
+}
+
+/// Restore a backup file, with TOCTOU race mitigation.
+///
+/// TOCTOU race condition mitigation: the backup could have been deleted by
+/// a concurrent `dotty clean` between plan construction and rollback execution.
+/// Existence is checked at rollback time for graceful degradation.
+fn exec_restore_backup(source: &Path, dest: &Path) -> Result<(), DottyError> {
+    if is_symlink(dest) {
+        remove_symlink_file(dest).map_err(|e| io_error_with_path(e, dest))?;
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
+    }
+    if !source.exists() {
+        warn!(
+            "Backup file deleted during rollback (race with `dotty clean`), \
+            preserving original intent by removing symlink: {}",
+            dest.display()
+        );
+        return Ok(());
+    }
+    copy_file(source, dest)
+}
+
+/// Restore a backup directory, with TOCTOU race mitigation.
+///
+/// TOCTOU race condition mitigation: the backup could have been deleted by
+/// a concurrent `dotty clean` between plan construction and rollback execution.
+/// Existence is checked at rollback time for graceful degradation. Always
+/// follows symlinks since the backup was created with the actual content.
+fn exec_restore_dir(source: &Path, dest: &Path) -> Result<(), DottyError> {
+    if dest.exists() {
+        if dest.is_dir() && !is_symlink(dest) {
+            fs::remove_dir_all(dest).map_err(|e| io_error_with_path(e, dest))?;
+        } else if is_symlink(dest) {
+            remove_symlink_file(dest).map_err(|e| io_error_with_path(e, dest))?;
+        }
+    }
+    if !source.exists() {
+        warn!(
+            "Backup directory deleted during rollback (race with `dotty clean`), \
+            skipping restoration: {}",
+            source.display()
+        );
+        return Ok(());
+    }
+    copy_dir(source, dest, true)
+}
+
+/// Execute actions guarded by a confirmation prompt.
+///
+/// When `prompt` is `None`, child actions execute unconditionally. When
+/// `prompt` is `Some`, execution is interactive: if the user confirms, each
+/// action is executed with rollback on partial failure; if declined, all
+/// guarded actions are skipped. In non-interactive contexts the guarded
+/// actions are silently skipped.
+fn exec_confirm(
+    prompt: &Option<String>,
+    actions: &[Action],
+    repo_state: &mut RepoState,
+) -> Result<(), DottyError> {
+    match prompt {
+        None => {
+            for action in actions {
+                action_execute(action, repo_state)?;
             }
         }
-        Action::RemoveSymlink { path } => {
-            if is_symlink(path) {
-                if let Ok(target) = fs::read_link(path)
-                    && target.is_dir()
-                {
-                    warn!(
-                        "Removing symlink to directory: {} → {} (directory content preserved)",
-                        path.display(),
-                        target.display()
-                    );
-                }
-                remove_symlink_file(path).map_err(|e| io_error_with_path(e, path))?;
-            }
-        }
-        Action::OrphanRemoved { path } => {
-            // Detect file type at execution time so the action remains correct
-            // even if the orphan changed between plan-build and execution.
-            // Use symlink_metadata to detect symlinks without following them.
-            match fs::symlink_metadata(path) {
-                Ok(meta) => {
-                    let file_type = meta.file_type();
-                    if file_type.is_symlink() {
-                        remove_symlink_file(path).map_err(|e| io_error_with_path(e, path))?;
-                    } else if file_type.is_dir() {
-                        fs::remove_dir_all(path).map_err(|e| io_error_with_path(e, path))?;
-                    } else {
-                        // Regular file, or special (socket/fifo) — best-effort removal.
-                        fs::remove_file(path).map_err(|e| io_error_with_path(e, path))?;
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    // Target already gone — nothing to do, treat as success.
-                }
-                Err(e) => {
-                    return Err(io_error_with_path(e, path));
-                }
-            }
-        }
-        Action::RestoreBackup { source, dest } => {
-            if is_symlink(dest) {
-                remove_symlink_file(dest).map_err(|e| io_error_with_path(e, dest))?;
-            }
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent).map_err(|e| io_error_with_path(e, parent))?;
-            }
-            // TOCTOU race condition mitigation: backup could have been deleted by
-            // concurrent `dotty clean` between plan construction and rollback execution.
-            // Check existence at rollback time to provide graceful degradation.
-            if !source.exists() {
-                warn!(
-                    "Backup file deleted during rollback (race with `dotty clean`), \
-                    preserving original intent by removing symlink: {}",
-                    dest.display()
-                );
-                // Backup was deleted, just ensure symlink is removed (original intent)
-                return Ok(());
-            }
-            copy_file(source, dest)?;
-        }
-        Action::RestoreDir { source, dest } => {
-            // Remove existing directory (if any) before restoring backup
-            if dest.exists() {
-                if dest.is_dir() && !is_symlink(dest) {
-                    fs::remove_dir_all(dest).map_err(|e| io_error_with_path(e, dest))?;
-                } else if is_symlink(dest) {
-                    remove_symlink_file(dest).map_err(|e| io_error_with_path(e, dest))?;
-                }
-            }
-            // TOCTOU race condition mitigation: backup could have been deleted by
-            // concurrent `dotty clean` between plan construction and rollback execution.
-            // Check existence at rollback time for graceful degradation.
-            if !source.exists() {
-                warn!(
-                    "Backup directory deleted during rollback (race with `dotty clean`), \
-                    skipping restoration: {}",
-                    source.display()
-                );
-                return Ok(());
-            }
-            // RestoreDir always follows symlinks: the backup was created
-            // with the actual content, so we restore it faithfully.
-            copy_dir(source, dest, true)?;
-        }
-        Action::GitAdd { paths } => git::git_add(&repo_state.repo_path, paths)?,
-        Action::GitCommit { message } => git::git_commit(repo_state, message)?,
-        Action::Confirm { prompt, actions } => match prompt {
-            None => {
-                for action in actions {
-                    action_execute(action, repo_state)?;
-                }
-            }
-            Some(p) => {
-                if !crate::prompt::is_interactive() {
-                    warn!(
-                        "non-interactive context: skipping {} action(s) guarded by confirm",
-                        actions.len()
-                    );
-                    return Ok(());
-                }
-                let confirmed = crate::prompt::prompt_confirm(p, true)?;
-                if !confirmed {
-                    return Ok(());
-                }
-                let mut completed: Vec<usize> = Vec::new();
-                for (i, action) in actions.iter().enumerate() {
-                    match action_execute(action, repo_state) {
-                        Ok(()) => {
-                            completed.push(i);
-                        }
-                        Err(e) => {
-                            for &idx in completed.iter().rev() {
-                                if let Some(action) = actions.get(idx)
-                                    && let Some(rollback) = action_rollback(action)
-                                {
-                                    let _ = action_execute(&rollback, repo_state);
-                                }
-                            }
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-        },
-        Action::AbortGate { prompt } => {
+        Some(p) => {
             if !crate::prompt::is_interactive() {
-                warn!("non-interactive context: abort gate skipped — \"{prompt}\"");
+                warn!(
+                    "non-interactive context: skipping {} action(s) guarded by confirm",
+                    actions.len()
+                );
                 return Ok(());
             }
-            let confirmed = crate::prompt::prompt_confirm(prompt, true)?;
+            let confirmed = crate::prompt::prompt_confirm(p, true)?;
             if !confirmed {
-                return Err(DottyError::Cancelled);
+                return Ok(());
+            }
+            let mut completed: Vec<usize> = Vec::new();
+            for (i, action) in actions.iter().enumerate() {
+                match action_execute(action, repo_state) {
+                    Ok(()) => {
+                        completed.push(i);
+                    }
+                    Err(e) => {
+                        for &idx in completed.iter().rev() {
+                            if let Some(action) = actions.get(idx)
+                                && let Some(rollback) = action_rollback(action)
+                            {
+                                let _ = action_execute(&rollback, repo_state);
+                            }
+                        }
+                        return Err(e);
+                    }
+                }
             }
         }
+    }
+    Ok(())
+}
+
+/// Gate that aborts the entire plan execution if the user declines.
+///
+/// Unlike `Confirm` (which skips guarded actions on decline), this returns
+/// an error that propagates up and triggers rollback of all previously
+/// completed actions. In non-interactive contexts, the gate is skipped
+/// with a warning.
+fn exec_abort_gate(prompt: &str) -> Result<(), DottyError> {
+    if !crate::prompt::is_interactive() {
+        warn!("non-interactive context: abort gate skipped — \"{prompt}\"");
+        return Ok(());
+    }
+    let confirmed = crate::prompt::prompt_confirm(prompt, true)?;
+    if !confirmed {
+        return Err(DottyError::Cancelled);
     }
     Ok(())
 }
@@ -1683,5 +1744,73 @@ mod tests {
                 .filter(|a| matches!(a, Action::GitCommit { .. }))
                 .count()
         );
+    }
+
+    // -------------------------------------------------------------------
+    // Per-variant unit tests for extracted functions
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_exec_create_dir_creates_nested() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a").join("b").join("c");
+        exec_create_dir(&path).unwrap();
+        assert!(path.is_dir());
+    }
+
+    #[test]
+    fn test_exec_create_dir_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("existing");
+        fs::create_dir_all(&path).unwrap();
+        exec_create_dir(&path).unwrap();
+        assert!(path.is_dir());
+    }
+
+    #[test]
+    fn test_exec_remove_file_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.txt");
+        exec_remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_exec_remove_file_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("target.txt");
+        fs::write(&path, "data").unwrap();
+        exec_remove_file(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_exec_remove_dir_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent_dir");
+        exec_remove_dir(&path).unwrap();
+    }
+
+    #[test]
+    fn test_exec_remove_dir_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("target_dir");
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("inner.txt"), "data").unwrap();
+        exec_remove_dir(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_exec_orphan_removed_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ghost");
+        exec_orphan_removed(&path).unwrap();
+    }
+
+    #[test]
+    fn test_exec_abort_gate_non_interactive() {
+        temp_env::with_var("CI", Some("1"), || {
+            exec_abort_gate("continue?").unwrap();
+        });
     }
 }
