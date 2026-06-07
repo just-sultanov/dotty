@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
-use crate::convention::classify_tier;
+use crate::convention::{classify_tier, tier_priority};
 use crate::error::DottyError;
 use crate::fs_utils::calculate_dir_size;
 use crate::git;
@@ -311,11 +311,6 @@ fn find_tier_conflicts(
     }
 
     conflicts
-}
-
-/// Return a numeric priority for a tier name (higher = more priority).
-fn tier_priority(tier: &str) -> u32 {
-    crate::convention::tier_priority(tier)
 }
 
 /// Find files in inactive tiers (platforms/machines not active on this system).
