@@ -150,24 +150,24 @@ pub(crate) fn git_commit(repo_state: &mut RepoState, message: &str) -> Result<()
 
 /// Tracked files in the repository.
 ///
+/// Lazily yields file paths from null-delimited `git ls-files -z` output,
+/// avoiding an O(n) `Vec<String>` allocation at construction time.
+///
 /// Uses `-z` for null-delimited output so that filenames containing spaces,
 /// newlines, or non-ASCII characters are parsed correctly without git's quoted
 /// output mode interfering.
 pub(crate) struct TrackedFiles {
-    items: std::vec::IntoIter<String>,
+    bytes: Vec<u8>,
+    pos: usize,
 }
 
 impl TrackedFiles {
     /// List all tracked files in the repository.
     pub fn new(dir: &Path) -> Result<Self, DottyError> {
         let output = git_run(dir, &["ls-files", "-z"])?;
-        let items: Vec<String> = output
-            .split('\0')
-            .filter(|s| !s.is_empty())
-            .map(String::from)
-            .collect();
         Ok(TrackedFiles {
-            items: items.into_iter(),
+            bytes: output.into_bytes(),
+            pos: 0,
         })
     }
 }
@@ -176,11 +176,20 @@ impl Iterator for TrackedFiles {
     type Item = String;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.items.next()
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.items.size_hint()
+        while self.pos < self.bytes.len() {
+            let start = self.pos;
+            while self.pos < self.bytes.len() && self.bytes.get(self.pos) != Some(&0) {
+                self.pos += 1;
+            }
+            let slice = self.bytes.get(start..self.pos)?;
+            if self.pos < self.bytes.len() {
+                self.pos += 1;
+            }
+            if !slice.is_empty() {
+                return Some(String::from_utf8_lossy(slice).into_owned());
+            }
+        }
+        None
     }
 }
 

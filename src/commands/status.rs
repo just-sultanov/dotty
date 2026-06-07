@@ -263,7 +263,7 @@ fn find_tier_conflicts(
     platform: &Option<String>,
 ) -> Vec<(String, String, String)> {
     let tracked_files = match git::TrackedFiles::new(repo_path) {
-        Ok(iter) => iter.collect::<Vec<_>>(),
+        Ok(iter) => iter,
         Err(_) => return Vec::new(),
     };
 
@@ -271,15 +271,12 @@ fn find_tier_conflicts(
     // IndexMap preserves insertion order, ensuring deterministic conflict output.
     let mut all_tiers: IndexMap<PathBuf, Vec<(String, String)>> = IndexMap::new();
 
-    for file in &tracked_files {
-        let repo_path_buf = PathBuf::from(file);
+    for file in tracked_files {
+        let repo_path_buf = PathBuf::from(&file);
         if let Ok(target) = repo_to_target(&repo_path_buf) {
-            let tier = classify_tier(file, machine, platform);
+            let tier = classify_tier(&file, machine, platform);
             if let Some(tier_name) = tier {
-                all_tiers
-                    .entry(target)
-                    .or_default()
-                    .push((tier_name, file.clone()));
+                all_tiers.entry(target).or_default().push((tier_name, file));
             }
         }
     }
@@ -330,13 +327,13 @@ fn find_inactive_tiers(
     platform: &Option<String>,
 ) -> Vec<(String, String, String)> {
     let tracked_files = match git::TrackedFiles::new(repo_path) {
-        Ok(iter) => iter.collect::<Vec<_>>(),
+        Ok(iter) => iter,
         Err(_) => return Vec::new(),
     };
 
     let mut inactive = Vec::new();
 
-    for file in &tracked_files {
+    for file in tracked_files {
         // Extract tier from the first path component
         let tier = match file.split('/').next() {
             Some("base") => continue, // base is always active
@@ -349,10 +346,10 @@ fn find_inactive_tiers(
             platform.as_deref() == Some(tier.as_str()) || machine.as_deref() == Some(tier.as_str());
 
         if !is_active {
-            let repo_path_buf = PathBuf::from(file);
+            let repo_path_buf = PathBuf::from(&file);
             if let Ok(target) = repo_to_target(&repo_path_buf) {
                 let target_str = format_target_display(&target);
-                inactive.push((target_str, tier, file.clone()));
+                inactive.push((target_str, tier, file));
             }
         }
     }

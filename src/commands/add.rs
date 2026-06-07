@@ -103,7 +103,6 @@ pub fn run(
     }
 
     // Build conflict map from existing tracked files.
-    // Collects all files eagerly into a Vec before processing.
     let conflict_map = if repo.is_git_repo {
         match git::TrackedFiles::new(&repo_path) {
             Ok(iterator) => build_conflict_map(iterator),
@@ -573,12 +572,11 @@ fn collect_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> {
 /// Build a map from target path → list of repo-relative paths that manage it.
 /// Uses IndexMap to preserve insertion order for deterministic conflict display.
 ///
-/// This is the eager-evaluation version kept for backward compatibility with tests.
 /// Build a conflict map from tracked files.
 ///
 /// Consumes the iterator and folds entries into an IndexMap keyed by
-/// target path. The tracked files are collected eagerly by the caller;
-/// this function avoids intermediate allocations during map construction.
+/// target path. The lazy TrackedFiles iterator avoids intermediate allocations
+/// during map construction.
 fn build_conflict_map(files: git::TrackedFiles) -> indexmap::IndexMap<PathBuf, Vec<String>> {
     files
         .into_iter()
