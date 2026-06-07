@@ -12,6 +12,26 @@ use crate::error::DottyError;
 /// - 50 allows for pathological cases while preventing infinite traversal
 const MAX_WALK_DEPTH: u32 = 50;
 
+/// Resolve the start path for directory traversal.
+///
+/// If `dir` is a symlink, attempts to canonicalize it to the real target path.
+/// If the symlink is dangling (canonicalize fails), returns
+/// [`DottyError::InvalidTargetPath`] instead of silently falling back to the
+/// unresolved path (which produced "no files found").
+fn resolve_start_path(dir: &Path) -> Result<PathBuf, DottyError> {
+    if dir
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        fs::canonicalize(dir).map_err(|_| DottyError::InvalidTargetPath {
+            path: dir.display().to_string(),
+            reason: "dangling or inaccessible symlink".to_string(),
+        })
+    } else {
+        Ok(dir.to_path_buf())
+    }
+}
+
 /// Walk a directory and collect all file paths using an iterative approach.
 ///
 /// Uses an explicit `Vec<PathBuf>` work queue instead of recursion to prevent
@@ -28,17 +48,7 @@ const MAX_WALK_DEPTH: u32 = 50;
 /// grows on the heap, which can handle far wider directory trees than the
 /// call stack can handle deep ones.
 pub fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), DottyError> {
-    // Resolve the starting path: if it's a symlink to a directory, use the
-    // target so that traversal works correctly (walk_dir skips symlinked dirs
-    // during iteration, so we must resolve the initial path).
-    let start_path = if dir
-        .symlink_metadata()
-        .is_ok_and(|m| m.file_type().is_symlink())
-    {
-        fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
-    } else {
-        dir.to_path_buf()
-    };
+    let start_path = resolve_start_path(dir)?;
 
     // Iterative DFS using an explicit work queue (stack).
     let mut queue: Vec<(PathBuf, u32)> = vec![(start_path, 0)];
@@ -402,5 +412,43 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert!(files.iter().any(|f| f.file_name().unwrap() == "real.txt"));
         assert!(files.iter().any(|f| f.file_name().unwrap() == "link.txt"));
+    }
+
+    #[test]
+    fn test_walk_dir_dangling_symlink_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let dangling = dir.path().join("dangling");
+        let target = dir.path().join("nonexistent");
+        crate::symlink::create_symlink(&target, &dangling).unwrap();
+
+        let mut files = Vec::new();
+        let result = walk_dir(&dangling, &mut files);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DottyError::InvalidTargetPath { path: _, reason } => {
+                assert!(
+                    reason.contains("dangling"),
+                    "expected reason to mention dangling, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidTargetPath, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_walk_dir_valid_symlink_directory_still_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("file.txt"), "content").unwrap();
+
+        let link = dir.path().join("link_to_real");
+        crate::symlink::create_symlink(&real, &link).unwrap();
+
+        let mut files = Vec::new();
+        walk_dir(&link, &mut files).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_name().unwrap(), "file.txt");
     }
 }
