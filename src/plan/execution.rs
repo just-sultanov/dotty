@@ -1202,7 +1202,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(
+            &mut RepoState::new_for_git_test(
                 std::path::PathBuf::from("."),
                 std::path::PathBuf::from("."),
             ),
@@ -1240,7 +1240,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(
+            &mut RepoState::new_for_git_test(
                 std::path::PathBuf::from("."),
                 std::path::PathBuf::from("."),
             ),
@@ -1295,7 +1295,7 @@ mod tests {
         };
         let result = action_execute(
             &action,
-            &mut RepoState::new_for_git(
+            &mut RepoState::new_for_git_test(
                 std::path::PathBuf::from("."),
                 std::path::PathBuf::from("."),
             ),
@@ -1333,7 +1333,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+            &mut RepoState::new_for_git_test(PathBuf::from("."), PathBuf::from(".")),
         )
         .unwrap();
 
@@ -1353,7 +1353,7 @@ mod tests {
         };
         let result = action_execute(
             &action,
-            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+            &mut RepoState::new_for_git_test(PathBuf::from("."), PathBuf::from(".")),
         );
 
         assert!(
@@ -1379,7 +1379,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+            &mut RepoState::new_for_git_test(PathBuf::from("."), PathBuf::from(".")),
         )
         .unwrap();
 
@@ -1402,7 +1402,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+            &mut RepoState::new_for_git_test(PathBuf::from("."), PathBuf::from(".")),
         )
         .unwrap();
 
@@ -1430,7 +1430,7 @@ mod tests {
         };
         let result = action_execute(
             &action,
-            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+            &mut RepoState::new_for_git_test(PathBuf::from("."), PathBuf::from(".")),
         );
 
         assert!(result.is_err());
@@ -1456,7 +1456,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+            &mut RepoState::new_for_git_test(PathBuf::from("."), PathBuf::from(".")),
         )
         .unwrap();
 
@@ -1485,7 +1485,7 @@ mod tests {
         };
         let result = action_execute(
             &action,
-            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+            &mut RepoState::new_for_git_test(PathBuf::from("."), PathBuf::from(".")),
         );
 
         assert!(
@@ -1511,7 +1511,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+            &mut RepoState::new_for_git_test(PathBuf::from("."), PathBuf::from(".")),
         )
         .unwrap();
 
@@ -1541,7 +1541,7 @@ mod tests {
         };
         action_execute(
             &action,
-            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+            &mut RepoState::new_for_git_test(PathBuf::from("."), PathBuf::from(".")),
         )
         .unwrap();
 
@@ -1573,7 +1573,7 @@ mod tests {
         };
         let result = action_execute(
             &action,
-            &mut RepoState::new_for_git(PathBuf::from("."), PathBuf::from(".")),
+            &mut RepoState::new_for_git_test(PathBuf::from("."), PathBuf::from(".")),
         );
 
         assert!(result.is_err());
@@ -1607,7 +1607,7 @@ mod tests {
         let result = execute_plan(
             &plan,
             ExecuteMode::Normal,
-            &mut RepoState::new_for_git(dir.path().to_path_buf(), state),
+            &mut RepoState::new_for_git_test(dir.path().to_path_buf(), state),
         );
 
         assert!(
@@ -1639,7 +1639,7 @@ mod tests {
             link: link.clone(),
             backup_path: Some(backup.clone()),
         };
-        let mut repo_state = RepoState::new_for_git(PathBuf::from("."), PathBuf::from("."));
+        let mut repo_state = RepoState::new_for_git_test(PathBuf::from("."), PathBuf::from("."));
         action_execute(&action, &mut repo_state).unwrap();
         assert!(is_symlink(&link));
 
@@ -1721,7 +1721,7 @@ mod tests {
             .output()
             .unwrap();
 
-        let mut repo_state = RepoState::new_for_git(repo.clone(), state.clone());
+        let mut repo_state = RepoState::new_for_git_test(repo.clone(), state.clone());
 
         let result = execute_plan(&plan, ExecuteMode::Rollback, &mut repo_state);
 

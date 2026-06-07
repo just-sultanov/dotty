@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 /// # Parameters
 /// * `target` — the real-path of the file being backed up
 /// * `home` — the user's home directory
-/// * `state_path` — the dotty state directory (contains `backups/` subdirectory)
+/// * `backups_path` — the dotty backups directory
 /// * `ts` — the backup timestamp string (from [`backup_timestamp`])
-pub fn backup_dest_for(target: &Path, home: &Path, state_path: &Path, ts: &str) -> PathBuf {
-    let backup_base = state_path.join("backups").join(ts);
+pub fn backup_dest_for(target: &Path, home: &Path, backups_path: &Path, ts: &str) -> PathBuf {
+    let backup_base = backups_path.join(ts);
     if let Ok(relative) = target.strip_prefix(home) {
         backup_base.join(relative)
     } else {
@@ -33,16 +33,14 @@ pub fn backup_timestamp() -> String {
 }
 
 /// List backup directory names sorted by name (chronological order).
-pub fn list_backups(state_path: &Path) -> Vec<String> {
-    let backup_dir = state_path.join("backups");
-
-    if !backup_dir.is_dir() {
+pub fn list_backups(backups_path: &Path) -> Vec<String> {
+    if !backups_path.is_dir() {
         return Vec::new();
     }
 
     let mut backups = Vec::new();
 
-    for entry in fs::read_dir(&backup_dir)
+    for entry in fs::read_dir(backups_path)
         .ok()
         .into_iter()
         .flatten()
@@ -132,13 +130,11 @@ mod tests {
     #[test]
     fn test_list_backups_with_entries() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().to_path_buf();
-        let backup_dir = path.join("backups");
-        fs::create_dir_all(&backup_dir).unwrap();
-        fs::create_dir_all(backup_dir.join("2024-01-15T10-30-00")).unwrap();
-        fs::create_dir_all(backup_dir.join("2024-01-16T09-15-00")).unwrap();
+        let backups_path = dir.path().to_path_buf();
+        fs::create_dir_all(backups_path.join("2024-01-15T10-30-00")).unwrap();
+        fs::create_dir_all(backups_path.join("2024-01-16T09-15-00")).unwrap();
 
-        let backups = list_backups(&path);
+        let backups = list_backups(&backups_path);
         assert_eq!(backups.len(), 2);
         assert_eq!(backups[0], "2024-01-15T10-30-00");
         assert_eq!(backups[1], "2024-01-16T09-15-00");
@@ -147,16 +143,16 @@ mod tests {
     #[test]
     fn test_backup_dest_for_inside_home() {
         let home = Path::new("/home/user");
-        let state_path = Path::new("/home/user/.local/share/dotty");
+        let backups_path = Path::new("/home/user/.dotty/backups");
         let target = Path::new("/home/user/.config/alacritty/alacritty.toml");
         let ts = "2024-01-15T10-30-00-847";
 
-        let dest = backup_dest_for(target, home, state_path, ts);
+        let dest = backup_dest_for(target, home, backups_path, ts);
 
         assert_eq!(
             dest,
             PathBuf::from(
-                "/home/user/.local/share/dotty/backups/2024-01-15T10-30-00-847/.config/alacritty/alacritty.toml"
+                "/home/user/.dotty/backups/2024-01-15T10-30-00-847/.config/alacritty/alacritty.toml"
             )
         );
     }
@@ -164,32 +160,30 @@ mod tests {
     #[test]
     fn test_backup_dest_for_outside_home() {
         let home = Path::new("/home/user");
-        let state_path = Path::new("/home/user/.local/share/dotty");
+        let backups_path = Path::new("/home/user/.dotty/backups");
         let target = Path::new("/tmp/somefile");
         let ts = "2024-01-15T10-30-00-847";
 
-        let dest = backup_dest_for(target, home, state_path, ts);
+        let dest = backup_dest_for(target, home, backups_path, ts);
 
         assert_eq!(
             dest,
-            PathBuf::from("/home/user/.local/share/dotty/backups/2024-01-15T10-30-00-847/somefile")
+            PathBuf::from("/home/user/.dotty/backups/2024-01-15T10-30-00-847/somefile")
         );
     }
 
     #[test]
     fn test_backup_dest_for_root_relative() {
         let home = Path::new("/home/user");
-        let state_path = Path::new("/home/user/.local/share/dotty");
+        let backups_path = Path::new("/home/user/.dotty/backups");
         let target = Path::new("/etc/ssh/sshd_config");
         let ts = "2024-01-15T10-30-00-847";
 
-        let dest = backup_dest_for(target, home, state_path, ts);
+        let dest = backup_dest_for(target, home, backups_path, ts);
 
         assert_eq!(
             dest,
-            PathBuf::from(
-                "/home/user/.local/share/dotty/backups/2024-01-15T10-30-00-847/sshd_config"
-            )
+            PathBuf::from("/home/user/.dotty/backups/2024-01-15T10-30-00-847/sshd_config")
         );
     }
 }

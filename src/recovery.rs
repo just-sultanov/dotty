@@ -69,8 +69,18 @@ pub(crate) fn handle_valid_plan(ctx: &RecoveryContext) -> Result<(), DottyError>
             if !rollback_plan.is_empty() {
                 // Execute rollback without saving a pending plan to avoid
                 // nested pending plan confusion if rollback fails partway.
-                let mut repo_state =
-                    RepoState::new_for_git(ctx.plan.repo_path.clone(), ctx.state_path.clone());
+                #[allow(clippy::unwrap_used, clippy::expect_used)]
+                let dotty_home = ctx
+                    .state_path
+                    .parent()
+                    .expect("state_path must have a parent")
+                    .to_path_buf();
+                let mut repo_state = RepoState::new_for_git(
+                    ctx.plan.repo_path.clone(),
+                    ctx.state_path.clone(),
+                    dotty_home.join("config"),
+                    dotty_home.join("backups"),
+                );
                 plan::execute_plan(&rollback_plan, plan::ExecuteMode::Rollback, &mut repo_state)?;
                 println!("Rollback complete.");
             } else {
@@ -332,8 +342,9 @@ mod tests {
         let content = serde_json::to_string_pretty(&pending).unwrap();
         std::fs::write(state.join("pending_plan.json"), content).unwrap();
 
-        // Temporarily override DOTTY_STATE_HOME so check_pending_plan uses our state dir
-        let result = temp_env::with_var("DOTTY_STATE_HOME", Some(state.to_str().unwrap()), || {
+        // Temporarily override DOTTY_HOME so check_pending_plan uses our state dir
+        let dotty_home = state.parent().unwrap().to_str().unwrap().to_string();
+        let result = temp_env::with_var("DOTTY_HOME", Some(&dotty_home), || {
             check_pending_plan(Some(&RecoveryAction::Discard))
         });
         assert!(result.is_ok());
@@ -346,7 +357,8 @@ mod tests {
         let repo = dir.path().to_path_buf();
         save_dummy_plan(&state, &repo);
 
-        let result = temp_env::with_var("DOTTY_STATE_HOME", Some(state.to_str().unwrap()), || {
+        let dotty_home = state.parent().unwrap().to_str().unwrap().to_string();
+        let result = temp_env::with_var("DOTTY_HOME", Some(&dotty_home), || {
             check_pending_plan(Some(&RecoveryAction::Discard))
         });
         assert!(result.is_ok());
@@ -358,9 +370,9 @@ mod tests {
         let (_dir, state) = setup_state_with_repo();
 
         // No pending plan file exists
-        let result = temp_env::with_var("DOTTY_STATE_HOME", Some(state.to_str().unwrap()), || {
-            check_pending_plan(None)
-        });
+        let dotty_home = state.parent().unwrap().to_str().unwrap().to_string();
+        let result =
+            temp_env::with_var("DOTTY_HOME", Some(&dotty_home), || check_pending_plan(None));
         assert!(result.is_ok());
     }
 

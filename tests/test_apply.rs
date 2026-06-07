@@ -303,8 +303,8 @@ fn apply_backups_existing_regular_file() {
     // Target should now be a symlink
     env.assert_symlink(&target, &repo_file);
 
-    // Backup should exist in state/backups/
-    let backup_dir = env.state.join("backups");
+    // Backup should exist
+    let backup_dir = env.backups_dir();
     assert!(backup_dir.is_dir(), "backup dir not created");
 
     // Find the backup file
@@ -428,7 +428,7 @@ fn apply_dry_run_does_not_write_machine_to_config() {
 
     // Remove the machine entry from config.toml so resolve_machine
     // will attempt to write it during apply.
-    let config_path = env.state.join("config.toml");
+    let config_path = env.config_file();
     let mut config_content = std::fs::read_to_string(&config_path).unwrap();
     // Strip the machine line (handles both 'machine = "testbox"' and 'machine="testbox"')
     let lines: Vec<&str> = config_content.lines().collect();

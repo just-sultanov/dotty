@@ -23,7 +23,7 @@ use super::tiers::DirOwner;
 /// Input data for building an `apply` plan.
 pub(crate) struct ApplyPlanInput {
     pub repo_path: PathBuf,
-    pub state_path: PathBuf,
+    pub backups_path: PathBuf,
     pub home: PathBuf,
     /// Merged tier map, ordered base → platform → machine.
     /// IndexMap preserves insertion order for deterministic iteration.
@@ -144,7 +144,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 let backup_dest = crate::backups::backup_dest_for(
                     &target,
                     &input.home,
-                    &input.state_path,
+                    &input.backups_path,
                     &backup_ts,
                 );
                 plan = plan.with(Action::Backup {
@@ -185,7 +185,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 let backup_dest = crate::backups::backup_dest_for(
                     &target,
                     &input.home,
-                    &input.state_path,
+                    &input.backups_path,
                     &backup_ts,
                 );
                 plan = plan.with(Action::BackupDir {
@@ -267,7 +267,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 let backup_dest = crate::backups::backup_dest_for(
                     &target,
                     &input.home,
-                    &input.state_path,
+                    &input.backups_path,
                     &backup_ts,
                 );
                 plan = plan.with(Action::Backup {
@@ -305,7 +305,7 @@ pub(crate) fn build_apply_plan(input: &ApplyPlanInput) -> Result<ApplyPlanOutput
                 let backup_dest = crate::backups::backup_dest_for(
                     &target,
                     &input.home,
-                    &input.state_path,
+                    &input.backups_path,
                     &backup_ts,
                 );
                 plan = plan.with(Action::BackupDir {
@@ -536,7 +536,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -583,7 +583,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -632,7 +632,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -681,7 +681,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -732,7 +732,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -783,7 +783,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -863,7 +863,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -928,7 +928,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -1021,7 +1021,7 @@ mod tests {
 
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged: merged.clone(),
                 override_map: override_map.clone(),
@@ -1155,7 +1155,7 @@ mod tests {
 
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged: merged.clone(),
                 override_map: override_map.clone(),
@@ -1212,7 +1212,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -1273,7 +1273,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -1334,7 +1334,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -1390,7 +1390,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -1511,7 +1511,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -1617,7 +1617,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),
@@ -1698,7 +1698,7 @@ mod tests {
         crate::tests::with_test_home(|_| {
             let input = ApplyPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 merged,
                 override_map: IndexMap::new(),

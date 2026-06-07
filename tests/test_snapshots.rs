@@ -13,9 +13,9 @@ use std::process::Command;
 
 /// Run `dotty` with Unicode terminal forced (for stable symbols).
 fn run_unicode(env: &TestEnv, args: &[&str]) -> String {
+    let dotty_home = env.repo.parent().unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_dotty"))
-        .env("DOTTY_HOME", &env.repo)
-        .env("DOTTY_STATE_HOME", &env.state)
+        .env("DOTTY_HOME", dotty_home)
         .env("HOME", &env.home)
         .env("TERM", "xterm-256color")
         .args(args)

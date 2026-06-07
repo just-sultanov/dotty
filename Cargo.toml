@@ -23,7 +23,6 @@ indexmap = { version = "2", features = ["serde"] }
 toml = "1.1.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
-dir_spec = "0.5.2"
 symlink-rs = "1.0.0"
 path-slash = "0.2"
 pwd = "1"

@@ -30,7 +30,8 @@ pub fn run(
     let mut repo = RepoState::new()?;
 
     let repo_path = repo.repo_path.clone();
-    let state_path = repo.state_path.clone();
+    let config_path = repo.config_path.clone();
+    let backups_path = repo.backups_path.clone();
 
     // Expand ~ in the input path
     let target_path = expand_tilde(&path)?;
@@ -136,7 +137,7 @@ pub fn run(
     // Build the plan (pure function — no side effects)
     let input = AddPlanInput {
         repo_path: repo_path.clone(),
-        state_path: state_path.clone(),
+        backups_path: backups_path.clone(),
         home,
         scope,
         files_to_add,
@@ -160,7 +161,7 @@ pub fn run(
 
     // Write updated config only after successful plan execution.
     if !dry_run && !output.plan.is_empty() {
-        write_config(&state_path, &output.config)?;
+        write_config(&config_path, &output.config)?;
     }
 
     if !dry_run
@@ -188,7 +189,7 @@ pub fn run(
 /// unit testing.
 pub(crate) struct AddPlanInput {
     pub repo_path: PathBuf,
-    pub state_path: PathBuf,
+    pub backups_path: PathBuf,
     pub home: PathBuf,
     pub scope: String,
     pub files_to_add: Vec<PathBuf>,
@@ -292,7 +293,7 @@ pub(crate) fn build_add_plan(
             let dest = crate::backups::backup_dest_for(
                 target_file,
                 &input.home,
-                &input.state_path,
+                &input.backups_path,
                 &backup_ts,
             );
             file_actions.push(Action::Backup {
@@ -414,28 +415,7 @@ fn resolve_scope(
 ///
 /// When HOME is unset, the path is treated as non-standard.
 /// Check if a path follows a standard XDG pattern relative to `$HOME`.
-///
-/// Only paths under the user's home directory can match XDG conventions.
-/// Paths outside `$HOME` (e.g. `/etc`, `/opt`, `/var`) always return `false`
-/// because home-relative prefix stripping fails and the full path cannot
-/// satisfy the XDG patterns — use `is_sensitive_system_path` instead.
 fn is_standard_xdg_path(target_path: &Path) -> bool {
-    if let Some(dir) = dir_spec::config_home()
-        && target_path.starts_with(&dir)
-    {
-        return true;
-    }
-    if let Some(dir) = dir_spec::data_home()
-        && target_path.starts_with(&dir)
-    {
-        return true;
-    }
-    if let Some(dir) = dir_spec::cache_home()
-        && target_path.starts_with(&dir)
-    {
-        return true;
-    }
-
     let home = crate::paths::home_dir().ok();
     let rel_str = match home {
         Some(home) => {
@@ -872,7 +852,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "base".to_string(),
                 files_to_add: vec![target.clone()],
@@ -910,7 +890,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "base".to_string(),
                 files_to_add: vec![target.clone()],
@@ -954,7 +934,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "base".to_string(),
                 files_to_add: vec![f1.clone(), f2.clone()],
@@ -992,7 +972,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "macbook".to_string(),
                 files_to_add: vec![target.clone()],
@@ -1034,7 +1014,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "base".to_string(),
                 files_to_add: vec![target.clone()],
@@ -1077,7 +1057,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "base".to_string(),
                 files_to_add: vec![target.clone()],
@@ -1127,7 +1107,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "base".to_string(),
                 files_to_add: vec![target.clone()],
@@ -1238,76 +1218,6 @@ mod tests {
         temp_env::with_var_unset("HOME", || {
             assert!(!is_standard_xdg_path(Path::new("/some/path")));
         });
-    }
-
-    #[test]
-    fn test_is_standard_xdg_respects_xdg_config_home() {
-        let dir = test_dir();
-        let custom_config = dir.path().join("custom-config");
-        let home = dir.path().to_path_buf();
-        temp_env::with_vars(
-            vec![
-                ("HOME", Some(home.to_str().unwrap())),
-                ("XDG_CONFIG_HOME", Some(custom_config.to_str().unwrap())),
-            ],
-            || {
-                assert!(is_standard_xdg_path(&custom_config.join("nvim/init.lua")));
-                assert!(is_standard_xdg_path(&custom_config.join("app.conf")));
-            },
-        );
-    }
-
-    #[test]
-    fn test_is_standard_xdg_respects_xdg_data_home() {
-        let dir = test_dir();
-        let custom_data = dir.path().join("custom-data");
-        let home = dir.path().to_path_buf();
-        temp_env::with_vars(
-            vec![
-                ("HOME", Some(home.to_str().unwrap())),
-                ("XDG_DATA_HOME", Some(custom_data.to_str().unwrap())),
-            ],
-            || {
-                assert!(is_standard_xdg_path(
-                    &custom_data.join("applications/mimeapps.list")
-                ));
-            },
-        );
-    }
-
-    #[test]
-    fn test_is_standard_xdg_respects_xdg_cache_home() {
-        let dir = test_dir();
-        let custom_cache = dir.path().join("custom-cache");
-        let home = dir.path().to_path_buf();
-        temp_env::with_vars(
-            vec![
-                ("HOME", Some(home.to_str().unwrap())),
-                ("XDG_CACHE_HOME", Some(custom_cache.to_str().unwrap())),
-            ],
-            || {
-                assert!(is_standard_xdg_path(&custom_cache.join("wal")));
-            },
-        );
-    }
-
-    #[test]
-    fn test_is_standard_xdg_respects_xdg_config_home_outside_home() {
-        // Custom $XDG_CONFIG_HOME outside $HOME should still be recognized.
-        // Use a sibling directory under the temp root so the path is valid
-        // on all platforms (avoids Unix-specific paths like /tmp).
-        let dir = test_dir();
-        let home = dir.path().join("home");
-        let outside = dir.path().join("outside");
-        temp_env::with_vars(
-            vec![
-                ("HOME", Some(home.to_str().unwrap())),
-                ("XDG_CONFIG_HOME", Some(outside.to_str().unwrap())),
-            ],
-            || {
-                assert!(is_standard_xdg_path(&outside.join("nvim")));
-            },
-        );
     }
 
     // -- is_sensitive_system_path tests --
@@ -1486,7 +1396,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "base".to_string(),
                 files_to_add: vec![target],
@@ -1530,7 +1440,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: symlink_repo,
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "base".to_string(),
                 files_to_add: vec![target],
@@ -1570,7 +1480,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "macbook".to_string(),
                 files_to_add: vec![target.clone()],
@@ -1842,7 +1752,12 @@ mod tests {
         temp_env::with_var("CI", Some("1"), || {
             let result = crate::plan::action_execute(
                 &action,
-                &mut RepoState::new_for_git(base.clone(), base.clone()),
+                &mut RepoState::new_for_git(
+                    base.clone(),
+                    base.join("state"),
+                    base.join("config"),
+                    base.join("backups"),
+                ),
             );
             assert!(result.is_ok(), "AbortGate should skip in CI");
         });
@@ -1867,7 +1782,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "macbook".to_string(),
                 files_to_add: vec![target.clone()],
@@ -1913,7 +1828,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "base".to_string(),
                 files_to_add: vec![target.clone()],
@@ -1957,7 +1872,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "macbook".to_string(),
                 files_to_add: vec![target.clone()],
@@ -2000,7 +1915,7 @@ mod tests {
         temp_env::with_var("HOME", Some(home.to_str().unwrap()), || {
             let input = AddPlanInput {
                 repo_path: repo.clone(),
-                state_path: state.clone(),
+                backups_path: state.clone(),
                 home: home.clone(),
                 scope: "base".to_string(),
                 files_to_add: vec![target.clone()],

@@ -347,8 +347,12 @@ mod tests {
     #[test]
     fn git_check_identity_rejects_missing_identity() {
         let repo = create_repo_without_identity();
-        let mut repo_state =
-            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+        let mut repo_state = RepoState::new_for_git(
+            repo.path().to_path_buf(),
+            repo.path().join("state"),
+            repo.path().join("config"),
+            repo.path().join("backups"),
+        );
         let result = repo_state.validate_git_identity();
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -377,8 +381,12 @@ mod tests {
             .args(["config", "--local", "user.email", "test@example.com"])
             .output()
             .unwrap();
-        let mut repo_state =
-            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+        let mut repo_state = RepoState::new_for_git(
+            repo.path().to_path_buf(),
+            repo.path().join("state"),
+            repo.path().join("config"),
+            repo.path().join("backups"),
+        );
         assert!(repo_state.validate_git_identity().is_ok());
     }
 
@@ -436,8 +444,12 @@ mod tests {
             .args(["add", "test.txt"])
             .output()
             .unwrap();
-        let mut repo_state =
-            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+        let mut repo_state = RepoState::new_for_git(
+            repo.path().to_path_buf(),
+            repo.path().join("state"),
+            repo.path().join("config"),
+            repo.path().join("backups"),
+        );
         let result = git_commit(&mut repo_state, "test commit");
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -470,8 +482,12 @@ mod tests {
             .output()
             .unwrap();
 
-        let mut repo_state =
-            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+        let mut repo_state = RepoState::new_for_git(
+            repo.path().to_path_buf(),
+            repo.path().join("state"),
+            repo.path().join("config"),
+            repo.path().join("backups"),
+        );
         assert!(!repo_state.git_identity_valid);
 
         // First call: should validate and cache
@@ -499,8 +515,12 @@ mod tests {
             .output()
             .unwrap();
 
-        let mut repo_state =
-            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+        let mut repo_state = RepoState::new_for_git(
+            repo.path().to_path_buf(),
+            repo.path().join("state"),
+            repo.path().join("config"),
+            repo.path().join("backups"),
+        );
 
         // Validate and cache
         assert!(repo_state.validate_git_identity().is_ok());
@@ -519,8 +539,12 @@ mod tests {
     #[test]
     fn test_cached_identity_check_fails_when_invalid() {
         let repo = create_repo_without_identity();
-        let mut repo_state =
-            RepoState::new_for_git(repo.path().to_path_buf(), repo.path().to_path_buf());
+        let mut repo_state = RepoState::new_for_git(
+            repo.path().to_path_buf(),
+            repo.path().join("state"),
+            repo.path().join("config"),
+            repo.path().join("backups"),
+        );
 
         // First call: should fail (no identity)
         let result = repo_state.validate_git_identity();

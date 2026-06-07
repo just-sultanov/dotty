@@ -18,7 +18,7 @@ pub fn run() -> Result<(), DottyError> {
     repo.require_git()?;
 
     let repo_path = &repo.repo_path;
-    let state_path = &repo.state_path;
+    let backups_path = &repo.backups_path;
 
     // Read config
     let config = &repo.config;
@@ -63,8 +63,8 @@ pub fn run() -> Result<(), DottyError> {
     }
 
     // Backup size
-    let backup_size = calculate_dir_size(&state_path.join("backups"));
-    let backup_entries = count_backup_entries(state_path);
+    let backup_size = calculate_dir_size(backups_path);
+    let backup_entries = count_backup_entries(backups_path);
     if backup_size > 0 {
         let size_mb = backup_size as f64 / (1024.0 * 1024.0);
         println!("Backups:   {:.1} MB ({} entries)", size_mb, backup_entries);
@@ -230,16 +230,14 @@ fn find_broken_symlinks(config: &Config) -> Vec<(String, String, String)> {
 }
 
 /// Count total backup entries across all backup directories.
-fn count_backup_entries(state_path: &Path) -> usize {
-    let backup_dir = state_path.join("backups");
-
-    if !backup_dir.is_dir() {
+fn count_backup_entries(backups_path: &Path) -> usize {
+    if !backups_path.is_dir() {
         return 0;
     }
 
     let mut count = 0usize;
 
-    for entry in std::fs::read_dir(&backup_dir)
+    for entry in std::fs::read_dir(backups_path)
         .ok()
         .into_iter()
         .flatten()
@@ -385,43 +383,41 @@ mod tests {
     #[test]
     fn test_count_backup_entries_empty() {
         let dir = tempfile::tempdir().unwrap();
-        let state_path = dir.path();
-        assert_eq!(count_backup_entries(state_path), 0);
+        let backups_path = dir.path().join("backups");
+        assert_eq!(count_backup_entries(&backups_path), 0);
     }
 
     #[test]
     fn test_count_backup_entries_with_backups() {
         let dir = tempfile::tempdir().unwrap();
-        let state_path = dir.path();
-        let backup_dir = state_path.join("backups");
-        std::fs::create_dir_all(&backup_dir).unwrap();
+        let backups_path = dir.path().join("backups");
+        std::fs::create_dir_all(&backups_path).unwrap();
 
         // Create two backup snapshots, each with files
-        let snap1 = backup_dir.join("2024-01-15T10-00-00-000");
-        let snap2 = backup_dir.join("2024-01-16T10-00-00-000");
+        let snap1 = backups_path.join("2024-01-15T10-00-00-000");
+        let snap2 = backups_path.join("2024-01-16T10-00-00-000");
         std::fs::create_dir_all(&snap1).unwrap();
         std::fs::create_dir_all(&snap2).unwrap();
         std::fs::write(snap1.join("vimrc.bak"), "content").unwrap();
         std::fs::write(snap2.join("nvim.bak"), "content").unwrap();
         std::fs::write(snap2.join("gitconfig.bak"), "content").unwrap();
 
-        assert_eq!(count_backup_entries(state_path), 3);
+        assert_eq!(count_backup_entries(&backups_path), 3);
     }
 
     #[test]
     fn test_count_backup_entries_ignores_files_in_root() {
         let dir = tempfile::tempdir().unwrap();
-        let state_path = dir.path();
-        let backup_dir = state_path.join("backups");
-        std::fs::create_dir_all(&backup_dir).unwrap();
+        let backups_path = dir.path().join("backups");
+        std::fs::create_dir_all(&backups_path).unwrap();
 
         // A file directly in backups/ should be ignored (only subdirs count)
-        std::fs::write(backup_dir.join("readme.txt"), "info").unwrap();
-        let snap = backup_dir.join("2024-01-15T10-00-00-000");
+        std::fs::write(backups_path.join("readme.txt"), "info").unwrap();
+        let snap = backups_path.join("2024-01-15T10-00-00-000");
         std::fs::create_dir_all(&snap).unwrap();
         std::fs::write(snap.join("vimrc.bak"), "content").unwrap();
 
-        assert_eq!(count_backup_entries(state_path), 1);
+        assert_eq!(count_backup_entries(&backups_path), 1);
     }
 
     #[test]

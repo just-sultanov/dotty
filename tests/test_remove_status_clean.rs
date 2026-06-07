@@ -374,7 +374,7 @@ fn clean_with_backups() {
     env.git_config_identity();
 
     // Create some backup directories manually
-    let backup_dir = env.state.join("backups");
+    let backup_dir = env.backups_dir();
     std::fs::create_dir_all(backup_dir.join("2024-01-01T00-00-00")).unwrap();
     std::fs::create_dir_all(backup_dir.join("2024-06-15T12-30-00")).unwrap();
     std::fs::create_dir_all(backup_dir.join("2024-12-31T23-59-59")).unwrap();
@@ -413,7 +413,7 @@ fn clean_before_date() {
     env.git_config_identity();
 
     // Create backup directories
-    let backup_dir = env.state.join("backups");
+    let backup_dir = env.backups_dir();
     std::fs::create_dir_all(backup_dir.join("2024-01-01T00-00-00")).unwrap();
     std::fs::create_dir_all(backup_dir.join("2024-06-15T12-30-00")).unwrap();
     std::fs::create_dir_all(backup_dir.join("2024-12-31T23-59-59")).unwrap();
@@ -444,7 +444,7 @@ fn clean_invalid_date_fails() {
     env.git_config_identity();
 
     // Create a backup directory so clean doesn't exit early
-    let backup_dir = env.state.join("backups");
+    let backup_dir = env.backups_dir();
     std::fs::create_dir_all(backup_dir.join("2024-01-01T00-00-00")).unwrap();
 
     env.run_err(&["clean", "--before", "not-a-date"]);
@@ -552,7 +552,7 @@ fn clean_keep_before_combinations() {
         env.run_ok(&["init", "--machine", "testbox"]);
         env.git_config_identity();
 
-        let backup_dir = env.state.join("backups");
+        let backup_dir = env.backups_dir();
         for name in &backups {
             std::fs::create_dir_all(backup_dir.join(name)).unwrap();
         }

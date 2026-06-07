@@ -15,10 +15,12 @@ fn init_into_existing_git_repo_fails() {
     env.run_ok(&["init", "--machine", "testbox"]);
     assert!(env.repo.join(".git").is_dir());
 
-    // Trying to init again with a URL should fail
+    // Trying to init again with a URL should fail.
+    // URL must map to repo_name "dotfiles" so clone_repo's .git check
+    // finds the existing repo at <DOTTY_HOME>/dotfiles/.
     env.run_err(&[
         "init",
-        "git@github.com:user/dotty.git",
+        "https://example.com/dotfiles.git",
         "--machine",
         "testbox",
     ]);
@@ -42,7 +44,8 @@ fn init_into_empty_non_git_dir_succeeds() {
     // The clone_repo .git check is tested by init_into_existing_git_repo_fails.
     // This test confirms empty non-git directories are accepted.
     let env2 = TestEnv::new();
-    // Remove .git from env2's repo to simulate empty non-git dir
+    // Create repo dir and simulate empty non-git dir
+    std::fs::create_dir_all(&env2.repo).unwrap();
     std::fs::remove_dir_all(&env2.repo.join(".git")).ok();
     // Now init with URL would succeed (we can't actually clone, so
     // we verify the pre-check passes by checking the path exists

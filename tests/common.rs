@@ -1,11 +1,9 @@
 #![allow(missing_docs)]
 //! Shared helpers for integration tests.
 //!
-//! Each test gets its own isolated temp directory for both the repo
-//! (`DOTTY_HOME`) and the state (`DOTTY_STATE_HOME`).
-//!
-//! Test output is automatically captured to reduce noise during test runs.
-//! Use `TestOutput::stdout_contains()` and `stderr_contains()` to assert on output.
+//! Each test gets its own isolated temp directory for the dotty root
+//! (`DOTTY_HOME`), with subdirectories for the repo (`dotfiles/`),
+//! state (`state/`), config (`config/`), and backups (`backups/`).
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -71,18 +69,27 @@ impl TestOutput {
     }
 }
 
-/// A handle that owns a set of temp directories (repo + state + home) and
+/// A handle that owns a set of temp directories (dotty root + home) and
 /// cleans them up on drop.
+///
+/// The dotty root directory (`DOTTY_HOME`) contains:
+/// - `dotfiles/`  — the actual git repository (exposed as `repo`)
+/// - `state/`     — pending plan files (exposed as `state`)
+/// - `config/`    — configuration
+/// - `backups/`   — backup storage
 ///
 /// `home` is a separate directory that simulates the user's home directory.
 /// It lives *outside* the repo so that the `add` command's self-reference
 /// check does not trigger.
 pub struct TestEnv {
+    /// The repo directory under DOTTY_HOME (e.g. `<root>/dotfiles`).
     pub repo: PathBuf,
+    /// The state directory under DOTTY_HOME (e.g. `<root>/state`).
+    #[allow(dead_code)]
     pub state: PathBuf,
+    /// Simulated home directory (outside the repo).
     pub home: PathBuf,
-    _repo_dir: tempfile::TempDir,
-    _state_dir: tempfile::TempDir,
+    _root_dir: tempfile::TempDir,
     _home_dir: tempfile::TempDir,
 }
 
@@ -122,9 +129,9 @@ impl TestEnv {
     ///
     /// Output is captured to reduce noise during test runs.
     pub fn run(&self, args: &[&str]) -> TestOutput {
+        let dotty_home = self._root_dir.path();
         let mut child = Command::new(Self::bin())
-            .env("DOTTY_HOME", &self.repo)
-            .env("DOTTY_STATE_HOME", &self.state)
+            .env("DOTTY_HOME", dotty_home)
             .env("HOME", &self.home)
             .args(args)
             .stdout(std::process::Stdio::piped())
@@ -193,9 +200,20 @@ impl TestEnv {
         full
     }
 
-    /// Read config.toml from the state directory.
+    /// Read config.toml from the config directory under DOTTY_HOME.
     pub fn read_config(&self) -> String {
-        std::fs::read_to_string(self.state.join("config.toml")).unwrap_or_default()
+        let config_path = self._root_dir.path().join("config").join("config.toml");
+        std::fs::read_to_string(config_path).unwrap_or_default()
+    }
+
+    /// Return the absolute path to the config.toml file.
+    pub fn config_file(&self) -> PathBuf {
+        self._root_dir.path().join("config").join("config.toml")
+    }
+
+    /// Return the absolute path to the backups directory.
+    pub fn backups_dir(&self) -> PathBuf {
+        self._root_dir.path().join("backups")
     }
 
     /// List tracked files in the repo.
@@ -246,15 +264,17 @@ impl TestEnv {
 
 impl Default for TestEnv {
     fn default() -> Self {
-        let repo_dir = tempfile::tempdir().unwrap();
-        let state_dir = tempfile::tempdir().unwrap();
+        let root_dir = tempfile::tempdir().unwrap();
         let home_dir = tempfile::tempdir().unwrap();
+        // repo and state dirs are created by `dotty init`, we just point to
+        // where they'll be created.
+        let repo = root_dir.path().join("dotfiles");
+        let state = root_dir.path().join("state");
         Self {
-            repo: repo_dir.path().to_path_buf(),
-            state: state_dir.path().to_path_buf(),
+            repo,
+            state,
             home: home_dir.path().to_path_buf(),
-            _repo_dir: repo_dir,
-            _state_dir: state_dir,
+            _root_dir: root_dir,
             _home_dir: home_dir,
         }
     }

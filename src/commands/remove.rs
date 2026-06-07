@@ -59,7 +59,8 @@ pub fn run(
     repo.require_git()?;
 
     let repo_path = repo.repo_path.clone();
-    let state_path = repo.state_path.clone();
+    let config_path = repo.config_path.clone();
+    let backups_path = repo.backups_path.clone();
 
     // Expand ~ in the input path
     let target_path = expand_tilde(&path)?;
@@ -156,7 +157,7 @@ pub fn run(
     // Build the plan (pure function — no side effects)
     let input = RemovePlanInput {
         repo_path: repo_path.clone(),
-        state_path: state_path.clone(),
+        backups_path: backups_path.clone(),
         managed_pairs,
         pending_confirm,
         commit: commit.clone(),
@@ -182,7 +183,7 @@ pub fn run(
                 updated_config.managed.shift_remove(repo_relative_path);
             }
         }
-        write_config(&state_path, &updated_config)?;
+        write_config(&config_path, &updated_config)?;
     }
 
     // Print summary
@@ -231,7 +232,7 @@ fn collect_target_files(target_path: &Path) -> Result<Vec<PathBuf>, DottyError> 
 /// Input data for building a `remove` plan.
 pub(crate) struct RemovePlanInput {
     pub repo_path: PathBuf,
-    pub state_path: PathBuf,
+    pub backups_path: PathBuf,
     pub managed_pairs: Vec<(PathBuf, String)>,
     /// Pairs where the repo file exists and the target is a regular file
     /// (not a symlink). These get a `Confirm` prompt during execution.
@@ -286,8 +287,7 @@ pub(crate) fn build_restore_file_phase(input: &RemovePlanInput) -> Vec<Action> {
             if target_file.exists() && !is_symlink(target_file) {
                 let backup_ts = backup_timestamp();
                 let backup_dest = input
-                    .state_path
-                    .join("backups")
+                    .backups_path
                     .join(&backup_ts)
                     .join(target_file.file_name().unwrap_or_default());
                 actions.push(Action::Backup {
@@ -436,8 +436,7 @@ pub(crate) fn build_remove_plan(
         if target_file.exists() && !is_symlink(target_file) {
             let backup_ts = backup_timestamp();
             let backup_dest = input
-                .state_path
-                .join("backups")
+                .backups_path
                 .join(&backup_ts)
                 .join(target_file.file_name().unwrap_or_default());
             file_actions.push(Action::Backup {
@@ -636,7 +635,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: pending,
             commit: None,
@@ -673,7 +672,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: HashSet::new(),
             commit: None,
@@ -713,7 +712,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm,
             commit: None,
@@ -769,7 +768,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: pending,
             commit: Some("remove vimrc".to_string()),
@@ -813,7 +812,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: HashSet::new(),
             commit: None,
@@ -871,7 +870,7 @@ mod tests {
         // Symlink target — NOT pending_confirm
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: HashSet::new(),
             commit: None,
@@ -904,7 +903,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: HashSet::new(),
             commit: None,
@@ -938,7 +937,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: HashSet::new(),
             commit: None,
@@ -971,7 +970,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm,
             commit: None,
@@ -1002,7 +1001,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: HashSet::new(),
             commit: None,
@@ -1033,7 +1032,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: HashSet::new(),
             commit: None,
@@ -1068,7 +1067,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm,
             commit: None,
@@ -1102,7 +1101,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: HashSet::new(),
             commit: None,
@@ -1145,7 +1144,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm,
             commit: None,
@@ -1190,7 +1189,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![
                 (vimrc_target.clone(), "base/home/.vimrc".to_string()),
                 (
@@ -1231,7 +1230,7 @@ mod tests {
         // Not pending_confirm — tests the direct-phase path
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: HashSet::new(),
             commit: None,
@@ -1246,7 +1245,6 @@ mod tests {
             Action::Backup { source, dest } => {
                 assert_eq!(source, &target);
                 assert!(dest.starts_with(&state));
-                assert!(dest.to_string_lossy().contains("backups"));
                 assert!(dest.to_string_lossy().contains(".vimrc"));
             }
             other => panic!("expected Backup, got: {:?}", other),
@@ -1282,7 +1280,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: HashSet::new(),
             commit: None,
@@ -1321,7 +1319,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: HashSet::new(),
             commit: None,
@@ -1370,7 +1368,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(
                 symlink.clone(),
                 "base/home/link_to_dir/file.txt".to_string(),
@@ -1421,7 +1419,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(
                 symlink.clone(),
                 "base/home/link_to_dir/file.txt".to_string(),
@@ -1482,7 +1480,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm,
             commit: None,
@@ -1522,7 +1520,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![(target.clone(), "base/home/.vimrc".to_string())],
             pending_confirm: pending,
             commit: None,
@@ -1591,7 +1589,7 @@ mod tests {
 
         let input = RemovePlanInput {
             repo_path: repo.clone(),
-            state_path: state.clone(),
+            backups_path: state.clone(),
             managed_pairs: vec![
                 (target.clone(), "base/home/.vimrc".to_string()),
                 (symlink_target.clone(), "base/home/.zshrc".to_string()),

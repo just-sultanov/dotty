@@ -12,7 +12,7 @@ use crate::prompt::prompt_machine_selection;
 pub(crate) fn resolve_machine(
     repo_path: &Path,
     config: &mut crate::config::Config,
-    state_path: &Path,
+    config_path: &Path,
     dry_run: bool,
     _platform: &Option<String>,
 ) -> Result<String, DottyError> {
@@ -49,7 +49,7 @@ pub(crate) fn resolve_machine(
     // should only be written when the apply is actually executed, not
     // when the user is only previewing what would happen.
     if !dry_run {
-        write_config(state_path, config)?;
+        write_config(config_path, config)?;
     }
     Ok(name)
 }

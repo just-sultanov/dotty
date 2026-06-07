@@ -95,26 +95,30 @@ dotty config machine <name>
 Config files live in a git repository organized by priority tiers:
 
 ```
-~/.dotty/
-├── base/                    # Shared across all machines
-│   └── home/
-│       ├── .config/nvim/init.lua
-│       └── .vimrc
-├── linux/                   # Linux-specific
-│   └── home/
-│       └── .config/kitty/kitty.conf
-├── macbook/                 # Machine-specific: MacBook
-│   └── home/
-│       └── .config/nvim/init.lua   ← overrides base
-├── macos/                   # macOS-specific
-│   └── home/
-│       └── .config/kitty/kitty.conf
-├── windows/                 # Windows-specific
-│   └── home/
-│       └── .config/powershell/Microsoft.PowerShell_profile.ps1
-└── work/                    # Machine-specific: work machine
-    └── home/
-        └── .gitconfig
+~/.dotty/                          ← DOTTY_HOME (root)
+├── dotfiles/                      ← git repository (name = "dotfiles" by default)
+│   ├── base/                      ← Shared across all machines
+│   │   └── home/
+│   │       ├── .config/nvim/init.lua
+│   │       └── .vimrc
+│   ├── linux/                     # Linux-specific
+│   │   └── home/
+│   │       └── .config/kitty/kitty.conf
+│   ├── macbook/                   # Machine-specific: MacBook
+│   │   └── home/
+│   │       └── .config/nvim/init.lua   ← overrides base
+│   ├── macos/                     # macOS-specific
+│   │   └── home/
+│   │       └── .config/kitty/kitty.conf
+│   ├── windows/                   # Windows-specific
+│   │   └── home/
+│   │       └── .config/powershell/Microsoft.PowerShell_profile.ps1
+│   └── work/                      # Machine-specific: work machine
+│       └── home/
+│           └── .gitconfig
+├── state/                         ← pending plans (crash recovery)
+├── config/                        ← configuration (machine name, repo name)
+└── backups/                       ← backup storage
 ```
 
 Platform tiers (`linux`, `macos`, `windows`) are detected automatically.
@@ -124,8 +128,8 @@ Machine tiers (`work`, `macbook`) are set by the user via `dotty config machine 
 
 ```
 $ dotty apply --dry-run
-[dry-run] dir-symlink created - ~/.config/nvim/ → ~/.dotty/macos/home/.config/nvim/
-[dry-run] symlink created - ~/.vimrc → ~/.dotty/macos/home/.vimrc
+[dry-run] dir-symlink created - ~/.config/nvim/ → ~/.dotty/dotfiles/macos/home/.config/nvim/
+[dry-run] symlink created - ~/.vimrc → ~/.dotty/dotfiles/macos/home/.vimrc
 
 Overrides:
 [dry-run] macos - ~/.vimrc
@@ -147,8 +151,8 @@ but adds a `done` line and drops the `[dry-run]` prefix:
 
 ```
 $ dotty apply
-✓ dir-symlink created - ~/.config/nvim/ → ~/.dotty/macos/home/.config/nvim/
-✓ symlink created - ~/.vimrc → ~/.dotty/macos/home/.vimrc
+✓ dir-symlink created - ~/.config/nvim/ → ~/.dotty/dotfiles/macos/home/.config/nvim/
+✓ symlink created - ~/.vimrc → ~/.dotty/dotfiles/macos/home/.vimrc
 
 Overrides:
 macos - ~/.vimrc
@@ -168,7 +172,7 @@ the number of symlinks in your home directory and preserves directory structure 
 tools that scan config directories (e.g., `nvim`, `kitty`).
 
 ```
-~/.dotty/
+~/.dotty/dotfiles/
 ├── base/
 │   └── home/
 │       └── .config/nvim/
@@ -237,16 +241,14 @@ entries (files or dirs that are no longer in the repo) are detected and removed 
 
 ## Environment Variables
 
-| Variable           | Default           | Description                                    |
-| ------------------ | ----------------- | ---------------------------------------------- |
-| `DOTTY_HOME`       | `~/.dotty`        | Repository path                                |
-| `DOTTY_STATE_HOME` | platform-specific | State directory (config, backups)              |
-| `XDG_STATE_HOME`   | `~/.local/state`  | Used on Linux when `DOTTY_STATE_HOME` is unset |
+| Variable     | Default    | Description                                  |
+| ------------ | ---------- | -------------------------------------------- |
+| `DOTTY_HOME` | `~/.dotty` | Root directory containing repo, state, config, and backups |
 
 ## Crash Recovery
 
 If `dotty` is interrupted (SIGINT, power loss, etc.) during a multi-step operation,
-a pending plan is saved to the state directory. On the next run, you'll be prompted
+a pending plan is saved to `$DOTTY_HOME/state/`. On the next run, you'll be prompted
 to rollback or continue.
 
 Use `--recover` to skip the prompt, or `--recovery-action rollback|discard|ignore` for

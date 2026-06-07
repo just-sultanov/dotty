@@ -5,11 +5,21 @@ use crate::config::{read_config, write_config};
 use crate::convention::{MachineName, scan_machine_directories};
 use crate::error::DottyError;
 use crate::git::{git_clone, git_init};
-use crate::paths::{resolve_repo_path, resolve_state_path};
+use crate::paths::{resolve_config_path, resolve_dotty_home, resolve_repo_path};
 use crate::prompt::prompt_machine_selection;
 
 /// Result type for init commands, using domain-specific `DottyError`.
 type Result<T> = std::result::Result<T, DottyError>;
+
+/// Extract repo name from a git URL.
+fn repo_name_from_url(url: &str) -> String {
+    url.trim_end_matches(".git")
+        .trim_end_matches('/')
+        .split('/')
+        .next_back()
+        .unwrap_or("dotfiles")
+        .to_string()
+}
 
 /// Bootstrap a new dotty repository or clone an existing one.
 ///
@@ -19,8 +29,15 @@ type Result<T> = std::result::Result<T, DottyError>;
 /// In both cases, the machine name is either taken from the `machine` parameter
 /// or prompted interactively.
 pub fn run(git_url: Option<String>, machine: Option<String>) -> Result<()> {
-    let repo_path = resolve_repo_path()?;
-    let state_path = resolve_state_path()?;
+    let dotty_home = resolve_dotty_home()?;
+    let repo_name = git_url
+        .as_deref()
+        .map(repo_name_from_url)
+        .unwrap_or_else(|| "dotfiles".to_string());
+    let repo_path = resolve_repo_path(&dotty_home, &repo_name);
+    let config_path = resolve_config_path(&dotty_home);
+    let state_path = dotty_home.join("state");
+    let backups_path = dotty_home.join("backups");
 
     let machine_name = if let Some(url) = &git_url {
         // Clone mode: clone repo, then resolve machine name
@@ -40,11 +57,20 @@ pub fn run(git_url: Option<String>, machine: Option<String>) -> Result<()> {
         prompt_machine_name()?
     };
 
-    // Save machine name to config
-    ensure_state_dir(&state_path)?;
-    let mut config = read_config(&state_path)?;
+    // Ensure all directories exist
+    fs::create_dir_all(&config_path).map_err(DottyError::Io)?;
+    fs::create_dir_all(&state_path).map_err(DottyError::Io)?;
+    fs::create_dir_all(&backups_path).map_err(DottyError::Io)?;
+
+    // Save machine name and repo name to config
+    let mut config = read_config(&config_path)?;
     config.set_machine(machine_name.clone());
-    write_config(&state_path, &config)?;
+    if let Some(url) = &git_url {
+        config.repo_name = Some(repo_name_from_url(url));
+    } else {
+        config.repo_name = Some(repo_name);
+    }
+    write_config(&config_path, &config)?;
 
     println!("Machine set to: {}", machine_name);
     println!("Repo: {}", repo_path.display());
@@ -105,13 +131,6 @@ fn clone_repo(url: &str, repo_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Ensure the state directory exists.
-/// IO errors map to `DottyError::Io`.
-fn ensure_state_dir(state_path: &Path) -> Result<()> {
-    fs::create_dir_all(state_path).map_err(DottyError::Io)?;
-    Ok(())
-}
-
 /// Prompt the user for a machine name (fresh repo mode).
 /// Prompt errors map to `DottyError::Prompt`; validation errors to `DottyError::InvalidMachineName`.
 fn prompt_machine_name() -> Result<String> {
@@ -155,6 +174,35 @@ mod tests {
             .args(["init"])
             .output()
             .unwrap();
+    }
+
+    #[test]
+    fn test_repo_name_from_url_https() {
+        assert_eq!(
+            repo_name_from_url("https://github.com/user/dotfiles.git"),
+            "dotfiles"
+        );
+    }
+
+    #[test]
+    fn test_repo_name_from_url_ssh() {
+        assert_eq!(repo_name_from_url("git@github.com:user/dotty.git"), "dotty");
+    }
+
+    #[test]
+    fn test_repo_name_from_url_no_git_suffix() {
+        assert_eq!(
+            repo_name_from_url("https://github.com/user/dotfiles"),
+            "dotfiles"
+        );
+    }
+
+    #[test]
+    fn test_repo_name_from_url_trailing_slash() {
+        assert_eq!(
+            repo_name_from_url("https://github.com/user/dotfiles/"),
+            "dotfiles"
+        );
     }
 
     // -- create_fresh_repo tests --
@@ -224,27 +272,5 @@ mod tests {
             }
             _ => panic!("expected InitDirectoryNotEmpty error"),
         }
-    }
-
-    // -- ensure_state_dir tests --
-
-    #[test]
-    fn test_ensure_state_dir_creates_directory() {
-        let dir = test_dir();
-        let state_path = dir.path().join("state/deep/nested");
-        assert!(!state_path.exists());
-
-        ensure_state_dir(&state_path).unwrap();
-        assert!(state_path.is_dir());
-    }
-
-    #[test]
-    fn test_ensure_state_dir_succeeds_when_exists() {
-        let dir = test_dir();
-        let state_path = dir.path().join("existing");
-        fs::create_dir_all(&state_path).unwrap();
-
-        ensure_state_dir(&state_path).unwrap();
-        assert!(state_path.is_dir());
     }
 }

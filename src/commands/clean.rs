@@ -82,14 +82,14 @@ pub(crate) fn filter_backups(
 /// Run the `clean` command.
 pub fn run(keep: Option<usize>, before: Option<String>, yes: bool) -> Result<()> {
     let mut repo = RepoState::new()?;
-    let backup_dir = repo.state_path.join("backups");
+    let backup_dir = repo.backups_path.clone();
 
     if !backup_dir.is_dir() {
         println!("No backups found.");
         return Ok(());
     }
 
-    let all_backups = list_backups(&repo.state_path);
+    let all_backups = list_backups(&backup_dir);
 
     if all_backups.is_empty() {
         println!("No backups to clean.");
@@ -197,9 +197,11 @@ mod tests {
         plan.add(confirm_action);
 
         let repo_path = dir.path().to_path_buf();
-        let state_path = dir.path().join("state");
+        let state_path = repo_path.join("state");
+        let config_path = repo_path.join("config");
+        let backups_path = repo_path.join("backups");
         std::fs::create_dir_all(&state_path).unwrap();
-        let mut repo = RepoState::new_for_git(repo_path, state_path);
+        let mut repo = RepoState::new_for_git(repo_path, state_path, config_path, backups_path);
 
         plan::execute_plan(&plan, ExecuteMode::Normal, &mut repo).unwrap();
 
@@ -228,9 +230,11 @@ mod tests {
         };
 
         let repo_path = dir.path().to_path_buf();
-        let state_path = dir.path().join("state");
+        let state_path = repo_path.join("state");
+        let config_path = repo_path.join("config");
+        let backups_path = repo_path.join("backups");
         std::fs::create_dir_all(&state_path).unwrap();
-        let mut repo = RepoState::new_for_git(repo_path, state_path);
+        let mut repo = RepoState::new_for_git(repo_path, state_path, config_path, backups_path);
 
         // In CI (non-interactive), Confirm with prompt skips execution
         temp_env::with_var("CI", Some("1"), || {

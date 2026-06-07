@@ -2,40 +2,29 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::error::DottyError;
-use dir_spec::state_home;
 use path_slash::PathExt;
 
-/// Resolve the dotty repository path.
-///
-/// Checks `$DOTTY_HOME` first, falls back to `~/.dotty`.
-pub fn resolve_repo_path() -> Result<PathBuf, DottyError> {
+/// Resolve the dotty root directory (`$DOTTY_HOME`).
+pub fn resolve_dotty_home() -> Result<PathBuf, DottyError> {
     if let Ok(path) = env::var("DOTTY_HOME") {
         return Ok(PathBuf::from(path));
     }
     Ok(home_dir()?.join(".dotty"))
 }
 
-/// Resolve the dotty state directory.
-///
-/// Checks `$DOTTY_STATE_HOME` first, then uses the platform-specific
-/// state directory via `dir_spec::state_home()` (which respects
-/// `$XDG_STATE_HOME` on Linux), falling back to the platform default.
-///
-/// Platform defaults:
-/// - Linux: `~/.local/state/dotty` (or `$XDG_STATE_HOME/dotty`)
-/// - macOS: `~/Library/Application Support/dotty`
-/// - Windows: `%LOCALAPPDATA%/dotty`
+/// Resolve the repo path from a dotty home and repo name.
+pub fn resolve_repo_path(dotty_home: &Path, repo_name: &str) -> PathBuf {
+    dotty_home.join(repo_name)
+}
+
+/// Resolve the dotty state directory (`$DOTTY_HOME/state`).
 pub fn resolve_state_path() -> Result<PathBuf, DottyError> {
-    if let Ok(path) = env::var("DOTTY_STATE_HOME") {
-        return Ok(PathBuf::from(path));
-    }
-    // dir_spec::state_home() checks XDG_STATE_HOME and falls back to
-    // platform-specific defaults (Linux: ~/.local/state, macOS: ~/Library/Application Support)
-    if let Some(state) = state_home() {
-        return Ok(state.join("dotty"));
-    }
-    // Fallback if home dir can't be determined
-    Ok(home_dir()?.join(".local").join("state").join("dotty"))
+    Ok(resolve_dotty_home()?.join("state"))
+}
+
+/// Resolve the dotty config directory (`$DOTTY_HOME/config`).
+pub fn resolve_config_path(dotty_home: &Path) -> PathBuf {
+    dotty_home.join("config")
 }
 
 /// Convert a repo-relative path to its target (real filesystem) path.
@@ -231,56 +220,45 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
-    fn test_resolve_repo_path_default() {
-        let path = temp_env::with_var_unset("DOTTY_HOME", || resolve_repo_path().unwrap());
+    fn test_resolve_dotty_home_default() {
+        let path = temp_env::with_var_unset("DOTTY_HOME", || resolve_dotty_home().unwrap());
         assert!(path.ends_with(".dotty"));
     }
 
     #[test]
-    fn test_resolve_repo_path_custom() {
-        let path = temp_env::with_var("DOTTY_HOME", Some("/custom/dotty/path"), || {
-            resolve_repo_path().unwrap()
+    fn test_resolve_dotty_home_custom() {
+        let path = temp_env::with_var("DOTTY_HOME", Some("/custom/dotty"), || {
+            resolve_dotty_home().unwrap()
         });
-        assert_eq!(path, PathBuf::from("/custom/dotty/path"));
+        assert_eq!(path, PathBuf::from("/custom/dotty"));
     }
 
     #[test]
     fn test_resolve_state_path_default() {
-        let path = temp_env::with_vars_unset(["DOTTY_STATE_HOME", "XDG_STATE_HOME"], || {
-            resolve_state_path().unwrap()
-        });
-        // dir_spec uses platform-specific defaults:
-        // Linux: ~/.local/state/dotty, macOS: ~/Library/Application Support/dotty
-        #[cfg(target_os = "linux")]
-        assert!(path.ends_with(".local/state/dotty"));
-        #[cfg(target_os = "macos")]
-        assert!(
-            path.to_string_lossy()
-                .contains("Library/Application Support/dotty")
-        );
-        // Always ends with /dotty
-        assert!(path.ends_with("dotty"));
+        let path = temp_env::with_var_unset("DOTTY_HOME", || resolve_state_path().unwrap());
+        assert!(path.ends_with(".dotty/state"));
     }
 
     #[test]
     fn test_resolve_state_path_custom() {
-        let path = temp_env::with_var("DOTTY_STATE_HOME", Some("/custom/state"), || {
+        let path = temp_env::with_var("DOTTY_HOME", Some("/custom/dotty"), || {
             resolve_state_path().unwrap()
         });
-        assert_eq!(path, PathBuf::from("/custom/state"));
+        assert_eq!(path, PathBuf::from("/custom/dotty/state"));
     }
 
     #[test]
-    #[cfg(not(target_os = "windows"))]
-    fn test_resolve_state_path_xdg() {
-        let path = temp_env::with_vars(
-            [
-                ("DOTTY_STATE_HOME", None::<&str>),
-                ("XDG_STATE_HOME", Some("/var/lib/state")),
-            ],
-            || resolve_state_path().unwrap(),
-        );
-        assert_eq!(path, PathBuf::from("/var/lib/state/dotty"));
+    fn test_resolve_repo_path_from_home_and_name() {
+        let home = Path::new("/home/user/.dotty");
+        let path = resolve_repo_path(home, "dotfiles");
+        assert_eq!(path, PathBuf::from("/home/user/.dotty/dotfiles"));
+    }
+
+    #[test]
+    fn test_resolve_config_path_from_home() {
+        let home = Path::new("/home/user/.dotty");
+        let path = resolve_config_path(home);
+        assert_eq!(path, PathBuf::from("/home/user/.dotty/config"));
     }
 
     #[test]
@@ -347,17 +325,9 @@ mod tests {
 
     #[test]
     fn test_target_to_repo_rejects_dotdot_in_result() {
-        // Defense-in-depth: if the resulting repo path somehow contains "..",
-        // it should be rejected. With current strip_prefix logic this won't
-        // trigger for normal paths, but the guard protects against regressions.
         crate::tests::with_test_home(|home| {
-            // A path like /home/user/../etc/passwd would strip_prefix home and
-            // produce "home/../etc/passwd" — the ".." check catches this.
-            // We simulate by constructing a path that would produce ".." after strip.
-            // In practice, canonical paths won't have "..", but the validation exists.
             let target = home.join("subdir");
             let repo = target_to_repo(&target).unwrap();
-            // Normal path should not contain ".."
             for component in repo.components() {
                 assert_ne!(component.as_os_str(), "..");
             }
@@ -366,13 +336,9 @@ mod tests {
 
     #[test]
     fn test_validate_no_dotdot_rejects_dotdot() {
-        // Direct test of the validation helper via a crafted scenario.
-        // We can't easily trigger ".." through target_to_repo with real paths,
-        // so we verify the function rejects paths with ".." components.
         let result = PathBuf::from("home/../etc/passwd");
         let original = PathBuf::from("/home/user/../etc/passwd");
         let err = validate_no_dotdot(&result, &original).unwrap_err();
-        // The error should mention ".." in the reason
         match err {
             DottyError::InvalidTargetPath { reason, .. } => {
                 assert!(reason.contains(".."));
@@ -408,7 +374,6 @@ mod tests {
 
     #[test]
     fn test_target_to_repo_relative_path_returns_error() {
-        // A relative path (not starting with ~ or /) cannot be mapped to repo.
         let target = PathBuf::from("relative/path/.vimrc");
         let err = target_to_repo(&target).unwrap_err();
         match err {
@@ -427,7 +392,6 @@ mod tests {
     fn test_repo_to_target_non_utf8_root_returns_error() {
         use std::os::unix::ffi::OsStrExt;
 
-        // A repo path with a non-UTF8 root component should fail.
         let repo = PathBuf::from("base").join(std::ffi::OsStr::from_bytes(&[0x80, 0x81]));
         let err = repo_to_target(&repo).unwrap_err();
         match err {
@@ -443,18 +407,14 @@ mod tests {
 
     #[test]
     fn test_repo_to_target_with_dotdot_components() {
-        // Path containing ".." components — repo_to_target doesn't canonicalize,
-        // it just joins. The ".." is preserved in the output.
         let repo = Path::new("base/home/.config/../.vimrc");
         let target = repo_to_target(repo).unwrap();
-        // The ".." is preserved in the joined path (not resolved)
         let target_str = target.to_string_lossy();
         assert!(target_str.contains(".config") || target_str.contains(".."));
     }
 
     #[test]
     fn test_expand_tilde_in_middle_of_path() {
-        // "~/" in the middle of a path should NOT be expanded.
         let path = expand_tilde("/some/dir/~/file").unwrap();
         assert_eq!(path, PathBuf::from("/some/dir/~/file"));
     }
@@ -462,8 +422,6 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_expand_tilde_user() {
-        // On Unix, ~user expansion uses the system user database via `pwd`.
-        // The `root` user always exists and has a well-known home directory.
         let path = expand_tilde("~root/some/file").unwrap();
         assert!(path.is_absolute());
         assert!(path.to_string_lossy().ends_with("some/file"));
@@ -471,14 +429,12 @@ mod tests {
 
     #[test]
     fn test_expand_tilde_user_nonexistent() {
-        // Nonexistent user should fall through to raw path.
         let path = expand_tilde("~nonexistent_user_xyz_12345/some/file").unwrap();
         assert_eq!(path, PathBuf::from("~nonexistent_user_xyz_12345/some/file"));
     }
 
     #[test]
     fn test_expand_tilde_tilde_only_no_slash() {
-        // `~` without trailing slash should return home dir.
         crate::tests::with_test_home(|home| {
             let path = expand_tilde("~").unwrap();
             assert_eq!(path, *home);
@@ -514,16 +470,13 @@ mod tests {
 
     #[test]
     fn test_format_target_display_home_dir_failure() {
-        // When HOME is unset, format_target_display falls back to the full path.
         let path = PathBuf::from("/home/user/.vimrc");
         let formatted = temp_env::with_var_unset("HOME", || format_target_display(&path));
-        // Falls back to full path
         assert!(!formatted.is_empty());
     }
 
     // ── proptest roundtrip tests ──
 
-    /// Check that a path string has no ".." component (for proptest filtering).
     fn has_no_dotdot_component(s: &str) -> bool {
         !s.split('/').any(|c| c == "..")
     }
@@ -531,9 +484,7 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn roundtrip_repo_to_target_to_repo(
-            // Root component: "home" or a directory name (no leading /)
             root in "home|opt|etc|usr|var|Library|srv",
-            // File path: 1-4 non-empty components
             file_components in "[a-zA-Z0-9_.@-]{1,20}(/[a-zA-Z0-9_.@-]{1,20})*".prop_filter(
                 "valid file path",
                 |s: &String| !s.is_empty() && !s.starts_with('/') && has_no_dotdot_component(s),
@@ -542,12 +493,9 @@ mod tests {
             crate::tests::with_test_home(|_| {
                 let repo_path = PathBuf::from("base").join(&root).join(&file_components);
 
-                // repo_to_target then target_to_repo should preserve the relative path
-                // (scope component is stripped, which is expected)
                 let target = repo_to_target(&repo_path).expect("valid repo path");
                 let repo_back = target_to_repo(&target).expect("valid target path");
 
-                // Expected: root/file (without the scope "base")
                 let expected = PathBuf::from(&root).join(&file_components);
 
                 assert_eq!(
@@ -562,14 +510,11 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn roundtrip_target_to_repo_to_target(
-            // Target path: either home-relative or absolute
             variant in any::<bool>(),
-            // Home-relative: dotfile or nested path like .config/nvim/init.lua
             home_components in "[.a-zA-Z0-9_@-]{1,20}(/[a-zA-Z0-9_.@-]{1,20})*".prop_filter(
                 "valid home path",
                 |s: &String| !s.is_empty() && has_no_dotdot_component(s),
             ),
-            // Absolute: at least 2 components (dir/file) so repo path has scope+root
             abs_components in "[a-zA-Z0-9_]{1,10}/[a-zA-Z0-9_.@-]{1,20}(/[a-zA-Z0-9_.@-]{1,20})*".prop_filter(
                 "valid abs path",
                 |s: &String| !s.is_empty() && has_no_dotdot_component(s),
@@ -579,16 +524,12 @@ mod tests {
                 let home = home_dir().unwrap();
 
                 let target = if variant {
-                    // Home-relative: ~/... → /home/user/...
                     home.join(&home_components)
                 } else {
-                    // Absolute: /<dir>/... (at least 2 components)
                     PathBuf::from("/".to_string() + &abs_components)
                 };
 
                 let repo_relative = target_to_repo(&target).expect("valid target path");
-                // repo_to_target expects scope/root/file, but target_to_repo returns root/file.
-                // Prepend a dummy scope to complete the roundtrip.
                 let repo_with_scope = PathBuf::from("base").join(&repo_relative);
                 let target_back = repo_to_target(&repo_with_scope).expect("valid repo path");
 
@@ -604,7 +545,6 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn roundtrip_with_deeply_nested_paths(
-            // Generate 1-8 path components for deep nesting
             depth in 1usize..8,
         ) {
             crate::tests::with_test_home(|_| {

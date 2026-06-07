@@ -34,14 +34,21 @@ pub fn run(
     repo.require_git()?;
 
     let repo_path = repo.repo_path.clone();
-    let state_path = repo.state_path.clone();
+    let config_path = repo.config_path.clone();
+    let backups_path = repo.backups_path.clone();
 
     // Read config (machine + managed map)
     let mut config = repo.config.clone();
 
     // 1. Detect platform and resolve machine
     let platform = platform_override.or_else(detect_platform);
-    let machine_name = resolve_machine(&repo_path, &mut config, &state_path, dry_run, &platform)?;
+    let machine_name = resolve_machine(
+        &repo_path,
+        &mut config,
+        &repo.config_path,
+        dry_run,
+        &platform,
+    )?;
 
     // 2. Collect all tracked files from git
     let tracked_files: Vec<String> = git::TrackedFiles::new(&repo_path)?.collect();
@@ -65,7 +72,7 @@ pub fn run(
     // 5. Build the plan (pure function — no git/config I/O)
     let input = ApplyPlanInput {
         repo_path: repo_path.clone(),
-        state_path: state_path.clone(),
+        backups_path: backups_path.clone(),
         home,
         merged,
         override_map,
@@ -105,12 +112,8 @@ pub fn run(
     }
 
     // 8. Write updated config (managed map was rebuilt in step 4b).
-    //
-    // Config write failure is fatal because orphan detection relies on
-    // the managed map to be accurate. If the write fails, the command
-    // exits with an error so the user can retry.
     if !dry_run {
-        write_config(&state_path, &config)?;
+        write_config(&config_path, &config)?;
     }
 
     Ok(())
